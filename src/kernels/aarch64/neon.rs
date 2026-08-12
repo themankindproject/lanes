@@ -1209,4 +1209,50 @@ mod tests {
             );
         }
     }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn debug_f64_argmax_trace() {
+        if !std::arch::is_aarch64_feature_detected!("neon") {
+            return;
+        }
+        let data = [5.0_f64, 3.0, 8.0, 1.0, 8.0];
+        let (m, idx) = unsafe { argmax_f64(&data) };
+        eprintln!("DEBUG argmax_f64({data:?}) = ({m}, {idx})");
+
+        // Manually trace the vector state after each chunk.
+        let vidx = vcombine_s32(vcreate_s32(0x0000_0001_0000_0000), vcreate_s32(0));
+        let mut imax = vidx;
+        let mut vmax = unsafe { vld1q_f64(data.as_ptr()) };
+        eprintln!("DEBUG chunk0 vmax={:?}", {
+            let mut o = [0.0_f64; 2];
+            unsafe { vst1q_f64(o.as_mut_ptr(), vmax) };
+            o
+        });
+        for i in 1..2 {
+            let v = unsafe { vld1q_f64(data.as_ptr().add(i * 2)) };
+            let off = unsafe { vaddq_s32(vdupq_n_s32((i * 2) as i32), vidx) };
+            let mask = unsafe { vcgtq_f64(v, vmax) };
+            vmax = unsafe { vbslq_f64(mask, v, vmax) };
+            imax = unsafe {
+                vreinterpretq_s32_s64(vbslq_s64(
+                    mask,
+                    vreinterpretq_s64_s32(off),
+                    vreinterpretq_s64_s32(imax),
+                ))
+            };
+            let mut o = [0.0_f64; 2];
+            let mut io = [0_i32; 4];
+            let mut mo = [0_u64; 2];
+            unsafe {
+                vst1q_f64(o.as_mut_ptr(), vmax);
+                vst1q_s32(io.as_mut_ptr(), imax);
+                vst1q_u64(mo.as_mut_ptr(), mask);
+            }
+            eprintln!("DEBUG chunk{i} v={v:?} mask={mo:?} vmax={o:?} imax={io:?}");
+        }
+        let (m2, idx2) = unsafe { argmax_pair_128d(vmax, imax) };
+        eprintln!("DEBUG reduce_pair = ({m2}, {idx2})");
+        assert_eq!(idx, 2, "argmax index wrong");
+    }
 }
