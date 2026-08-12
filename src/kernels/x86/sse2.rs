@@ -774,17 +774,32 @@ crate::simd_exp_f64!(
     |v| unsafe { _mm_castsi128_pd(v) },
     // Round-to-nearest without SSE4.1: trunc(v + copysign(0.5, v))
     // (round-half-away-from-zero; ≤1 ulp difference from ties-even at the
-    // exp boundary, within tolerance).
+    // exp boundary, within tolerance). Conversion goes through i32 (|n| ≤
+    // 1024 fits): `_mm_cvttpd_epi64` is AVX-512DQ, not SSE2 — using it
+    // here SIGILLs on non-AVX-512 CPUs.
     |v| unsafe {
         let sign = _mm_and_pd(v, _mm_castsi128_pd(_mm_set1_epi64x(i64::MIN)));
         let half = _mm_or_pd(sign, _mm_set1_pd(0.5));
-        _mm_cvttpd_epi64(_mm_add_pd(v, half))
+        let n32 = _mm_cvttpd_epi32(_mm_add_pd(v, half));
+        // Sign-extend i32 → i64 with SSE2-only ops (|n| ≤ 1024 fits i32).
+        let sign_bits = _mm_srai_epi32(n32, 31);
+        _mm_unpacklo_epi32(n32, sign_bits)
     },
-    |v| unsafe { _mm_cvtepi64_pd(v) },
+    |v| unsafe {
+        // Reverse: take the low i32 of each i64 lane (values fit), pack
+        // them into the low qword, and convert i32 → f64 (SSE2).
+        // `_mm_cvtepi64_pd` is AVX-512DQ, not SSE2.
+        // v = [n0, s0, n1, s1] as i32; pick src[0], src[2] → [n0, n1, ..].
+        let lo = _mm_shuffle_epi32(v, 0b00_00_10_00);
+        _mm_cvtepi32_pd(lo)
+    },
     |v| unsafe { _mm_slli_epi64(v, 52) },
     |a, b| unsafe { _mm_add_epi64(a, b) },
-    |a, b| unsafe { _mm_cmpgt_epi64(a, b) },
-    |a, b| unsafe { _mm_cmpgt_epi64(b, a) },
+    // Signed 64-bit compare in the float domain: n_int and the clamp
+    // constants (±1024) are exactly representable in f64, and SSE2 has no
+    // `_mm_cmpgt_epi64` (that's SSE4.2).
+    |a, b| unsafe { _mm_castpd_si128(_mm_cmpgt_pd(_mm_castsi128_pd(a), _mm_castsi128_pd(b))) },
+    |a, b| unsafe { _mm_castpd_si128(_mm_cmplt_pd(_mm_castsi128_pd(a), _mm_castsi128_pd(b))) },
     |a, b| unsafe { _mm_and_si128(a, b) },
     |a, b| unsafe { _mm_andnot_si128(a, b) },
     |a, b| unsafe { _mm_or_si128(a, b) }

@@ -795,13 +795,22 @@ crate::simd_exp_f64!(
     |a, b| unsafe { _mm256_add_pd(a, b) },
     |a, b| unsafe { _mm256_sub_pd(a, b) },
     |v| unsafe { _mm256_castsi256_pd(v) },
-    // Round-to-nearest: trunc(v + copysign(0.5, v)) (round-half-away-from-zero).
+    // Round-to-nearest: trunc(v + copysign(0.5, v)) in f64, converted to
+    // i32 (|n| ≤ 1024 fits i32), then sign-extended to i64. `_mm256_cvttpd_epi64`
+    // is AVX-512DQ, not AVX2 — using it here SIGILLs on AVX2-only CPUs.
     |v| unsafe {
         let sign = _mm256_and_pd(v, _mm256_castsi256_pd(_mm256_set1_epi64x(i64::MIN)));
         let half = _mm256_or_pd(sign, _mm256_set1_pd(0.5));
-        _mm256_cvttpd_epi64(_mm256_add_pd(v, half))
+        let n32 = _mm256_cvttpd_epi32(_mm256_add_pd(v, half));
+        _mm256_cvtepi32_epi64(n32)
     },
-    |v| unsafe { _mm256_cvtepi64_pd(v) },
+    |v| unsafe {
+        // Reverse: extract the low i32 of each i64 lane (the values fit),
+        // pack them into the low 128 bits, and convert i32 → f64.
+        // `_mm256_cvtepi64_pd` is AVX-512DQ, not AVX2.
+        let packed = _mm256_permutevar8x32_epi32(v, _mm256_setr_epi32(0, 2, 4, 6, 0, 0, 0, 0));
+        _mm256_cvtepi32_pd(_mm256_castsi256_si128(packed))
+    },
     |v| unsafe { _mm256_slli_epi64(v, 52) },
     |a, b| unsafe { _mm256_add_epi64(a, b) },
     |a, b| unsafe { _mm256_cmpgt_epi64(a, b) },
