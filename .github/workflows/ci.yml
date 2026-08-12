@@ -74,11 +74,12 @@ jobs:
       - name: generate coverage (lcov)
         run: cargo llvm-cov --all-features --lcov --output-path lcov.info
       - name: enforce coverage threshold
-        # ~70% line coverage: scalar + native-backend kernels are fully
-        # exercised, but the non-native SIMD files (avx2/avx512 on this
-        # runner, or neon on x86) are only compiled, not executed, so a
-        # higher gate would fail on the host's single selected backend.
-        run: cargo llvm-cov --all-features --summary-only --fail-under-lines 70
+        # `report` reuses the run's counters instead of re-running tests
+        # (a bare second `cargo llvm-cov` re-instruments and zeroes some
+        # files). ~70% line floor: scalar + native-backend kernels are
+        # fully exercised, but the non-native SIMD files (avx2/avx512 on
+        # this runner, or neon on x86) are only compiled, not executed.
+        run: cargo llvm-cov report --summary-only --fail-under-lines 70
       - name: upload to Codecov
         if: ${{ env.CODECOV_TOKEN != '' }}
         env:
