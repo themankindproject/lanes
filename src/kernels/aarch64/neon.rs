@@ -1182,4 +1182,23 @@ mod tests {
             }
         }
     }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn debug_f64_exp_negative_one() {
+        if !std::arch::is_aarch64_feature_detected!("neon") {
+            return;
+        }
+        let v = vdupq_n_f64(-1.0);
+        let r = unsafe { vexp_128d(v) };
+        let mut out = [0.0_f64; 2];
+        unsafe { vst1q_f64(out.as_mut_ptr(), r) };
+        let expected = crate::kernels::exp::exp_f64(-1.0);
+        eprintln!("DEBUG vexp_128d(-1.0) = {:?}, scalar = {expected}", out);
+        assert!(
+            (out[0] - expected).abs() < 1e-9,
+            "vexp_128d(-1.0) = {} vs scalar {expected}",
+            out[0]
+        );
+    }
 }
