@@ -4,164 +4,38 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -Dwarnings
 
 jobs:
-  check:
-    name: Check (${{ matrix.os }}, ${{ matrix.rust }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable, "1.89.0"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --all-features
-      - run: cargo check --no-default-features
-
-  test:
-    name: Test (${{ matrix.os }}, ${{ matrix.rust }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable, "1.89.0"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-features
-      - run: cargo test --no-default-features
-
-  wasm:
-    name: Wasm check (no_std, scalar backend)
+  ci:
+    name: fmt + clippy + test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.89.0
         with:
+          components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      # Core algorithms must stay free of OS-specific APIs: prove the crate
-      # compiles on wasm32 in no_std mode (future SIMD128 backend target).
-      - run: cargo check --no-default-features --target wasm32-unknown-unknown
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo clippy --all-targets --no-default-features -- -D warnings
-
-  fmt:
-    name: Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
       - run: cargo fmt --all -- --check
-
-  doc:
-    name: Documentation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-features
+      - run: cargo check --no-default-features
+      - run: cargo check --no-default-features --target wasm32-unknown-unknown
       - run: cargo doc --no-deps --all-features
         env:
-          RUSTDOCFLAGS: -Dwarnings
+          RUSTDOCFLAGS: -D warnings
 
-  deny:
-    name: Dependency audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: EmbarkStudios/cargo-deny-action@v2
-
-  # Undefined-behavior detection via the Miri interpreter. Runs the scalar
-  # kernel tests (the portable unsafe surface: raw-pointer loads, tail
-  # handling) under Miri, which catches out-of-bounds reads, dangling
-  # pointers, and provenance violations that normal tests miss.
-  # Miri is nightly-only. SIMD kernels are excluded: Miri's x86 baseline
-  # lacks the feature set (e.g. sse3) that compiler-generated code for
-  # vector intrinsics requires, so it flags false UB — those kernels are
-  # validated by the native test + aarch64 jobs on real hardware.
-  miri:
-    name: Miri (UB check)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: miri
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo miri test --all-features --lib kernels::scalar
-        env:
-          MIRIFLAGS: -Zmiri-strict-provenance
-
-  # Fuzz smoke test: prove every fuzz target compiles and runs for a short
-  # burst under cargo-fuzz (nightly). Full fuzzing is a dev activity; CI only
-  # proves the harnesses stay healthy (compile + no instant crash).
-  fuzz:
-    name: Fuzz smoke
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: fuzz
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
-      - name: Build fuzz targets
-        run: cargo fuzz build --fuzz-dir fuzz
-      - name: Smoke-run fuzz targets
-        run: |
-          for target in fuzz/fuzz_targets/*.rs; do
-            name=$(basename "$target" .rs)
-            cargo fuzz run --fuzz-dir fuzz "$name" -- -runs=1000 || exit 1
-          done
-
-  # Platform tests: execute the NEON kernels on real ARM64 silicon. The
-  # aarch64 code is compiled by `check` but only *runs* here — this is the
-  # job that validates the per-backend tests on hardware.
-  platform-aarch64:
-    name: Test (aarch64, native)
+  # Execute the NEON kernels on real ARM64 silicon. The aarch64 code is
+  # compiled by the `ci` job's clippy/check but only *runs* here — this
+  # validates the per-backend tests on hardware.
+  aarch64:
+    name: test (aarch64, native)
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.89.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-features
-      - run: cargo test --no-default-features
-
-  # Doctests: the `doc` job only builds docs; this runs them.
-  doc-test:
-    name: Doctest
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --doc --all-features

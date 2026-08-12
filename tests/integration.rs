@@ -3,7 +3,7 @@
 //! These tests exercise the library as an external consumer would,
 //! using only the public re-exports from the crate root.
 
-use lanes::{dot, max, min, prod, sum, Backend, Error};
+use lanes::{Backend, Error, dot, max, min, prod, sum};
 
 #[test]
 fn sum_empty_returns_zero() {

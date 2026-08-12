@@ -9,6 +9,8 @@ categories = ["algorithms", "science", "no-std"]
 keywords = ["simd", "algorithms", "performance", "kernels"]
 readme = "README.md"
 repository = "https://github.com/themankindproject/lanes"
+homepage = "https://github.com/themankindproject/lanes"
+authors = ["bravo1goingdark <kumarashutosh34169@gmail.com>"]
 exclude = ["fuzz"]
 
 [features]
@@ -25,7 +27,17 @@ rand = "0.8"
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [[bench]]
 name = "kernels"
 harness = false
+
+[profile.release]
+lto           = "fat"
+codegen-units = 1
+strip         = "symbols"
+
+[profile.bench]
+lto           = "fat"
+codegen-units = 1

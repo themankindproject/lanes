@@ -54,7 +54,13 @@ pub fn exp_reference(x: f32) -> f32 {
     let xd = f64::from(x);
     if xd.is_nan() || xd.is_infinite() {
         // mirror f32 semantics
-        return if xd.is_nan() { f32::NAN } else if xd > 0.0 { f32::INFINITY } else { 0.0 };
+        return if xd.is_nan() {
+            f32::NAN
+        } else if xd > 0.0 {
+            f32::INFINITY
+        } else {
+            0.0
+        };
     }
     // Saturation before range reduction: exp saturates below the f32 floor
     // (x < ln(2^-149) ≈ -103.3 → 0) and above the max (x > ln(f32::MAX) ≈
@@ -72,7 +78,9 @@ pub fn exp_reference(x: f32) -> f32 {
     let r = xd - n * std_ln2();
     // exp(r) degree-13 poly (r ∈ [-0.35, 0.35]), Horner in r (NOT r² — the
     // r² form would drop all odd powers and compute a cosh-like function).
-    let poly = 1.0 + r * (1.0 + r * (0.5 + r * (1.0 / 6.0 + r * (1.0 / 24.0 + r * (1.0 / 120.0 + r * (1.0 / 720.0 + r * (1.0 / 5040.0 + r * (1.0 / 40_320.0 + r * (1.0 / 362_880.0 + r * (1.0 / 3_628_800.0 + r * (1.0 / 39_916_800.0 + r / 479_001_600.0)))))))))));
+    // Horner on descending coefficients: ((…(1/13!·r + 1/12!)·r + …)·r + 1)
+    // (a `fold` — rustfmt cannot break a hand-nested 13-term expression).
+    let poly = COEFFS.iter().fold(0.0, |acc, &c| acc * r + c);
     // scale by 2^n in f64, then round to f32.
     let scaled = poly * f64_pow2(n);
     // clamp to f32 range
@@ -88,6 +96,28 @@ pub fn exp_reference(x: f32) -> f32 {
 /// `ln(2)` as `f64`, computed once (const can't call `f64::ln` in `no_std`).
 const LN2_F64: f64 = 0.693_147_180_559_945_3;
 const INV_LN2_F64: f64 = 1.442_695_040_888_963_4;
+
+/// Taylor coefficients for `exp(r) = 1 + r + r²/2 + … + r¹³/13!`, in
+/// **descending** power order (from `c₁₃ = 1/13!` down to the constant
+/// `c₀ = 1`), for Horner evaluation `((…(1/13!·r + 1/12!)·r + …)·r + 1)`
+/// in [`exp`] — a `fold`, since rustfmt cannot line-break a hand-nested
+/// 14-term expression without hanging.
+const COEFFS: [f64; 14] = [
+    1.0 / 6_227_020_800.0, // 1/13!
+    1.0 / 479_001_600.0,   // 1/12!
+    1.0 / 39_916_800.0,    // 1/11!
+    1.0 / 3_628_800.0,     // 1/10!
+    1.0 / 362_880.0,       // 1/9!
+    1.0 / 40_320.0,        // 1/8!
+    1.0 / 5_040.0,         // 1/7!
+    1.0 / 720.0,           // 1/6!
+    1.0 / 120.0,           // 1/5!
+    1.0 / 24.0,            // 1/4!
+    1.0 / 6.0,             // 1/3!
+    0.5,                   // 1/2!
+    1.0,                   // 1/1!
+    1.0,                   // c₀ (constant term)
+];
 
 /// Round half away from zero, `no_std`-safe.
 ///
@@ -193,7 +223,11 @@ mod tests {
         while x < 100.0 {
             let f = exp(x);
             let r = exp_reference(x);
-            assert!(ulps(f, r) <= 2, "x={x}: fast={f} ref={r} ulps={}", ulps(f, r));
+            assert!(
+                ulps(f, r) <= 2,
+                "x={x}: fast={f} ref={r} ulps={}",
+                ulps(f, r)
+            );
             x += 0.003; // ~66k samples, covers reduction bins densely
         }
     }
@@ -216,7 +250,11 @@ mod tests {
             let x = i as f32 * 0.01;
             let f = exp(x);
             let s = x.exp();
-            assert!(ulps(f, s) <= 4, "x={x}: ours={f} std={s} ulps={}", ulps(f, s));
+            assert!(
+                ulps(f, s) <= 4,
+                "x={x}: ours={f} std={s} ulps={}",
+                ulps(f, s)
+            );
         }
     }
 
@@ -231,7 +269,9 @@ mod tests {
             for frac in [0u32, 0x3F_FFFF, 0x20_0000, 0x00_0001] {
                 let bits = (u32::from(exp_bits) << 23) | frac;
                 // Both signs of every finite bin (skip inf/nan patterns).
-                if exp_bits == 255 { continue; }
+                if exp_bits == 255 {
+                    continue;
+                }
                 for sign in [0u32, 0x8000_0000] {
                     let x = f32::from_bits(bits | sign);
                     let f = exp(x);
@@ -258,7 +298,11 @@ mod tests {
             let x = i as f32 * 0.01;
             let r = exp_reference(x);
             let s = x.exp();
-            assert!(ulps(r, s) <= 2, "x={x}: ref={r} std={s} ulps={}", ulps(r, s));
+            assert!(
+                ulps(r, s) <= 2,
+                "x={x}: ref={r} std={s} ulps={}",
+                ulps(r, s)
+            );
         }
     }
 

@@ -1,1 +1,3 @@
 msrv = "1.89"
+
+avoid-breaking-exported-api = true

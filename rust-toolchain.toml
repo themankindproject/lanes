@@ -1,6 +1,3 @@
 [toolchain]
-channel = "stable"
-components = ["rustfmt", "clippy"]
-# CI installs extra targets on demand (see .github/workflows/ci.yml);
-# keeping them out of this file avoids fetching them for every local build.
-profile = "minimal"
+channel    = "1.89.0"
+components = ["rustfmt", "clippy", "rust-src"]

@@ -105,9 +105,9 @@ pub use error::Error;
 /// Statistical reductions (aggregates over slices): `sum`, `prod`, `min`,
 /// `max`, `sum_sq`, `mean`, `variance`, `dot`.
 pub mod stats {
-    pub use crate::algorithms::stats::{dot, max, mean, min, prod, sum, sum_sq};
     #[cfg(feature = "alloc")]
     pub use crate::algorithms::stats::variance;
+    pub use crate::algorithms::stats::{dot, max, mean, min, prod, sum, sum_sq};
 }
 
 /// Distance and norm functions: `l1_norm`, `l2_norm`, `max_norm`.

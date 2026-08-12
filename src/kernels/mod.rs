@@ -21,6 +21,9 @@ pub(crate) mod aarch64;
 use crate::dispatch::Backend;
 
 /// Identity pass-through used by `dispatch_unary!` for non-Option returns.
+/// Only needed where SIMD match arms exist (the scalar arm passes through
+/// directly); on other targets every `$wrap` call site is `#[cfg]`'d out.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline]
 fn id<T>(v: T) -> T {
     v

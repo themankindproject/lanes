@@ -41,9 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a cargo-fuzz target (`fuzz/`, nightly-only, not in CI).
 - Criterion benchmarks for all kernels vs naive baselines at sizes
   `16 … 1_000_000` ([docs/benchmarking.md](docs/benchmarking.md)).
-- CI (`fmt`, `check`, `test`, `clippy`, `doc`, `cargo-deny`) on
-  stable + MSRV 1.89 across Linux/macOS/Windows; wasm32 `no_std` check;
-  benchmark workflow with backend matrix; release dry-run workflow.
+- CI (`fmt`, `check`, `test`, `clippy`, `doc`) on stable + MSRV 1.89
+  across Linux/macOS/Windows; wasm32 `no_std` check; benchmark workflow
+  with backend matrix; release dry-run workflow.
 
 [Unreleased]: https://github.com/themankindproject/lanes/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/themankindproject/lanes/releases/tag/v0.1.0

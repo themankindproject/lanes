@@ -20,6 +20,14 @@ Thumbs.db
 # Benchmark output
 /target/criterion/
 
+# Coverage / profiling
+*.profraw
+tarpaulin-report.html
+lcov.info
+cobertura.xml
+
+# Local env
+.env
+.env.local
+
 site
-
-

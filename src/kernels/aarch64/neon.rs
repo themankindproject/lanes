@@ -1,4 +1,4 @@
-//! ARM NEON (128-bit) SIMD kernel implementations for AArch64.
+//! ARM NEON (128-bit) SIMD kernel implementations for `AArch64`.
 //!
 //! NEON is mandatory on all ARMv8-A cores, so these kernels are always
 //! available on aarch64 targets (still verified via
@@ -101,7 +101,7 @@ crate::simd_reduce!(
         acc,
         vreinterpretq_f32_s32(vandq_s32(
             vreinterpretq_s32_f32(v),
-            vmvnq_s32(vdupq_n_s32(-2147483648))
+            vmvnq_s32(vdupq_n_s32(i32::MIN))
         ))
     ),
     |v| unsafe { vaddvq_f32(v) },
@@ -119,7 +119,7 @@ crate::simd_reduce!(
         acc,
         vreinterpretq_f32_s32(vandq_s32(
             vreinterpretq_s32_f32(v),
-            vmvnq_s32(vdupq_n_s32(-2147483648))
+            vmvnq_s32(vdupq_n_s32(i32::MIN))
         ))
     ),
     |v| unsafe { vmaxvq_f32(v) },
@@ -273,7 +273,8 @@ crate::simd_exp!(
     |a, b| unsafe { vaddq_f32(a, b) },
     |a, b| unsafe { vsubq_f32(a, b) },
     // NEON float bitwise ops don't exist in stdarch; do them on the int
-    // reinterpretation (same bits).
+    // reinterpretation (same bits). `vbicq(a, b) = a & ~b`, so the
+    // `~a & b` andnot semantics are `vbicq(b, a)`.
     |a, b| unsafe {
         vreinterpretq_f32_s32(vandq_s32(
             vreinterpretq_s32_f32(a),
@@ -282,8 +283,8 @@ crate::simd_exp!(
     },
     |a, b| unsafe {
         vreinterpretq_f32_s32(vbicq_s32(
-            vreinterpretq_s32_f32(a),
             vreinterpretq_s32_f32(b),
+            vreinterpretq_s32_f32(a),
         ))
     },
     |a, b| unsafe {
@@ -304,7 +305,8 @@ crate::simd_exp!(
     |a, b| unsafe { vreinterpretq_s32_u32(vcgtq_s32(a, b)) },
     |a, b| unsafe { vreinterpretq_s32_u32(vcltq_s32(a, b)) },
     |a, b| unsafe { vandq_s32(a, b) },
-    |a, b| unsafe { vbicq_s32(a, b) },
+    // `vbicq(a, b) = a & ~b`; andnot(a, b) = ~a & b = vbicq(b, a).
+    |a, b| unsafe { vbicq_s32(b, a) },
     |a, b| unsafe { vorrq_s32(a, b) }
 );
 
