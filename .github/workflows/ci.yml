@@ -39,3 +39,52 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-features
+
+  # Undefined-behavior detection via the Miri interpreter. Runs the scalar
+  # kernel tests (the portable unsafe surface: raw-pointer loads, tail
+  # handling) under Miri, which catches out-of-bounds reads, dangling
+  # pointers, and provenance violations that normal tests miss.
+  # Miri is nightly-only. SIMD kernels are excluded: Miri's x86 baseline
+  # lacks the feature set (e.g. sse3) that compiler-generated code for
+  # vector intrinsics requires, so it flags false UB — those kernels are
+  # validated by the native test + aarch64 jobs on real hardware.
+  # `toolchain: nightly` is explicit so it overrides rust-toolchain.toml's
+  # pinned stable (which would otherwise make cargo-miri unavailable).
+  miri:
+    name: Miri (UB check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo miri test --all-features --lib kernels::scalar
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+
+  # Fuzz smoke test: prove every fuzz target compiles and runs for a short
+  # burst under cargo-fuzz (nightly). Full fuzzing is a dev activity; CI
+  # only proves the harnesses stay healthy (compile + no instant crash).
+  fuzz:
+    name: Fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Build fuzz targets
+        run: cargo fuzz build --fuzz-dir fuzz
+      - name: Smoke-run fuzz targets
+        run: |
+          for target in fuzz/fuzz_targets/*.rs; do
+            name=$(basename "$target" .rs)
+            cargo fuzz run --fuzz-dir fuzz "$name" -- -runs=1000 || exit 1
+          done
