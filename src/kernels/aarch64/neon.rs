@@ -1189,7 +1189,7 @@ mod tests {
         if !std::arch::is_aarch64_feature_detected!("neon") {
             return;
         }
-        let v = vdupq_n_f64(-1.0);
+        let v = unsafe { vdupq_n_f64(-1.0) };
         let r = unsafe { vexp_128d(v) };
         let mut out = [0.0_f64; 2];
         unsafe { vst1q_f64(out.as_mut_ptr(), r) };
