@@ -469,16 +469,17 @@ unsafe fn hmax_128d(v: float64x2_t) -> f64 {
 ///
 /// # Safety
 /// Caller must ensure the CPU supports NEON.
-#[allow(clippy::cast_sign_loss)]
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn argmax_pair_128d(v: float64x2_t, idx: int32x4_t) -> (f64, usize) {
+unsafe fn argmax_pair_128d(v: float64x2_t, idx: int64x2_t) -> (f64, usize) {
     let m = unsafe { hmax_128d(v) };
     let eq = unsafe { vceqq_f64(v, vdupq_n_f64(m)) }; // uint64x2_t: [m==l0, m==l1]
     // Lane 0 is the max iff its mask bit is set (all-ones); ties → lane 0.
-    let lane = usize::from(unsafe { vgetq_lane_u64(eq, 0) } != 0);
-    let mut idxs = [0_i32; 4];
-    unsafe { vst1q_s32(idxs.as_mut_ptr(), idx) };
+    // usize::from(false) = 0 (lane 0 is the max), usize::from(true) = 1.
+    let lane = usize::from(unsafe { vgetq_lane_u64(eq, 0) } == 0);
+    let mut idxs = [0_i64; 2];
+    unsafe { vst1q_s64(idxs.as_mut_ptr(), idx) };
     (m, idxs[lane] as usize)
 }
 
@@ -488,15 +489,15 @@ unsafe fn argmax_pair_128d(v: float64x2_t, idx: int32x4_t) -> (f64, usize) {
 ///
 /// # Safety
 /// Caller must ensure the CPU supports NEON.
-#[allow(clippy::cast_sign_loss)]
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn argmin_pair_128d(v: float64x2_t, idx: int32x4_t) -> (f64, usize) {
+unsafe fn argmin_pair_128d(v: float64x2_t, idx: int64x2_t) -> (f64, usize) {
     let m = unsafe { hmin_128d(v) };
     let eq = unsafe { vceqq_f64(v, vdupq_n_f64(m)) }; // uint64x2_t: [m==l0, m==l1]
-    let lane = usize::from(unsafe { vgetq_lane_u64(eq, 0) } != 0);
-    let mut idxs = [0_i32; 4];
-    unsafe { vst1q_s32(idxs.as_mut_ptr(), idx) };
+    let lane = usize::from(unsafe { vgetq_lane_u64(eq, 0) } == 0);
+    let mut idxs = [0_i64; 2];
+    unsafe { vst1q_s64(idxs.as_mut_ptr(), idx) };
     (m, idxs[lane] as usize)
 }
 
@@ -603,22 +604,16 @@ crate::simd_argminmax!(
     "neon",
     2,
     |p| unsafe { vld1q_f64(p) },
-    vcombine_s32(vcreate_s32(0x0000_0001_0000_0000), vcreate_s32(0)),
-    |i| unsafe { vdupq_n_s32(i) },
-    |a, b| unsafe { vaddq_s32(a, b) },
+    // i64 index lanes: [0, 1] — one index per f64 lane, so the 64-bit
+    // mask blends the index vector correctly (an i32 index vector would
+    // need a 64→32 mask expansion that can't track the two halves of an
+    // f64 lane independently).
+    vcombine_s64(vcreate_s64(1), vcreate_s64(0)),
+    |i: i64| unsafe { vdupq_n_s64(i) },
+    |a, b| unsafe { vaddq_s64(a, b) },
     |a: float64x2_t, b: float64x2_t| unsafe { vcgtq_f64(a, b) },
     |mask: uint64x2_t, a: float64x2_t, b: float64x2_t| unsafe { vbslq_f64(mask, a, b) },
-    // Blend the i32 index vector per 64-bit lane: the mask is uint64x2_t
-    // (one bit per f64 lane), so reinterpret the index vector to i64 lanes,
-    // blend, and reinterpret back. (A 64→32-bit reinterpret of the mask
-    // would wrongly set the upper 32-bit half of each lane's mask.)
-    |mask: uint64x2_t, a: int32x4_t, b: int32x4_t| unsafe {
-        vreinterpretq_s32_s64(vbslq_s64(
-            mask,
-            vreinterpretq_s64_s32(a),
-            vreinterpretq_s64_s32(b),
-        ))
-    },
+    |mask: uint64x2_t, a: int64x2_t, b: int64x2_t| unsafe { vbslq_s64(mask, a, b) },
     |a: f64, b: f64| a > b,
     |v, idx| unsafe { argmax_pair_128d(v, idx) }
 );
@@ -629,18 +624,12 @@ crate::simd_argminmax!(
     "neon",
     2,
     |p| unsafe { vld1q_f64(p) },
-    vcombine_s32(vcreate_s32(0x0000_0001_0000_0000), vcreate_s32(0)),
-    |i| unsafe { vdupq_n_s32(i) },
-    |a, b| unsafe { vaddq_s32(a, b) },
+    vcombine_s64(vcreate_s64(1), vcreate_s64(0)),
+    |i: i64| unsafe { vdupq_n_s64(i) },
+    |a, b| unsafe { vaddq_s64(a, b) },
     |a: float64x2_t, b: float64x2_t| unsafe { vcltq_f64(a, b) },
     |mask: uint64x2_t, a: float64x2_t, b: float64x2_t| unsafe { vbslq_f64(mask, a, b) },
-    |mask: uint64x2_t, a: int32x4_t, b: int32x4_t| unsafe {
-        vreinterpretq_s32_s64(vbslq_s64(
-            mask,
-            vreinterpretq_s64_s32(a),
-            vreinterpretq_s64_s32(b),
-        ))
-    },
+    |mask: uint64x2_t, a: int64x2_t, b: int64x2_t| unsafe { vbslq_s64(mask, a, b) },
     |a: f64, b: f64| a < b,
     |v, idx| unsafe { argmin_pair_128d(v, idx) }
 );
@@ -1212,49 +1201,36 @@ mod tests {
 
     #[cfg(feature = "alloc")]
     #[test]
-    fn debug_f64_argmax_trace() {
+    fn f64_argmax_argmin_matches_scalar_when_available() {
         if !std::arch::is_aarch64_feature_detected!("neon") {
             return;
         }
-        let data = [5.0_f64, 3.0, 8.0, 1.0, 8.0];
-        let (m, idx) = unsafe { argmax_f64(&data) };
-        eprintln!("DEBUG argmax_f64({data:?}) = ({m}, {idx})");
-
-        // Manually trace the vector state after each chunk.
-        let vidx = unsafe {
-            vcombine_s32(vcreate_s32(0x0000_0001_0000_0000), vcreate_s32(0))
-        };
-        let mut imax = vidx;
-        let mut vmax = unsafe { vld1q_f64(data.as_ptr()) };
-        eprintln!("DEBUG chunk0 vmax={:?}", {
-            let mut o = [0.0_f64; 2];
-            unsafe { vst1q_f64(o.as_mut_ptr(), vmax) };
-            o
-        });
-        for i in 1..2 {
-            let v = unsafe { vld1q_f64(data.as_ptr().add(i * 2)) };
-            let off = unsafe { vaddq_s32(vdupq_n_s32((i * 2) as i32), vidx) };
-            let mask = unsafe { vcgtq_f64(v, vmax) };
-            vmax = unsafe { vbslq_f64(mask, v, vmax) };
-            imax = unsafe {
-                vreinterpretq_s32_s64(vbslq_s64(
-                    mask,
-                    vreinterpretq_s64_s32(off),
-                    vreinterpretq_s64_s32(imax),
-                ))
-            };
-            let mut o = [0.0_f64; 2];
-            let mut io = [0_i32; 4];
-            let mut mo = [0_u64; 2];
-            unsafe {
-                vst1q_f64(o.as_mut_ptr(), vmax);
-                vst1q_s32(io.as_mut_ptr(), imax);
-                vst1q_u64(mo.as_mut_ptr(), mask);
-            }
-            eprintln!("DEBUG chunk{i} v={v:?} mask={mo:?} vmax={o:?} imax={io:?}");
+        // Regression: the index vector must track per-f64-lane (i64 lanes,
+        // one index per value lane); an i32 index vector with a 64-bit mask
+        // blend corrupted the tracked index on multi-chunk inputs.
+        let cases: &[&[f64]] = &[
+            &[5.0, 3.0, 8.0, 1.0, 8.0], // argmax → idx 2, argmin → idx 3
+            &[1.0, 2.0],                // single chunk
+            &[9.0, 1.0, 9.0],           // tie across chunk boundary
+            &[-3.0, -1.0, -2.0],        // negatives
+        ];
+        for data in cases {
+            let (m, idx) = unsafe { argmax_f64(data) };
+            let ref_idx = data
+                .iter()
+                .enumerate()
+                .max_by(|(ia, a), (ib, b)| a.total_cmp(b).then_with(|| ib.cmp(ia)))
+                .map(|(i, _)| i)
+                .unwrap();
+            assert_eq!(idx, ref_idx, "argmax {data:?}: m={m}");
+            let (m, idx) = unsafe { argmin_f64(data) };
+            let ref_idx = data
+                .iter()
+                .enumerate()
+                .min_by(|(ia, a), (ib, b)| a.total_cmp(b).then_with(|| ib.cmp(ia)))
+                .map(|(i, _)| i)
+                .unwrap();
+            assert_eq!(idx, ref_idx, "argmin {data:?}: m={m}");
         }
-        let (m2, idx2) = unsafe { argmax_pair_128d(vmax, imax) };
-        eprintln!("DEBUG reduce_pair = ({m2}, {idx2})");
-        assert_eq!(idx, 2, "argmax index wrong");
     }
 }

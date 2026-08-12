@@ -560,7 +560,7 @@ macro_rules! simd_argminmax {
                 let mut imax = $vidx;
                 for i in 1..chunks {
                     let v = $load(unsafe { ptr.add(i * $lanes) });
-                    let off = $addi($set1i((i * $lanes) as i32), $vidx);
+                    let off = $addi($set1i((i * $lanes) as _), $vidx);
                     let mask = $cmp(v, vmax);
                     vmax = $blend(mask, v, vmax);
                     imax = $blend_idx(mask, off, imax);
