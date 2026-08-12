@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
@@ -27,6 +27,32 @@ jobs:
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
+
+  # Minimum Supported Rust Version: the whole check/test surface must keep
+  # compiling on 1.89.0 (required for stable AVX-512 target_feature).
+  msrv:
+    name: MSRV (1.89.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-features
+      - run: cargo test --all-features
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # Doctests get their own job so a doc example regression is reported
+  # independently of the main test run.
+  doctest:
+    name: doctest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --doc --all-features
 
   # Execute the NEON kernels on real ARM64 silicon. The aarch64 code is
   # compiled by the `ci` job's clippy/check but only *runs* here — this
