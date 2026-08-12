@@ -58,8 +58,9 @@ jobs:
       - run: cargo test --doc --all-features
 
   # Line coverage via LLVM source-based instrumentation (llvm-cov), run on
-  # the same pinned toolchain as everything else. Produces lcov, enforces a
-  # minimum line threshold, and uploads to Codecov when a token is present.
+  # the same pinned toolchain as everything else. Produces lcov and uploads
+  # to Codecov when a token is present; no threshold is enforced because
+  # backend coverage is host-dependent.
   coverage:
     name: coverage (llvm-cov)
     runs-on: ubuntu-latest
@@ -71,14 +72,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
-      - name: generate coverage (lcov) and enforce threshold
-        # One invocation: lcov for Codecov plus the line gate, so the
-        # counters are merged once (a separate `report` step can lose the
-        # profraw data between Actions steps). ~70% line floor: scalar +
-        # native-backend kernels are fully exercised, but the non-native
-        # SIMD files (avx2/avx512 on this runner, or neon on x86) are
-        # only compiled, not executed.
-        run: cargo llvm-cov --all-features --lcov --output-path lcov.info --fail-under-lines 70
+      - name: generate coverage (lcov)
+        # No line gate: SIMD backend coverage is host-dependent (the
+        # native backend gets exercised, the others only compile), so the
+        # percentage is informational, not a CI signal.
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
       - name: upload to Codecov
         if: ${{ env.CODECOV_TOKEN != '' }}
         env:
