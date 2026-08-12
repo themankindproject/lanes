@@ -706,20 +706,15 @@ crate::simd_exp_f64!(
     |v| unsafe { vcvtq_s64_f64(v) },
     |v| unsafe { vshlq_n_s64(v, 52) },
     |a, b| unsafe { vaddq_s64(a, b) },
-    |a, b| unsafe {
-        vreinterpretq_s64_u64(vcgtq_u64(
-            vreinterpretq_u64_s64(a),
-            vreinterpretq_u64_s64(b),
-        ))
-    },
-    |a, b| unsafe {
-        vreinterpretq_s64_u64(vcgtq_u64(
-            vreinterpretq_u64_s64(b),
-            vreinterpretq_u64_s64(a),
-        ))
-    },
+    // Signed compares: n_int can be negative (n < -1022 case), so unsigned
+    // compares would mis-handle the underflow clamp. The compare result is
+    // uint64x2_t; reinterpret to int64x2_t for the and/andnot ops below.
+    |a, b| unsafe { vreinterpretq_s64_u64(vcgtq_s64(a, b)) },
+    |a, b| unsafe { vreinterpretq_s64_u64(vcgtq_s64(b, a)) },
     |a, b| unsafe { vandq_s64(a, b) },
-    |a, b| unsafe { vbicq_s64(a, b) },
+    // vbicq(a, b) = a & ~b; the macro calls $andnot_i(under, n_bits) with
+    // x86 semantics (~under & n_bits), so the operands must be swapped.
+    |a, b| unsafe { vbicq_s64(b, a) },
     |a, b| unsafe { vorrq_s64(a, b) }
 );
 

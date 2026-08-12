@@ -304,10 +304,11 @@ macro_rules! simd_exp {
 /// Generate a register-only vector `exp` kernel for `f64` (`vexp_128d`,
 /// `vexp_256d`, …).
 ///
-/// Same algorithm as the scalar [`exp_f64`] (fdlibm double-double ln2
-/// reduction + degree-20 Taylor + 2^n scaling), but vectorized. Rounding of
-/// `n = round(x·log2e)` uses the 2^52 add-magic (valid for f64 mantissa
-/// rounding), and the exponent scale uses 52-bit left shifts on `i64` lanes.
+/// Same algorithm as the scalar `crate::kernels::exp::exp_f64` (fdlibm
+/// double-double ln2 reduction + degree-20 Taylor + 2^n scaling), but
+/// vectorized. Rounding of `n = round(x·log2e)` uses the 2^52 add-magic
+/// (valid for f64 mantissa rounding), and the exponent scale uses 52-bit
+/// left shifts on `i64` lanes.
 ///
 /// The f32 [`simd_exp!`] cannot be reused: its 2^23 magic, `i32` lanes, and
 /// f32 exponent clamps are width-specific. This macro takes the same
