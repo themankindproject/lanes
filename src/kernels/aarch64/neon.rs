@@ -607,8 +607,8 @@ crate::simd_argminmax!(
     // i64 index lanes: [0, 1] — one index per f64 lane, so the 64-bit
     // mask blends the index vector correctly (an i32 index vector would
     // need a 64→32 mask expansion that can't track the two halves of an
-    // f64 lane independently).
-    unsafe { vcombine_s64(vcreate_s64(1), vcreate_s64(0)) },
+    // f64 lane independently). vcombine_s64(lo, hi): lane 0 = lo = 0.
+    unsafe { vcombine_s64(vcreate_s64(0), vcreate_s64(1)) },
     |i: i64| unsafe { vdupq_n_s64(i) },
     |a, b| unsafe { vaddq_s64(a, b) },
     |a: float64x2_t, b: float64x2_t| unsafe { vcgtq_f64(a, b) },
@@ -624,7 +624,7 @@ crate::simd_argminmax!(
     "neon",
     2,
     |p| unsafe { vld1q_f64(p) },
-    unsafe { vcombine_s64(vcreate_s64(1), vcreate_s64(0)) },
+    unsafe { vcombine_s64(vcreate_s64(0), vcreate_s64(1)) },
     |i: i64| unsafe { vdupq_n_s64(i) },
     |a, b| unsafe { vaddq_s64(a, b) },
     |a: float64x2_t, b: float64x2_t| unsafe { vcltq_f64(a, b) },
@@ -1216,35 +1216,6 @@ mod tests {
         ];
         for data in cases {
             let (m, idx) = unsafe { argmax_f64(data) };
-            eprintln!("DEBUG argmax {data:?} -> ({m}, {idx})");
-
-            // Trace the kernel's internal state.
-            let vidx = unsafe { vcombine_s64(vcreate_s64(1), vcreate_s64(0)) };
-            let mut iv = [0_i64; 2];
-            unsafe { vst1q_s64(iv.as_mut_ptr(), vidx) };
-            eprintln!("DEBUG vidx = {iv:?}");
-            let chunks = data.len() / 2;
-            let mut vmax = unsafe { vld1q_f64(data.as_ptr()) };
-            let mut imax = vidx;
-            for i in 1..chunks {
-                let v = unsafe { vld1q_f64(data.as_ptr().add(i * 2)) };
-                let off = unsafe { vaddq_s64(vdupq_n_s64((i * 2) as i64), vidx) };
-                let mut ov = [0_i64; 2];
-                unsafe { vst1q_s64(ov.as_mut_ptr(), off) };
-                let mask = unsafe { vcgtq_f64(v, vmax) };
-                vmax = unsafe { vbslq_f64(mask, v, vmax) };
-                imax = unsafe { vbslq_s64(mask, off, imax) };
-                let mut vv = [0.0_f64; 2];
-                let mut iiv = [0_i64; 2];
-                unsafe {
-                    vst1q_f64(vv.as_mut_ptr(), vmax);
-                    vst1q_s64(iiv.as_mut_ptr(), imax);
-                }
-                eprintln!("DEBUG chunk{i}: off={ov:?} vmax={vv:?} imax={iiv:?}");
-            }
-            let (m2, idx2) = unsafe { argmax_pair_128d(vmax, imax) };
-            eprintln!("DEBUG reduce_pair = ({m2}, {idx2})");
-
             let ref_idx = data
                 .iter()
                 .enumerate()
@@ -1253,7 +1224,6 @@ mod tests {
                 .unwrap();
             assert_eq!(idx, ref_idx, "argmax {data:?}: m={m}");
             let (m, idx) = unsafe { argmin_f64(data) };
-            eprintln!("DEBUG argmin {data:?} -> ({m}, {idx})");
             let ref_idx = data
                 .iter()
                 .enumerate()
