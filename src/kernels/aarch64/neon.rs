@@ -1221,7 +1221,9 @@ mod tests {
         eprintln!("DEBUG argmax_f64({data:?}) = ({m}, {idx})");
 
         // Manually trace the vector state after each chunk.
-        let vidx = vcombine_s32(vcreate_s32(0x0000_0001_0000_0000), vcreate_s32(0));
+        let vidx = unsafe {
+            vcombine_s32(vcreate_s32(0x0000_0001_0000_0000), vcreate_s32(0))
+        };
         let mut imax = vidx;
         let mut vmax = unsafe { vld1q_f64(data.as_ptr()) };
         eprintln!("DEBUG chunk0 vmax={:?}", {
