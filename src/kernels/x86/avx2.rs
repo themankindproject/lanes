@@ -762,7 +762,13 @@ crate::simd_exp_f64!(
     |a, b| unsafe { _mm256_cmp_pd(a, b, _CMP_GT_OQ) },
     |v| unsafe { _mm256_castpd_si256(v) },
     |v| unsafe { _mm256_castsi256_pd(v) },
-    |v| unsafe { _mm256_cvttpd_epi64(v) },
+    // Round-to-nearest: trunc(v + copysign(0.5, v)) (round-half-away-from-zero).
+    |v| unsafe {
+        let sign = _mm256_and_pd(v, _mm256_castsi256_pd(_mm256_set1_epi64x(i64::MIN)));
+        let half = _mm256_or_pd(sign, _mm256_set1_pd(0.5));
+        _mm256_cvttpd_epi64(_mm256_add_pd(v, half))
+    },
+    |v| unsafe { _mm256_cvtepi64_pd(v) },
     |v| unsafe { _mm256_slli_epi64(v, 52) },
     |a, b| unsafe { _mm256_add_epi64(a, b) },
     |a, b| unsafe { _mm256_cmpgt_epi64(a, b) },

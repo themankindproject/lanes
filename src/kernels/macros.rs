@@ -326,7 +326,7 @@ macro_rules! simd_exp_f64 {
         $andf:expr, $andnotf:expr, $orf:expr,
         $cmpgt_f:expr,
         $cast_vi:expr, $cast_iv:expr,
-        $cvtt_f2i:expr, $slli_i:expr, $add_i:expr,
+        $round_f2i:expr, $cvti2f:expr, $slli_i:expr, $add_i:expr,
         $cmpgt_i:expr, $cmplt_i:expr,
         $and_i:expr, $andnot_i:expr, $or_i:expr
     ) => {
@@ -339,12 +339,12 @@ macro_rules! simd_exp_f64 {
         #[inline]
         #[target_feature(enable = $feat)]
         unsafe fn $name(v: $vt) -> $vt {
-            // n = round(x * log2(e)) via the 2^52 add-magic: adding 2^52
-            // rounds the f64 mantissa to an integer in-place (the exponent
-            // is preserved), and subtracting it back yields round(x·log2e).
+            // n = round(x * log2(e)), via a backend round-to-nearest
+            // float→int conversion (the 2^52 add-magic is not portable:
+            // on some backends it mis-rounds negative inputs).
             let t = $mul(v, $set1(1.442_695_040_888_963_4)); // log2(e)
-            let c2_52 = $set1(4_503_599_627_370_496.0); // 2^52
-            let n = $sub($add(t, c2_52), c2_52);
+            let n_int = $round_f2i(t);
+            let n = $cvti2f(n_int);
             // r = x - n*ln2_hi - n*ln2_lo (fdlibm double-double reduction).
             let r = $sub(
                 $sub(v, $mul(n, $set1(6.931_471_803_691_238e-1))),
@@ -377,7 +377,6 @@ macro_rules! simd_exp_f64 {
             // 2^n via exponent bits (52-bit shift), clamped: n < -1022 → 0
             // (denormal range not matched by the shift path), n > 1023 →
             // inf (raw shift overflows into the sign bit, giving -inf).
-            let n_int = $cvtt_f2i(n);
             let under = $cmplt_i(n_int, $set1i(-1022));
             let over = $cmpgt_i(n_int, $set1i(1023));
             let n_bits = $slli_i($add_i(n_int, $set1i(1023)));

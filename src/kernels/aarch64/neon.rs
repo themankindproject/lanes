@@ -702,7 +702,10 @@ crate::simd_exp_f64!(
     |a, b| unsafe { vcgtq_f64(a, b) },
     |v| unsafe { vreinterpretq_s64_f64(v) },
     |v| unsafe { vreinterpretq_f64_s64(v) },
-    |v| unsafe { vcvtq_s64_f64(v) },
+    // Round-to-nearest (ties-even) float→int: the aarch64 FCVTNS instruction.
+    |v| unsafe { vcvtaq_s64_f64(v) },
+    // int→float for the reduction (exact for |n| < 2^52).
+    |v| unsafe { vcvtq_f64_s64(v) },
     |v| unsafe { vshlq_n_s64(v, 52) },
     |a, b| unsafe { vaddq_s64(a, b) },
     // Signed compares: n_int can be negative (n < -1022 case), so unsigned
@@ -1185,52 +1188,25 @@ mod tests {
 
     #[cfg(feature = "alloc")]
     #[test]
-    fn debug_f64_exp_negative_one() {
+    fn f64_exp_matches_scalar_when_available() {
         if !std::arch::is_aarch64_feature_detected!("neon") {
             return;
         }
-        let v = unsafe { vdupq_n_f64(-1.0) };
-        let r = unsafe { vexp_128d(v) };
-        let mut out = [0.0_f64; 2];
-        unsafe { vst1q_f64(out.as_mut_ptr(), r) };
-        let expected = crate::kernels::exp::exp_f64(-1.0);
-        eprintln!("DEBUG vexp_128d(-1.0) = {:?}, scalar = {expected}", out);
-
-        // Replicate the reduction steps to see where it diverges.
-        let t = unsafe { vmulq_f64(v, vdupq_n_f64(1.442_695_040_888_963_4)) };
-        let c2_52 = unsafe { vdupq_n_f64(4_503_599_627_370_496.0) };
-        let n = unsafe { vsubq_f64(vaddq_f64(t, c2_52), c2_52) };
-        let n_int = unsafe { vcvtq_s64_f64(n) };
-        let r2 = unsafe {
-            vsubq_f64(
-                vsubq_f64(v, vmulq_f64(n, vdupq_n_f64(6.931_471_803_691_238e-1))),
-                vmulq_f64(n, vdupq_n_f64(1.908_214_929_270_588e-10)),
-            )
-        };
-        let mut n_out = [0.0_f64; 2];
-        let mut ni_out = [0_i64; 2];
-        let mut r_out = [0.0_f64; 2];
-        unsafe {
-            vst1q_f64(n_out.as_mut_ptr(), n);
-            vst1q_s64(ni_out.as_mut_ptr(), n_int);
-            vst1q_f64(r_out.as_mut_ptr(), r2);
+        // Regression: the 2^52 add-magic mis-rounded negative inputs on
+        // NEON (n = -1.5 for x·log2e = -1.44), producing exp(-1) ≈ 0.520.
+        // The round-to-nearest FCVTNS path must give exp(-1) = 0.36788.
+        for &x in &[-1.0_f64, -0.5, 0.0, 0.5, 1.0, -100.0, 100.0] {
+            let v = unsafe { vdupq_n_f64(x) };
+            let r = unsafe { vexp_128d(v) };
+            let mut out = [0.0_f64; 2];
+            unsafe { vst1q_f64(out.as_mut_ptr(), r) };
+            let expected = crate::kernels::exp::exp_f64(x);
+            let tol = expected.abs() * 2e-12 + 1e-14;
+            assert!(
+                (out[0] - expected).abs() <= tol,
+                "vexp_128d({x}) = {} vs scalar {expected}",
+                out[0]
+            );
         }
-        eprintln!(
-            "DEBUG t={:?} n={:?} n_int={:?} r={:?}",
-            {
-                let mut o = [0.0_f64; 2];
-                unsafe { vst1q_f64(o.as_mut_ptr(), t) };
-                o
-            },
-            n_out,
-            ni_out,
-            r_out
-        );
-
-        assert!(
-            (out[0] - expected).abs() < 1e-9,
-            "vexp_128d(-1.0) = {} vs scalar {expected}",
-            out[0]
-        );
     }
 }

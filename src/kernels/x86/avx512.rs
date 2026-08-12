@@ -626,7 +626,13 @@ crate::simd_exp_f64!(
     },
     |v| unsafe { _mm512_castpd_si512(v) },
     |v| unsafe { _mm512_castsi512_pd(v) },
-    |v| unsafe { _mm512_cvttpd_epi64(v) },
+    // Round-to-nearest: trunc(v + copysign(0.5, v)) (round-half-away-from-zero).
+    |v| unsafe {
+        let sign = _mm512_and_pd(v, _mm512_castsi512_pd(_mm512_set1_epi64(i64::MIN)));
+        let half = _mm512_or_pd(sign, _mm512_set1_pd(0.5));
+        _mm512_cvttpd_epi64(_mm512_add_pd(v, half))
+    },
+    |v| unsafe { _mm512_cvtepi64_pd(v) },
     |v| unsafe { _mm512_slli_epi64(v, 52) },
     |a, b| unsafe { _mm512_add_epi64(a, b) },
     |a, b| unsafe { _mm512_maskz_mov_epi64(_mm512_cmpgt_epi64_mask(a, b), _mm512_set1_epi64(-1)) },

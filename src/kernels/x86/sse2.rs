@@ -739,7 +739,15 @@ crate::simd_exp_f64!(
     |a, b| unsafe { _mm_cmpgt_pd(a, b) },
     |v| unsafe { _mm_castpd_si128(v) },
     |v| unsafe { _mm_castsi128_pd(v) },
-    |v| unsafe { _mm_cvttpd_epi64(v) },
+    // Round-to-nearest without SSE4.1: trunc(v + copysign(0.5, v))
+    // (round-half-away-from-zero; ≤1 ulp difference from ties-even at the
+    // exp boundary, within tolerance).
+    |v| unsafe {
+        let sign = _mm_and_pd(v, _mm_castsi128_pd(_mm_set1_epi64x(i64::MIN)));
+        let half = _mm_or_pd(sign, _mm_set1_pd(0.5));
+        _mm_cvttpd_epi64(_mm_add_pd(v, half))
+    },
+    |v| unsafe { _mm_cvtepi64_pd(v) },
     |v| unsafe { _mm_slli_epi64(v, 52) },
     |a, b| unsafe { _mm_add_epi64(a, b) },
     |a, b| unsafe { _mm_cmpgt_epi64(a, b) },
