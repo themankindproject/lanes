@@ -2,44 +2,76 @@
 //!
 //! These serve as the universal fallback when no SIMD backend is available
 //! and as reference implementations for correctness testing.
+//!
+//! The activation kernels below (softmax/sigmoid/silu/gelu/relu) are gated
+//! on `alloc`: their only public callers (`lanes::ml::*`) return a `Vec`.
+//! The exp they use (`kernels::exp`) is fully `no_std`.
 
-// Softmax's only public caller (`lanes::ml::softmax`) returns a `Vec`, so it
-// is gated on `alloc` (available with `std`, or `no_std` + `alloc` feature).
-// The exp it uses (`kernels/exp`) is fully no_std.
-#[cfg(feature = "alloc")]
-mod softmax;
+use crate::kernels::exp;
 
-#[cfg(feature = "alloc")]
-pub(crate) use softmax::softmax;
+/// Constants for the GELU tanh approximation.
+const GELU_A: f32 = 0.797_884_6; // sqrt(2/pi) in f32
+const GELU_B: f32 = 0.044_715;
 
-// Sigmoid: same gating as softmax (public caller is `lanes::ml::sigmoid`,
-// which returns a `Vec`; the exp it uses is fully no_std).
+/// Scalar softmax reference. Writes into `out` (same length as `values`).
 #[cfg(feature = "alloc")]
-mod sigmoid;
+#[inline]
+pub(crate) fn softmax(values: &[f32], out: &mut [f32]) {
+    let Some(max) = values.iter().copied().reduce(f32::max) else {
+        return;
+    };
+    let mut sum = 0.0;
+    for (i, &v) in values.iter().enumerate() {
+        let e = exp::exp(v - max);
+        out[i] = e;
+        sum += e;
+    }
+    if sum != 0.0 {
+        let inv = 1.0 / sum;
+        for o in out.iter_mut() {
+            *o *= inv;
+        }
+    }
+}
 
+/// Scalar sigmoid reference. Writes into `out` (same length as `values`).
 #[cfg(feature = "alloc")]
-pub(crate) use sigmoid::sigmoid;
+#[inline]
+pub(crate) fn sigmoid(values: &[f32], out: &mut [f32]) {
+    for (i, &v) in values.iter().enumerate() {
+        out[i] = 1.0 / (1.0 + exp::exp(-v));
+    }
+}
 
-// `SiLU`: same gating as sigmoid.
+/// Scalar `SiLU` reference. Writes into `out` (same length as `values`).
 #[cfg(feature = "alloc")]
-mod silu;
+#[inline]
+pub(crate) fn silu(values: &[f32], out: &mut [f32]) {
+    for (i, &v) in values.iter().enumerate() {
+        out[i] = v / (1.0 + exp::exp(-v));
+    }
+}
 
+/// Scalar GELU reference (tanh approximation). Writes into `out`.
 #[cfg(feature = "alloc")]
-pub(crate) use silu::silu;
+#[inline]
+pub(crate) fn gelu(values: &[f32], out: &mut [f32]) {
+    for (i, &x) in values.iter().enumerate() {
+        let z = GELU_A * (x + GELU_B * x * x * x);
+        // tanh(z) = 1 - 2/(exp(2z)+1); saturates to ±1 via exp under/overflow.
+        let tanh_z = 1.0 - 2.0 / (exp::exp(2.0 * z) + 1.0);
+        out[i] = 0.5 * x * (1.0 + tanh_z);
+    }
+}
 
-// `GELU`: same gating as sigmoid (public caller is `lanes::ml::gelu`).
+/// Scalar `ReLU` reference. Writes into `out` (same length as `values`).
 #[cfg(feature = "alloc")]
-mod gelu;
-
-#[cfg(feature = "alloc")]
-pub(crate) use gelu::gelu;
-
-// `ReLU`: same gating (public caller is `lanes::ml::relu`).
-#[cfg(feature = "alloc")]
-mod relu;
-
-#[cfg(feature = "alloc")]
-pub(crate) use relu::relu;
+#[inline]
+pub(crate) fn relu(values: &[f32], out: &mut [f32]) {
+    for (i, &v) in values.iter().enumerate() {
+        out[i] = v.max(0.0);
+    }
+}
 
 /// Compute the sum of all elements in a slice.
 ///
@@ -390,5 +422,211 @@ mod tests {
     #[test]
     fn prod_with_zero() {
         assert_eq!(prod(&[2.0, 0.0, 4.0]), 0.0);
+    }
+
+    #[test]
+    fn softmax_empty() {
+        let mut out = [1.0_f32; 2];
+        softmax(&[], &mut out[..0]);
+    }
+
+    #[test]
+    fn softmax_sums_to_one() {
+        let v = [1.0_f32, 2.0, 3.0];
+        let mut out = [0.0_f32; 3];
+        softmax(&v, &mut out);
+        let s: f32 = out.iter().sum();
+        assert!((s - 1.0).abs() < 1e-6, "sum={s}");
+    }
+
+    #[test]
+    fn softmax_single() {
+        let mut out = [0.0_f32];
+        softmax(&[7.0], &mut out);
+        assert!((out[0] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn softmax_shift_invariance() {
+        // Adding a constant to all inputs must not change the output.
+        let a = [1.0_f32, 2.0, 3.0, 4.0];
+        let b = [11.0_f32, 12.0, 13.0, 14.0];
+        let mut oa = [0.0_f32; 4];
+        let mut ob = [0.0_f32; 4];
+        softmax(&a, &mut oa);
+        softmax(&b, &mut ob);
+        for i in 0..4 {
+            assert!((oa[i] - ob[i]).abs() < 1e-6, "lane {i}");
+        }
+    }
+
+    #[test]
+    fn sigmoid_known_values() {
+        let v = [0.0_f32, 1.0, -1.0];
+        let mut out = [0.0_f32; 3];
+        sigmoid(&v, &mut out);
+        assert!((out[0] - 0.5).abs() < 1e-6, "sigmoid(0)={}", out[0]);
+        assert!((out[1] - 0.731_058_6).abs() < 1e-6, "sigmoid(1)={}", out[1]);
+        assert!(
+            (out[2] - 0.268_941_4).abs() < 1e-6,
+            "sigmoid(-1)={}",
+            out[2]
+        );
+    }
+
+    #[test]
+    fn sigmoid_saturates() {
+        // Large positive → 1.0, large negative → 0.0, monotone.
+        let v = [100.0_f32, -100.0, 0.0, 10.0, -10.0];
+        let mut out = [0.0_f32; 5];
+        sigmoid(&v, &mut out);
+        assert!((out[0] - 1.0).abs() < 1e-6, "sigmoid(100)={}", out[0]);
+        assert!(out[1].abs() < 1e-6, "sigmoid(-100)={}", out[1]);
+        assert!(out[3] > out[4], "sigmoid must be monotone");
+        assert!((out[2] - 0.5).abs() < 1e-6, "sigmoid(0)={}", out[2]);
+    }
+
+    #[test]
+    fn sigmoid_empty() {
+        let mut out = [1.0_f32; 2];
+        sigmoid(&[], &mut out[..0]);
+    }
+
+    #[test]
+    fn sigmoid_identity() {
+        // sigmoid(x) + sigmoid(-x) == 1 (symmetry).
+        for x in [-5.0_f32, -1.0, 0.0, 1.0, 5.0] {
+            let mut o = [0.0_f32; 2];
+            sigmoid(&[x, -x], &mut o);
+            assert!(
+                (o[0] + o[1] - 1.0).abs() < 1e-5,
+                "x={x}: {} + {} != 1",
+                o[0],
+                o[1]
+            );
+        }
+    }
+
+    #[test]
+    fn silu_known_values() {
+        let v = [0.0_f32, 1.0, -1.0];
+        let mut out = [0.0_f32; 3];
+        silu(&v, &mut out);
+        assert!((out[0] - 0.0).abs() < 1e-6, "silu(0)={}", out[0]);
+        assert!((out[1] - 0.731_058_6).abs() < 1e-6, "silu(1)={}", out[1]);
+        assert!((out[2] + 0.268_941_4).abs() < 1e-6, "silu(-1)={}", out[2]);
+    }
+
+    #[test]
+    fn silu_saturates() {
+        // Large positive → x, large negative → 0.
+        let v = [100.0_f32, -100.0, 5.0, -5.0];
+        let mut out = [0.0_f32; 4];
+        silu(&v, &mut out);
+        assert!((out[0] - 100.0).abs() < 1e-4, "silu(100)={}", out[0]);
+        assert!(out[1].abs() < 1e-4, "silu(-100)={}", out[1]);
+        assert!(out[2] > 0.0, "silu(5)>0");
+        assert!(out[3] < 0.0, "silu(-5)<0");
+    }
+
+    #[test]
+    fn silu_empty() {
+        let mut out = [1.0_f32; 2];
+        silu(&[], &mut out[..0]);
+    }
+
+    #[test]
+    fn silu_matches_x_times_sigmoid() {
+        // silu(x) == x * sigmoid(x) for a few values.
+        for x in [-3.0_f32, -1.5, 0.0, 0.5, 2.0] {
+            let mut o = [0.0_f32; 1];
+            silu(&[x], &mut o);
+            let expected = x / (1.0 + exp::exp(-x));
+            assert!(
+                (o[0] - expected).abs() < 1e-6,
+                "x={x}: {} vs {expected}",
+                o[0]
+            );
+        }
+    }
+
+    #[test]
+    fn gelu_known_values() {
+        // gelu(0) = 0, gelu(1) ≈ 0.8413, gelu(-1) ≈ -0.1587 (exact GELU);
+        // tanh approx: gelu(1) ≈ 0.84119, gelu(-1) ≈ -0.15881.
+        let v = [0.0_f32, 1.0, -1.0];
+        let mut out = [0.0_f32; 3];
+        gelu(&v, &mut out);
+        assert!(out[0].abs() < 1e-6, "gelu(0)={}", out[0]);
+        assert!((out[1] - 0.841_19).abs() < 2e-4, "gelu(1)={}", out[1]);
+        assert!((out[2] + 0.158_81).abs() < 2e-4, "gelu(-1)={}", out[2]);
+    }
+
+    #[test]
+    fn gelu_saturates() {
+        // Large positive → x, large negative → ~0.
+        let v = [100.0_f32, -100.0, 5.0, -5.0];
+        let mut out = [0.0_f32; 4];
+        gelu(&v, &mut out);
+        assert!((out[0] - 100.0).abs() < 1e-3, "gelu(100)={}", out[0]);
+        assert!(out[1].abs() < 1e-3, "gelu(-100)={}", out[1]);
+        assert!(out[2] > 4.99, "gelu(5)={}", out[2]);
+        assert!(out[3].abs() < 1e-3, "gelu(-5)={}", out[3]);
+    }
+
+    #[test]
+    fn gelu_empty() {
+        let mut out = [1.0_f32; 2];
+        gelu(&[], &mut out[..0]);
+    }
+
+    #[test]
+    fn gelu_matches_exact_at_known_points() {
+        // Exact GELU = x·Φ(x) (erf-based), computed in f64. The tanh approx
+        // is within ~1e-3 absolute in the bulk; at the far tails (|x| > 3)
+        // its relative deviation grows but the values are tiny (< 0.005).
+        // Tolerances reflect that.
+        let points = [
+            (-3.0_f32, -0.004_05),
+            (-1.0, -0.158_66),
+            (0.0, 0.0),
+            (1.0, 0.841_34),
+            (3.0, 2.995_95),
+        ];
+        for (x, exact) in points {
+            let mut o = [0.0_f32; 1];
+            gelu(&[x], &mut o);
+            assert!(
+                (o[0] - exact).abs() < 5e-3,
+                "x={x}: gelu={} vs exact {exact}",
+                o[0]
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // exact: relu is a pure clamp
+    fn relu_known_values() {
+        let v = [-3.0_f32, -0.5, 0.0, 1.0, 5.0];
+        let mut out = [0.0_f32; 5];
+        relu(&v, &mut out);
+        // Exact: relu is a pure clamp, so equality is exact.
+        for (got, want) in out.iter().zip([0.0_f32, 0.0, 0.0, 1.0, 5.0]) {
+            assert_eq!(got, &want);
+        }
+    }
+
+    #[test]
+    fn relu_empty() {
+        let mut out = [1.0_f32; 2];
+        relu(&[], &mut out[..0]);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // exact: relu maps -0.0 to +0.0
+    fn relu_negative_zero() {
+        let mut out = [0.0_f32; 1];
+        relu(&[-0.0], &mut out);
+        assert_eq!(out[0], 0.0);
     }
 }

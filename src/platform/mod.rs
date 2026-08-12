@@ -7,13 +7,6 @@
 
 use crate::dispatch::Backend;
 
-/// The `LANES_BACKEND` environment variable, if set to a known backend name.
-#[must_use]
-fn forced_backend_from_env() -> Option<Backend> {
-    let raw = std::env::var("LANES_BACKEND").ok()?;
-    forced_backend(&raw)
-}
-
 /// Map a backend name (as accepted by `LANES_BACKEND`) to a [`Backend`].
 ///
 /// Unknown or unavailable names return `None` so that callers fall back
@@ -43,7 +36,10 @@ fn forced_backend(raw: &str) -> Option<Backend> {
 #[must_use]
 pub(crate) fn detect_best_backend() -> Backend {
     let detected = auto_detect();
-    match forced_backend_from_env() {
+    match std::env::var("LANES_BACKEND")
+        .ok()
+        .and_then(|raw| forced_backend(&raw))
+    {
         Some(requested) if supports(requested) => requested,
         _ => detected,
     }
