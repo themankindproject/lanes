@@ -1195,6 +1195,38 @@ mod tests {
         unsafe { vst1q_f64(out.as_mut_ptr(), r) };
         let expected = crate::kernels::exp::exp_f64(-1.0);
         eprintln!("DEBUG vexp_128d(-1.0) = {:?}, scalar = {expected}", out);
+
+        // Replicate the reduction steps to see where it diverges.
+        let t = unsafe { vmulq_f64(v, vdupq_n_f64(1.442_695_040_888_963_4)) };
+        let c2_52 = unsafe { vdupq_n_f64(4_503_599_627_370_496.0) };
+        let n = unsafe { vsubq_f64(vaddq_f64(t, c2_52), c2_52) };
+        let n_int = unsafe { vcvtq_s64_f64(n) };
+        let r2 = unsafe {
+            vsubq_f64(
+                vsubq_f64(v, vmulq_f64(n, vdupq_n_f64(6.931_471_803_691_238e-1))),
+                vmulq_f64(n, vdupq_n_f64(1.908_214_929_270_588e-10)),
+            )
+        };
+        let mut n_out = [0.0_f64; 2];
+        let mut ni_out = [0_i64; 2];
+        let mut r_out = [0.0_f64; 2];
+        unsafe {
+            vst1q_f64(n_out.as_mut_ptr(), n);
+            vst1q_s64(ni_out.as_mut_ptr(), n_int);
+            vst1q_f64(r_out.as_mut_ptr(), r2);
+        }
+        eprintln!(
+            "DEBUG t={:?} n={:?} n_int={:?} r={:?}",
+            {
+                let mut o = [0.0_f64; 2];
+                unsafe { vst1q_f64(o.as_mut_ptr(), t) };
+                o
+            },
+            n_out,
+            ni_out,
+            r_out
+        );
+
         assert!(
             (out[0] - expected).abs() < 1e-9,
             "vexp_128d(-1.0) = {} vs scalar {expected}",
