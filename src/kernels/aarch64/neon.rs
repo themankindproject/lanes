@@ -1216,6 +1216,7 @@ mod tests {
         ];
         for data in cases {
             let (m, idx) = unsafe { argmax_f64(data) };
+            eprintln!("DEBUG argmax {data:?} -> ({m}, {idx})");
             let ref_idx = data
                 .iter()
                 .enumerate()
@@ -1224,6 +1225,7 @@ mod tests {
                 .unwrap();
             assert_eq!(idx, ref_idx, "argmax {data:?}: m={m}");
             let (m, idx) = unsafe { argmin_f64(data) };
+            eprintln!("DEBUG argmin {data:?} -> ({m}, {idx})");
             let ref_idx = data
                 .iter()
                 .enumerate()
