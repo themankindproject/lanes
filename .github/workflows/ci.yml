@@ -71,15 +71,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
-      - name: generate coverage (lcov)
-        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
-      - name: enforce coverage threshold
-        # `report` reuses the run's counters instead of re-running tests
-        # (a bare second `cargo llvm-cov` re-instruments and zeroes some
-        # files). ~70% line floor: scalar + native-backend kernels are
-        # fully exercised, but the non-native SIMD files (avx2/avx512 on
-        # this runner, or neon on x86) are only compiled, not executed.
-        run: cargo llvm-cov report --summary-only --fail-under-lines 70
+      - name: generate coverage (lcov) and enforce threshold
+        # One invocation: lcov for Codecov plus the line gate, so the
+        # counters are merged once (a separate `report` step can lose the
+        # profraw data between Actions steps). ~70% line floor: scalar +
+        # native-backend kernels are fully exercised, but the non-native
+        # SIMD files (avx2/avx512 on this runner, or neon on x86) are
+        # only compiled, not executed.
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info --fail-under-lines 70
       - name: upload to Codecov
         if: ${{ env.CODECOV_TOKEN != '' }}
         env:
