@@ -435,9 +435,11 @@ unsafe fn argmax_pair_512d(v: __m512d, idx: __m512i) -> (f64, usize) {
     let m = unsafe { _mm512_reduce_max_pd(v) };
     let eq = unsafe { _mm512_cmp_pd_mask(v, _mm512_set1_pd(m), _CMP_EQ_OQ) };
     let lane = eq.trailing_zeros() as usize;
-    let mut idxs = [0_i32; 8];
+    // 16 i32: the 512-bit store covers 16 lanes; each f64 lane's index
+    // occupies an i32 pair (see the invocation's duplicated `$vidx`).
+    let mut idxs = [0_i32; 16];
     unsafe { _mm512_storeu_si512(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[lane] as usize)
+    (m, idxs[2 * lane] as usize)
 }
 
 /// Horizontal argmin of the 8 f64 lanes: `(min value, its index)`.
@@ -453,9 +455,11 @@ unsafe fn argmin_pair_512d(v: __m512d, idx: __m512i) -> (f64, usize) {
     let m = unsafe { _mm512_reduce_min_pd(v) };
     let eq = unsafe { _mm512_cmp_pd_mask(v, _mm512_set1_pd(m), _CMP_EQ_OQ) };
     let lane = eq.trailing_zeros() as usize;
-    let mut idxs = [0_i32; 8];
+    // 16 i32: the 512-bit store covers 16 lanes; each f64 lane's index
+    // occupies an i32 pair (see the invocation's duplicated `$vidx`).
+    let mut idxs = [0_i32; 16];
     unsafe { _mm512_storeu_si512(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[lane] as usize)
+    (m, idxs[2 * lane] as usize)
 }
 
 // f64 reductions for AVX-512F (8 lanes).
@@ -561,14 +565,16 @@ crate::simd_argminmax!(
     "avx512f",
     8,
     |p| unsafe { _mm512_loadu_pd(p) },
-    _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 0, 0, 0, 0, 0, 0),
+    // i32-pair duplicated indices: the f64 mask blend covers 64-bit lanes.
+    _mm512_setr_epi32(0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7),
     _mm512_set1_epi32,
     _mm512_add_epi32,
     |a: __m512d, b: __m512d| unsafe { _mm512_cmp_pd_mask(a, b, _CMP_GT_OQ) },
     |mask: __mmask8, a: __m512d, b: __m512d| unsafe { _mm512_mask_blend_pd(mask, b, a) },
-    // The index vector holds 8 meaningful i32 lanes; blend those with the
-    // widened mask (the high 8 lanes are garbage and never read).
-    |mask: __mmask8, a: __m512i, b: __m512i| unsafe { _mm512_mask_blend_epi32(mask as u16, b, a) },
+    // Widen the 8-lane f64 mask to the 16-lane i32 index vector.
+    |mask: __mmask8, a: __m512i, b: __m512i| unsafe {
+        _mm512_mask_blend_epi32(mask as u16 | (mask as u16) << 1, b, a)
+    },
     |cand: f64, cur: f64| cand > cur,
     |v, iv| unsafe { argmax_pair_512d(v, iv) }
 );
@@ -579,14 +585,16 @@ crate::simd_argminmax!(
     "avx512f",
     8,
     |p| unsafe { _mm512_loadu_pd(p) },
-    _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 0, 0, 0, 0, 0, 0),
+    // i32-pair duplicated indices: the f64 mask blend covers 64-bit lanes.
+    _mm512_setr_epi32(0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7),
     _mm512_set1_epi32,
     _mm512_add_epi32,
     |a: __m512d, b: __m512d| unsafe { _mm512_cmp_pd_mask(a, b, _CMP_LT_OQ) },
     |mask: __mmask8, a: __m512d, b: __m512d| unsafe { _mm512_mask_blend_pd(mask, b, a) },
-    // The index vector holds 8 meaningful i32 lanes; blend those with the
-    // widened mask (the high 8 lanes are garbage and never read).
-    |mask: __mmask8, a: __m512i, b: __m512i| unsafe { _mm512_mask_blend_epi32(mask as u16, b, a) },
+    // Widen the 8-lane f64 mask to the 16-lane i32 index vector.
+    |mask: __mmask8, a: __m512i, b: __m512i| unsafe {
+        _mm512_mask_blend_epi32(mask as u16 | (mask as u16) << 1, b, a)
+    },
     |cand: f64, cur: f64| cand < cur,
     |v, iv| unsafe { argmin_pair_512d(v, iv) }
 );

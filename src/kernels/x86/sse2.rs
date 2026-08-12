@@ -552,9 +552,11 @@ unsafe fn argmax_pair_128d(v: __m128d, idx: __m128i) -> (f64, usize) {
     let m = unsafe { hmax_128d(v) };
     let eq = unsafe { _mm_cmpeq_pd(v, _mm_set1_pd(m)) };
     let lane = unsafe { _mm_movemask_pd(eq) }.trailing_zeros() as usize;
-    let mut idxs = [0_i32; 2];
+    // 4 i32: the store is 16 bytes; each f64 lane's index occupies an i32
+    // pair (see the invocation's `$vidx` = [0,0,1,1]).
+    let mut idxs = [0_i32; 4];
     unsafe { _mm_storeu_si128(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[lane] as usize)
+    (m, idxs[2 * lane] as usize)
 }
 
 /// Horizontal argmin of the 2 f64 lanes: `(min value, its index)`.
@@ -570,9 +572,11 @@ unsafe fn argmin_pair_128d(v: __m128d, idx: __m128i) -> (f64, usize) {
     let m = unsafe { hmin_128d(v) };
     let eq = unsafe { _mm_cmpeq_pd(v, _mm_set1_pd(m)) };
     let lane = unsafe { _mm_movemask_pd(eq) }.trailing_zeros() as usize;
-    let mut idxs = [0_i32; 2];
+    // 4 i32: the store is 16 bytes; each f64 lane's index occupies an i32
+    // pair (see the invocation's `$vidx` = [0,0,1,1]).
+    let mut idxs = [0_i32; 4];
     unsafe { _mm_storeu_si128(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[lane] as usize)
+    (m, idxs[2 * lane] as usize)
 }
 
 // f64 reductions and maps for SSE2 (2 lanes).
@@ -678,7 +682,8 @@ crate::simd_argminmax!(
     "sse2",
     2,
     |p| unsafe { _mm_loadu_pd(p) },
-    _mm_setr_epi32(0, 1, 0, 0),
+    // i32-pair duplicated indices: the f64 mask blend covers 64-bit lanes.
+    _mm_setr_epi32(0, 0, 1, 1),
     _mm_set1_epi32,
     _mm_add_epi32,
     _mm_cmpgt_pd,
@@ -699,7 +704,8 @@ crate::simd_argminmax!(
     "sse2",
     2,
     |p| unsafe { _mm_loadu_pd(p) },
-    _mm_setr_epi32(0, 1, 0, 0),
+    // i32-pair duplicated indices: the f64 mask blend covers 64-bit lanes.
+    _mm_setr_epi32(0, 0, 1, 1),
     _mm_set1_epi32,
     _mm_add_epi32,
     _mm_cmplt_pd,

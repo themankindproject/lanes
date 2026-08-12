@@ -180,7 +180,7 @@ pub mod f32 {
     /// `sqrt(variance(x))`.
     ///
     /// Returns [`None`] if the slice is empty. Same numerical properties as
-    /// [`variance`](Self::variance).
+    /// [`variance`](variance).
     ///
     /// Gated on `alloc`: shares variance's two-pass heap buffer.
     ///
@@ -395,7 +395,7 @@ pub mod f64 {
     /// `sqrt(variance(x))`.
     ///
     /// Returns [`None`] if the slice is empty. Same numerical properties as
-    /// [`variance`](Self::variance).
+    /// [`variance`](variance).
     ///
     /// Gated on `alloc`: shares variance's two-pass heap buffer.
     ///

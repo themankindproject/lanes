@@ -579,9 +579,11 @@ unsafe fn argmax_pair_256d(v: __m256d, idx: __m256i) -> (f64, usize) {
     let m = unsafe { hmax_256d(v) };
     let eq = unsafe { _mm256_cmp_pd(v, _mm256_set1_pd(m), _CMP_EQ_OQ) };
     let lane = unsafe { _mm256_movemask_pd(eq) }.trailing_zeros() as usize;
-    let mut idxs = [0_i32; 4];
+    // 8 i32: the 256-bit store covers 8 lanes; each f64 lane's index
+    // occupies an i32 pair (see the invocation's duplicated `$vidx`).
+    let mut idxs = [0_i32; 8];
     unsafe { _mm256_storeu_si256(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[lane] as usize)
+    (m, idxs[2 * lane] as usize)
 }
 
 /// Horizontal argmin of the 4 f64 lanes: `(min value, its index)`.
@@ -597,9 +599,11 @@ unsafe fn argmin_pair_256d(v: __m256d, idx: __m256i) -> (f64, usize) {
     let m = unsafe { hmin_256d(v) };
     let eq = unsafe { _mm256_cmp_pd(v, _mm256_set1_pd(m), _CMP_EQ_OQ) };
     let lane = unsafe { _mm256_movemask_pd(eq) }.trailing_zeros() as usize;
-    let mut idxs = [0_i32; 4];
+    // 8 i32: the 256-bit store covers 8 lanes; each f64 lane's index
+    // occupies an i32 pair (see the invocation's duplicated `$vidx`).
+    let mut idxs = [0_i32; 8];
     unsafe { _mm256_storeu_si256(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[lane] as usize)
+    (m, idxs[2 * lane] as usize)
 }
 
 // f64 reductions for AVX2 (4 lanes).
@@ -705,7 +709,8 @@ crate::simd_argminmax!(
     "avx2",
     4,
     |p| unsafe { _mm256_loadu_pd(p) },
-    _mm256_setr_epi32(0, 1, 2, 3, 0, 0, 0, 0),
+    // i32-pair duplicated indices: the f64 mask blend covers 64-bit lanes.
+    _mm256_setr_epi32(0, 0, 1, 1, 2, 2, 3, 3),
     _mm256_set1_epi32,
     _mm256_add_epi32,
     |a: __m256d, b: __m256d| _mm256_cmp_pd(a, b, _CMP_GT_OQ),
@@ -724,7 +729,8 @@ crate::simd_argminmax!(
     "avx2",
     4,
     |p| unsafe { _mm256_loadu_pd(p) },
-    _mm256_setr_epi32(0, 1, 2, 3, 0, 0, 0, 0),
+    // i32-pair duplicated indices: the f64 mask blend covers 64-bit lanes.
+    _mm256_setr_epi32(0, 0, 1, 1, 2, 2, 3, 3),
     _mm256_set1_epi32,
     _mm256_add_epi32,
     |a: __m256d, b: __m256d| _mm256_cmp_pd(a, b, _CMP_LT_OQ),
