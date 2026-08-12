@@ -56,7 +56,7 @@ fn bench_sum(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("lanes", size), &data, |b, data| {
-            b.iter(|| lanes::sum(black_box(data)));
+            b.iter(|| lanes::stats::sum(black_box(data)));
         });
         group.bench_with_input(BenchmarkId::new("naive", size), &data, |b, data| {
             b.iter(|| naive_sum(black_box(data)));
@@ -74,7 +74,7 @@ fn bench_prod(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("lanes", size), &data, |b, data| {
-            b.iter(|| lanes::prod(black_box(data)));
+            b.iter(|| lanes::stats::prod(black_box(data)));
         });
         group.bench_with_input(BenchmarkId::new("naive", size), &data, |b, data| {
             b.iter(|| naive_prod(black_box(data)));
@@ -93,7 +93,7 @@ fn bench_dot(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
-            bench.iter(|| lanes::dot(black_box(&a), black_box(&b)));
+            bench.iter(|| lanes::stats::dot(black_box(&a), black_box(&b)));
         });
         group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
             bench.iter(|| naive_dot(black_box(&a), black_box(&b)));
@@ -111,7 +111,7 @@ fn bench_min(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("lanes", size), &data, |b, data| {
-            b.iter(|| lanes::min(black_box(data)));
+            b.iter(|| lanes::stats::min(black_box(data)));
         });
         group.bench_with_input(BenchmarkId::new("naive", size), &data, |b, data| {
             b.iter(|| naive_min(black_box(data)));
@@ -129,7 +129,7 @@ fn bench_max(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("lanes", size), &data, |b, data| {
-            b.iter(|| lanes::max(black_box(data)));
+            b.iter(|| lanes::stats::max(black_box(data)));
         });
         group.bench_with_input(BenchmarkId::new("naive", size), &data, |b, data| {
             b.iter(|| naive_max(black_box(data)));

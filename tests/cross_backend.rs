@@ -4,7 +4,7 @@
 //! results match the scalar reference implementation for known test vectors
 //! where the answers are exact (integers representable as f32).
 
-use lanes::{dot, max, min, prod, sum};
+use lanes::stats::{dot, max, min, prod, sum};
 
 /// Helper: naive scalar sum for reference.
 fn naive_sum(values: &[f32]) -> f32 {

@@ -3,7 +3,8 @@
 //! These tests exercise the library as an external consumer would,
 //! using only the public re-exports from the crate root.
 
-use lanes::{Backend, Error, dot, max, min, prod, sum};
+use lanes::stats::{dot, max, min, prod, sum};
+use lanes::{Backend, Error};
 
 #[test]
 fn sum_empty_returns_zero() {
@@ -204,17 +205,10 @@ fn norms_known_and_empty() {
 }
 
 #[test]
-fn family_reexports_match_root() {
-    // The family modules and the root re-exports must agree.
-    let v = [1.0_f32, 2.0, 3.0, 4.0];
-    assert_eq!(lanes::sum(&v), lanes::stats::sum(&v));
-    assert_eq!(lanes::prod(&v), lanes::stats::prod(&v));
-    assert_eq!(lanes::min(&v), lanes::stats::min(&v));
-    assert_eq!(lanes::max(&v), lanes::stats::max(&v));
-    assert_eq!(
-        lanes::dot(&v, &v).unwrap(),
-        lanes::stats::dot(&v, &v).unwrap()
-    );
+fn stats_dot_errors_on_length_mismatch() {
+    let short = [1.0_f32, 2.0];
+    let long = [1.0_f32, 2.0, 3.0];
+    assert!(lanes::stats::dot(&short, &long).is_err());
 }
 
 #[cfg(feature = "alloc")]
@@ -319,6 +313,75 @@ fn max_all_same() {
 #[test]
 fn max_negative_values() {
     assert_eq!(max(&[-2.0, -5.0, -3.0, -1.0]), Some(-1.0));
+}
+
+#[test]
+fn argmax_empty_returns_none() {
+    assert_eq!(lanes::stats::argmax(&[] as &[f32]), None);
+}
+
+#[test]
+fn argmax_single_element() {
+    assert_eq!(lanes::stats::argmax(&[7.0_f32]), Some(0));
+}
+
+#[test]
+fn argmax_multiple_elements() {
+    assert_eq!(lanes::stats::argmax(&[5.0, 3.0, 8.0, 1.0, 4.0]), Some(2));
+}
+
+#[test]
+fn argmax_first_occurrence_wins() {
+    // The max 8.0 appears at index 2 and 4; first must win.
+    assert_eq!(lanes::stats::argmax(&[5.0, 3.0, 8.0, 1.0, 8.0]), Some(2));
+}
+
+#[test]
+fn argmax_negative_values() {
+    assert_eq!(lanes::stats::argmax(&[-2.0, -5.0, -3.0, -1.0]), Some(3));
+}
+
+#[test]
+fn argmax_consistent_with_max() {
+    let data = [1.0_f32, -2.0, 3.5, 0.5, 9.0, 2.0];
+    let i = lanes::stats::argmax(&data).unwrap();
+    assert_eq!(data[i], lanes::stats::max(&data).unwrap());
+}
+
+#[test]
+fn argmin_empty_returns_none() {
+    assert_eq!(lanes::stats::argmin(&[] as &[f32]), None);
+}
+
+#[test]
+fn argmin_single_element() {
+    assert_eq!(lanes::stats::argmin(&[7.0_f32]), Some(0));
+}
+
+#[test]
+fn argmin_multiple_elements() {
+    assert_eq!(lanes::stats::argmin(&[5.0, 3.0, 8.0, 1.0, 4.0]), Some(3));
+}
+
+#[test]
+fn argmin_first_occurrence_wins() {
+    // The min 1.0 appears at index 3 and 5; first must win.
+    assert_eq!(
+        lanes::stats::argmin(&[5.0, 3.0, 8.0, 1.0, 4.0, 1.0]),
+        Some(3)
+    );
+}
+
+#[test]
+fn argmin_negative_values() {
+    assert_eq!(lanes::stats::argmin(&[-2.0, -5.0, -3.0, -1.0]), Some(1));
+}
+
+#[test]
+fn argmin_consistent_with_min() {
+    let data = [1.0_f32, -2.0, 3.5, -0.5, 9.0, 2.0];
+    let i = lanes::stats::argmin(&data).unwrap();
+    assert_eq!(data[i], lanes::stats::min(&data).unwrap());
 }
 
 #[test]

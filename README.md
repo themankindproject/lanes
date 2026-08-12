@@ -17,11 +17,11 @@ runtime. Write your code once; `lanes` picks the backend.
 
 | Function | Description | Backends |
 | --- | --- | --- |
-| `lanes::sum(&[f32]) -> f32` | Sum, `0.0` for empty input | scalar, SSE2, AVX2, AVX-512F, NEON |
-| `lanes::prod(&[f32]) -> f32` | Product, `1.0` for empty input | scalar, SSE2, AVX2, AVX-512F, NEON |
-| `lanes::min(&[f32]) -> Option<f32>` | Minimum (`None` for empty) | scalar, SSE2, AVX2, AVX-512F, NEON |
-| `lanes::max(&[f32]) -> Option<f32>` | Maximum (`None` for empty) | scalar, SSE2, AVX2, AVX-512F, NEON |
-| `lanes::dot(&[f32], &[f32]) -> Result<f32, Error>` | Dot product, length-checked | scalar, SSE2, AVX2+FMA, AVX-512F, NEON |
+| `lanes::stats::sum(&[f32]) -> f32` | Sum, `0.0` for empty input | scalar, SSE2, AVX2, AVX-512F, NEON |
+| `lanes::stats::prod(&[f32]) -> f32` | Product, `1.0` for empty input | scalar, SSE2, AVX2, AVX-512F, NEON |
+| `lanes::stats::min(&[f32]) -> Option<f32>` | Minimum (`None` for empty) | scalar, SSE2, AVX2, AVX-512F, NEON |
+| `lanes::stats::max(&[f32]) -> Option<f32>` | Maximum (`None` for empty) | scalar, SSE2, AVX2, AVX-512F, NEON |
+| `lanes::stats::dot(&[f32], &[f32]) -> Result<f32, Error>` | Dot product, length-checked | scalar, SSE2, AVX2+FMA, AVX-512F, NEON |
 
 The scope is intentionally narrow — **few, fast, correct kernels**, not a
 zoo of wrappers. The architecture (see
@@ -82,7 +82,7 @@ lanes = "0.1"
 ```
 
 ```rust
-use lanes::{dot, sum};
+use lanes::stats::{dot, sum};
 
 let a = vec![1.0_f32; 1024];
 let b = vec![2.0_f32; 1024];

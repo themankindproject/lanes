@@ -17,7 +17,7 @@ fn main() {
     let data: Vec<f32> = (1..=10_000).map(|x| x as f32).collect();
 
     let start = Instant::now();
-    let total = lanes::sum(&data);
+    let total = lanes::stats::sum(&data);
     let elapsed = start.elapsed();
     println!("sum of 1..=10000: {total}");
     println!("  elapsed: {elapsed:?}\n");
@@ -27,8 +27,8 @@ fn main() {
     let values = vec![3.14_f32, 2.71, 1.41, 1.73, 2.23, 0.577];
 
     let start = Instant::now();
-    let minimum = lanes::min(&values);
-    let maximum = lanes::max(&values);
+    let minimum = lanes::stats::min(&values);
+    let maximum = lanes::stats::max(&values);
     let elapsed = start.elapsed();
     println!("values: {values:?}");
     println!("  min: {minimum:?}");
@@ -40,14 +40,14 @@ fn main() {
     let b = vec![3.0_f32; n];
 
     let start = Instant::now();
-    let product = lanes::dot(&a, &b).expect("lengths match");
+    let product = lanes::stats::dot(&a, &b).expect("lengths match");
     let elapsed = start.elapsed();
     println!("dot([2.0; {n}], [3.0; {n}]): {product}");
     println!("  elapsed: {elapsed:?}\n");
 
     let short = [1.0_f32, 2.0];
     let long = [1.0_f32, 2.0, 3.0];
-    match lanes::dot(&short, &long) {
+    match lanes::stats::dot(&short, &long) {
         Ok(v) => println!("unexpected success: {v}"),
         Err(e) => println!("Expected error for mismatched lengths: {e}"),
     }

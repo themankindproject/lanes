@@ -71,7 +71,7 @@ fn approx_reduction_eq(a: f32, b: f32, inputs: &[f32]) -> bool {
 proptest! {
     #[test]
     fn prop_sum_matches_naive(values in finite_f32_vec()) {
-        let lanes_result = lanes::sum(&values);
+        let lanes_result = lanes::stats::sum(&values);
         let naive_result: f32 = values.iter().sum();
 
         prop_assert!(
@@ -91,7 +91,7 @@ proptest! {
         // fractional values would legitimately round differently per
         // backend (a documented non-equality).
         let values: Vec<f32> = values.iter().map(|&x| x as f32).collect();
-        let lanes_result = lanes::prod(&values);
+        let lanes_result = lanes::stats::prod(&values);
         let naive_result: f32 = values.iter().product();
         prop_assert_eq!(lanes_result, naive_result, "prod mismatch for len {}", values.len());
     }
@@ -278,7 +278,7 @@ proptest! {
         // Make b the same length as a for a valid dot product.
         let b: Vec<f32> = a.iter().map(|x| x * 0.5 + 1.0).collect();
 
-        let lanes_result = lanes::dot(&a, &b).unwrap();
+        let lanes_result = lanes::stats::dot(&a, &b).unwrap();
         let naive_result: f32 = a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum();
 
         // Products may themselves round; include a small absolute slack on
@@ -303,7 +303,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_min_matches_naive(values in finite_f32_vec()) {
-        let lanes_result = lanes::min(&values);
+        let lanes_result = lanes::stats::min(&values);
         let naive_result = values.iter().copied().reduce(f32::min);
 
         match (lanes_result, naive_result) {
@@ -322,7 +322,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_max_matches_naive(values in finite_f32_vec()) {
-        let lanes_result = lanes::max(&values);
+        let lanes_result = lanes::stats::max(&values);
         let naive_result = values.iter().copied().reduce(f32::max);
 
         match (lanes_result, naive_result) {
@@ -343,7 +343,7 @@ proptest! {
     ) {
         // b is always longer than a, so we get LengthMismatch.
         let b: Vec<f32> = (0..a.len() + extra).map(|i| i as f32).collect();
-        let result = lanes::dot(&a, &b);
+        let result = lanes::stats::dot(&a, &b);
         prop_assert!(result.is_err());
     }
 }

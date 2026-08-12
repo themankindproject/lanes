@@ -10,7 +10,7 @@
 //! ## Quick Start
 //!
 //! ```rust
-//! use lanes::{dot, sum};
+//! use lanes::stats::{dot, sum};
 //!
 //! let a = vec![1.0_f32; 1024];
 //! let b = vec![2.0_f32; 1024];
@@ -25,10 +25,11 @@
 //! ## Architecture
 //!
 //! The crate is layered as public API → algorithm layer → kernel layer →
-//! backend layer. The public entry points (`sum`, `prod`, `min`, `max`, `dot`)
-//! validate their inputs, resolve the execution backend once (cached in a
-//! `OnceLock`), and dispatch to the matching optimized kernel. Every
-//! operation has a portable scalar fallback.
+//! backend layer. The public entry points ([`stats::sum`], [`stats::prod`],
+//! [`stats::min`], [`stats::max`], [`stats::dot`]) validate their inputs,
+//! resolve the execution backend once (cached in a `OnceLock`), and dispatch
+//! to the matching optimized kernel. Every operation has a portable scalar
+//! fallback.
 //!
 //! See the [architecture document](https://github.com/themankindproject/lanes/blob/main/docs/architecture.md)
 //! for the full design, dispatch model, and extension roadmap.
@@ -98,16 +99,15 @@ mod kernels;
 mod platform;
 
 // Public API re-exports.
-pub use algorithms::{dot, max, min, prod, sum};
 pub use dispatch::Backend;
 pub use error::Error;
 
 /// Statistical reductions (aggregates over slices): `sum`, `prod`, `min`,
-/// `max`, `sum_sq`, `mean`, `variance`, `dot`.
+/// `max`, `argmax`, `argmin`, `sum_sq`, `mean`, `variance`, `dot`.
 pub mod stats {
     #[cfg(feature = "alloc")]
     pub use crate::algorithms::stats::variance;
-    pub use crate::algorithms::stats::{dot, max, mean, min, prod, sum, sum_sq};
+    pub use crate::algorithms::stats::{argmax, argmin, dot, max, mean, min, prod, sum, sum_sq};
 }
 
 /// Distance and norm functions: `l1_norm`, `l2_norm`, `max_norm`.

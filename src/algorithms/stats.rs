@@ -70,6 +70,44 @@ pub fn max(values: &[f32]) -> Option<f32> {
     kernels::dispatch_max(backend, values)
 }
 
+/// Find the index of the maximum element in a slice.
+///
+/// Returns [`None`] if the slice is empty. Ties resolve to the first
+/// occurrence. NaN handling follows [`f32::max`] semantics: a NaN is ignored
+/// unless every element is NaN (in which case the first index wins).
+///
+/// # Example
+/// ```
+/// assert_eq!(lanes::stats::argmax(&[3.0_f32, 1.0, 4.0]), Some(2));
+/// ```
+#[must_use]
+pub fn argmax(values: &[f32]) -> Option<usize> {
+    if values.is_empty() {
+        return None;
+    }
+    let backend = Backend::detect();
+    Some(kernels::dispatch_argmax(backend, values).1)
+}
+
+/// Find the index of the minimum element in a slice.
+///
+/// Returns [`None`] if the slice is empty. Ties resolve to the first
+/// occurrence. NaN handling follows [`f32::min`] semantics: a NaN is ignored
+/// unless every element is NaN (in which case the first index wins).
+///
+/// # Example
+/// ```
+/// assert_eq!(lanes::stats::argmin(&[3.0_f32, 1.0, 4.0]), Some(1));
+/// ```
+#[must_use]
+pub fn argmin(values: &[f32]) -> Option<usize> {
+    if values.is_empty() {
+        return None;
+    }
+    let backend = Backend::detect();
+    Some(kernels::dispatch_argmin(backend, values).1)
+}
+
 /// Compute the sum of squares of all elements in a slice.
 ///
 /// Returns `0.0` for an empty slice.
@@ -129,8 +167,8 @@ pub fn variance(values: &[f32]) -> Option<f32> {
     Some(kernels::dispatch_sum(backend, &centered) / n as f32)
 }
 
-/// Compute the dot product of two slices (linear algebra, also exposed at
-/// the crate root as `lanes::dot`).
+/// Compute the dot product of two slices (linear algebra, part of the
+/// `stats` family).
 ///
 /// Returns an error if the slices have different lengths.
 ///
