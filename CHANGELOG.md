@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   integer-exact vectors, integration tests, `proptest` property tests,
   and a cargo-fuzz target (`fuzz/`, nightly-only, not in CI).
 - Criterion benchmarks for all kernels vs naive baselines at sizes
-  `16 … 1_000_000` ([docs/benchmarking.md](docs/benchmarking.md)).
+  `16 … 1_000_000`.
 - CI: fmt + clippy + test, doctest, MSRV, Miri, fuzz smoke, native
   aarch64, and llvm-cov coverage on every push and PR.
 

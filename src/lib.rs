@@ -31,9 +31,6 @@
 //! once (cached in a `OnceLock`), and dispatch to the matching optimized
 //! kernel. Every operation has a portable scalar fallback.
 //!
-//! See the [architecture document](https://github.com/themankindproject/lanes/blob/main/docs/architecture.md)
-//! for the full design, dispatch model, and extension roadmap.
-//!
 //! ## Precision families
 //!
 //! Every family (`stats`, `distance`, `math`, `ml`) is split into an `f32`
