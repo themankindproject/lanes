@@ -48,8 +48,8 @@ jobs:
   # lacks the feature set (e.g. sse3) that compiler-generated code for
   # vector intrinsics requires, so it flags false UB — those kernels are
   # validated by the native test + aarch64 jobs on real hardware.
-  # `toolchain: nightly` is explicit so it overrides rust-toolchain.toml's
-  # pinned stable (which would otherwise make cargo-miri unavailable).
+  # The `+nightly` override is required: rust-toolchain.toml pins 1.89.0,
+  # which has no miri component.
   miri:
     name: Miri (UB check)
     runs-on: ubuntu-latest
@@ -60,13 +60,15 @@ jobs:
           toolchain: nightly
           components: miri
       - uses: Swatinem/rust-cache@v2
-      - run: cargo miri test --all-features --lib kernels::scalar
+      - run: cargo +nightly miri test --all-features --lib kernels::scalar
         env:
           MIRIFLAGS: -Zmiri-strict-provenance
 
   # Fuzz smoke test: prove every fuzz target compiles and runs for a short
   # burst under cargo-fuzz (nightly). Full fuzzing is a dev activity; CI
   # only proves the harnesses stay healthy (compile + no instant crash).
+  # The `+nightly` override is required: rust-toolchain.toml pins 1.89.0,
+  # which cargo-fuzz no longer supports (needs 1.91+).
   fuzz:
     name: Fuzz smoke
     runs-on: ubuntu-latest
@@ -79,12 +81,12 @@ jobs:
         with:
           workspaces: fuzz
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        run: cargo +nightly install cargo-fuzz --locked
       - name: Build fuzz targets
-        run: cargo fuzz build --fuzz-dir fuzz
+        run: cargo +nightly fuzz build --fuzz-dir fuzz
       - name: Smoke-run fuzz targets
         run: |
           for target in fuzz/fuzz_targets/*.rs; do
             name=$(basename "$target" .rs)
-            cargo fuzz run --fuzz-dir fuzz "$name" -- -runs=1000 || exit 1
+            cargo +nightly fuzz run --fuzz-dir fuzz "$name" -- -runs=1000 || exit 1
           done
