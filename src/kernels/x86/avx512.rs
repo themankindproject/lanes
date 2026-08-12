@@ -305,7 +305,6 @@ crate::simd_exp!(
         // cmp returns a u16 mask; expand to a full-width float mask vector.
         _mm512_maskz_mov_ps(_mm512_cmp_ps_mask(a, b, _CMP_GT_OQ), _mm512_set1_ps(-1.0))
     },
-    |v| unsafe { _mm512_castps_si512(v) },
     |v| unsafe { _mm512_castsi512_ps(v) },
     |v| unsafe { _mm512_cvttps_epi32(v) },
     |v| unsafe { _mm512_slli_epi32(v, 23) },
@@ -618,13 +617,6 @@ crate::simd_exp_f64!(
     |a, b| unsafe { _mm512_mul_pd(a, b) },
     |a, b| unsafe { _mm512_add_pd(a, b) },
     |a, b| unsafe { _mm512_sub_pd(a, b) },
-    |a, b| unsafe { _mm512_and_pd(a, b) },
-    |a, b| unsafe { _mm512_andnot_pd(a, b) },
-    |a, b| unsafe { _mm512_or_pd(a, b) },
-    |a, b| unsafe {
-        _mm512_maskz_mov_pd(_mm512_cmp_pd_mask(a, b, _CMP_GT_OQ), _mm512_set1_pd(-1.0))
-    },
-    |v| unsafe { _mm512_castpd_si512(v) },
     |v| unsafe { _mm512_castsi512_pd(v) },
     // Round-to-nearest: trunc(v + copysign(0.5, v)) (round-half-away-from-zero).
     |v| unsafe {

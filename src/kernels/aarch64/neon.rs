@@ -400,7 +400,6 @@ crate::simd_exp!(
         // NEON float compare returns uint32x4_t; reinterp to f32 mask vector.
         vreinterpretq_f32_s32(vreinterpretq_s32_u32(vcgtq_f32(a, b)))
     },
-    |v| unsafe { vreinterpretq_s32_f32(v) },
     |v| unsafe { vreinterpretq_f32_s32(v) },
     |v| unsafe { vcvtq_s32_f32(v) },
     |v| unsafe { vshlq_n_s32(v, 23) },
@@ -685,11 +684,6 @@ crate::simd_exp_f64!(
     |a, b| unsafe { vmulq_f64(a, b) },
     |a, b| unsafe { vaddq_f64(a, b) },
     |a, b| unsafe { vsubq_f64(a, b) },
-    |a, b| unsafe { vandq_u64(vreinterpretq_u64_f64(a), vreinterpretq_u64_f64(b)) },
-    |a, b| unsafe { vbicq_u64(vreinterpretq_u64_f64(a), vreinterpretq_u64_f64(b)) },
-    |a, b| unsafe { vorrq_u64(vreinterpretq_u64_f64(a), vreinterpretq_u64_f64(b)) },
-    |a, b| unsafe { vcgtq_f64(a, b) },
-    |v| unsafe { vreinterpretq_s64_f64(v) },
     |v| unsafe { vreinterpretq_f64_s64(v) },
     // Round-to-nearest (ties-even) float→int: the aarch64 FCVTNS instruction.
     |v| unsafe { vcvtaq_s64_f64(v) },

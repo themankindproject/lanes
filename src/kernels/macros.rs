@@ -234,7 +234,7 @@ macro_rules! simd_exp {
         $mul:expr, $add:expr, $sub:expr,
         $andf:expr, $andnotf:expr, $orf:expr,
         $cmpgt_f:expr,
-        $cast_vi:expr, $cast_iv:expr,
+        $cast_iv:expr,
         $cvtt_f2i:expr, $slli_i:expr, $add_i:expr,
         $cmpgt_i:expr, $cmplt_i:expr,
         $and_i:expr, $andnot_i:expr, $or_i:expr
@@ -323,9 +323,7 @@ macro_rules! simd_exp_f64 {
         $name:ident, $feat:literal, $vt:ty, $ivt:ty,
         $set1:expr, $set1i:expr,
         $mul:expr, $add:expr, $sub:expr,
-        $andf:expr, $andnotf:expr, $orf:expr,
-        $cmpgt_f:expr,
-        $cast_vi:expr, $cast_iv:expr,
+        $cast_iv:expr,
         $round_f2i:expr, $cvti2f:expr, $slli_i:expr, $add_i:expr,
         $cmpgt_i:expr, $cmplt_i:expr,
         $and_i:expr, $andnot_i:expr, $or_i:expr

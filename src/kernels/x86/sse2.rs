@@ -338,7 +338,6 @@ crate::simd_exp!(
     |a, b| unsafe { _mm_andnot_ps(a, b) },
     |a, b| unsafe { _mm_or_ps(a, b) },
     |a, b| unsafe { _mm_cmpgt_ps(a, b) },
-    |v| unsafe { _mm_castps_si128(v) },
     |v| unsafe { _mm_castsi128_ps(v) },
     |v| unsafe { _mm_cvttps_epi32(v) },
     |v| unsafe { _mm_slli_epi32(v, 23) },
@@ -733,11 +732,6 @@ crate::simd_exp_f64!(
     |a, b| unsafe { _mm_mul_pd(a, b) },
     |a, b| unsafe { _mm_add_pd(a, b) },
     |a, b| unsafe { _mm_sub_pd(a, b) },
-    |a, b| unsafe { _mm_and_pd(a, b) },
-    |a, b| unsafe { _mm_andnot_pd(a, b) },
-    |a, b| unsafe { _mm_or_pd(a, b) },
-    |a, b| unsafe { _mm_cmpgt_pd(a, b) },
-    |v| unsafe { _mm_castpd_si128(v) },
     |v| unsafe { _mm_castsi128_pd(v) },
     // Round-to-nearest without SSE4.1: trunc(v + copysign(0.5, v))
     // (round-half-away-from-zero; ≤1 ulp difference from ties-even at the

@@ -341,7 +341,6 @@ crate::simd_exp!(
     |a, b| unsafe { _mm256_andnot_ps(a, b) },
     |a, b| unsafe { _mm256_or_ps(a, b) },
     |a, b| unsafe { _mm256_cmp_ps(a, b, _CMP_GT_OQ) },
-    |v| unsafe { _mm256_castps_si256(v) },
     |v| unsafe { _mm256_castsi256_ps(v) },
     |v| unsafe { _mm256_cvttps_epi32(v) },
     |v| unsafe { _mm256_slli_epi32(v, 23) },
@@ -756,11 +755,6 @@ crate::simd_exp_f64!(
     |a, b| unsafe { _mm256_mul_pd(a, b) },
     |a, b| unsafe { _mm256_add_pd(a, b) },
     |a, b| unsafe { _mm256_sub_pd(a, b) },
-    |a, b| unsafe { _mm256_and_pd(a, b) },
-    |a, b| unsafe { _mm256_andnot_pd(a, b) },
-    |a, b| unsafe { _mm256_or_pd(a, b) },
-    |a, b| unsafe { _mm256_cmp_pd(a, b, _CMP_GT_OQ) },
-    |v| unsafe { _mm256_castpd_si256(v) },
     |v| unsafe { _mm256_castsi256_pd(v) },
     // Round-to-nearest: trunc(v + copysign(0.5, v)) (round-half-away-from-zero).
     |v| unsafe {

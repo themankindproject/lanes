@@ -33,17 +33,12 @@ fn random_f64_vec(n: usize, seed: u64) -> Vec<f64> {
     (0..n).map(|_| rng.gen_range(-1000.0..1000.0)).collect()
 }
 
-/// Naive f64 iterator baselines (independent of `lanes`).
-fn naive_sum_f64(values: &[f64]) -> f64 {
+/// Naive iterator baselines (independent of `lanes`).
+fn naive_sum(values: &[f32]) -> f32 {
     values.iter().sum()
 }
 
-fn naive_dot_f64(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b).map(|(&x, &y)| x * y).sum()
-}
-
-/// Naive iterator baselines (independent of `lanes`).
-fn naive_sum(values: &[f32]) -> f32 {
+fn naive_sum_f64(values: &[f64]) -> f64 {
     values.iter().sum()
 }
 
@@ -63,22 +58,93 @@ fn naive_dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(&x, &y)| x * y).sum()
 }
 
-fn bench_sum(c: &mut Criterion) {
-    let mut group = c.benchmark_group("sum");
+fn naive_dot_f64(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b).map(|(&x, &y)| x * y).sum()
+}
 
+/// Benchmark a sum-family reduction: `lanes` vs naive, across the size ladder.
+fn bench_reduce<T, F, G>(
+    c: &mut Criterion,
+    name: &str,
+    make_data: fn(usize, u64) -> Vec<T>,
+    lanes: F,
+    naive: G,
+) where
+    F: Fn(&[T]) -> T + Copy,
+    G: Fn(&[T]) -> T + Copy,
+{
+    let mut group = c.benchmark_group(name);
     for &size in SIZES {
-        let data = random_f32_vec(size, 42);
-
+        let data = make_data(size, 42);
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("lanes", size), &data, |b, data| {
-            b.iter(|| lanes::stats::f32::sum(black_box(data)));
+            b.iter(|| lanes(black_box(data)));
         });
         group.bench_with_input(BenchmarkId::new("naive", size), &data, |b, data| {
-            b.iter(|| naive_sum(black_box(data)));
+            b.iter(|| naive(black_box(data)));
         });
     }
-
     group.finish();
+}
+
+/// Benchmark a dot product: `lanes` vs naive, across the size ladder.
+fn bench_dot_pair<T, F, G>(
+    c: &mut Criterion,
+    name: &str,
+    make_data: fn(usize, u64) -> Vec<T>,
+    lanes: F,
+    naive: G,
+) where
+    F: Fn(&[T], &[T]) -> T + Copy,
+    G: Fn(&[T], &[T]) -> T + Copy,
+{
+    let mut group = c.benchmark_group(name);
+    for &size in SIZES {
+        let a = make_data(size, 42);
+        let b = make_data(size, 123);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes(black_box(&a), black_box(&b)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| naive(black_box(&a), black_box(&b)));
+        });
+    }
+    group.finish();
+}
+
+fn bench_sum(c: &mut Criterion) {
+    bench_reduce(c, "sum", random_f32_vec, lanes::stats::f32::sum, naive_sum);
+}
+
+fn bench_sum_f64(c: &mut Criterion) {
+    bench_reduce(
+        c,
+        "sum_f64",
+        random_f64_vec,
+        lanes::stats::f64::sum,
+        naive_sum_f64,
+    );
+}
+
+fn bench_dot(c: &mut Criterion) {
+    bench_dot_pair(
+        c,
+        "dot",
+        random_f32_vec,
+        |a, b| lanes::stats::f32::dot(a, b).unwrap(),
+        naive_dot,
+    );
+}
+
+fn bench_dot_f64(c: &mut Criterion) {
+    bench_dot_pair(
+        c,
+        "dot_f64",
+        random_f64_vec,
+        |a, b| lanes::stats::f64::dot(a, b).unwrap(),
+        naive_dot_f64,
+    );
 }
 
 fn bench_prod(c: &mut Criterion) {
@@ -93,25 +159,6 @@ fn bench_prod(c: &mut Criterion) {
         });
         group.bench_with_input(BenchmarkId::new("naive", size), &data, |b, data| {
             b.iter(|| naive_prod(black_box(data)));
-        });
-    }
-
-    group.finish();
-}
-
-fn bench_dot(c: &mut Criterion) {
-    let mut group = c.benchmark_group("dot");
-
-    for &size in SIZES {
-        let a = random_f32_vec(size, 42);
-        let b = random_f32_vec(size, 123);
-
-        group.throughput(Throughput::Elements(size as u64));
-        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
-            bench.iter(|| lanes::stats::f32::dot(black_box(&a), black_box(&b)));
-        });
-        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
-            bench.iter(|| naive_dot(black_box(&a), black_box(&b)));
         });
     }
 
@@ -148,43 +195,6 @@ fn bench_max(c: &mut Criterion) {
         });
         group.bench_with_input(BenchmarkId::new("naive", size), &data, |b, data| {
             b.iter(|| naive_max(black_box(data)));
-        });
-    }
-
-    group.finish();
-}
-
-fn bench_sum_f64(c: &mut Criterion) {
-    let mut group = c.benchmark_group("sum_f64");
-
-    for &size in SIZES {
-        let data = random_f64_vec(size, 42);
-
-        group.throughput(Throughput::Elements(size as u64));
-        group.bench_with_input(BenchmarkId::new("lanes", size), &data, |b, data| {
-            b.iter(|| lanes::stats::f64::sum(black_box(data)));
-        });
-        group.bench_with_input(BenchmarkId::new("naive", size), &data, |b, data| {
-            b.iter(|| naive_sum_f64(black_box(data)));
-        });
-    }
-
-    group.finish();
-}
-
-fn bench_dot_f64(c: &mut Criterion) {
-    let mut group = c.benchmark_group("dot_f64");
-
-    for &size in SIZES {
-        let a = random_f64_vec(size, 42);
-        let b = random_f64_vec(size, 123);
-
-        group.throughput(Throughput::Elements(size as u64));
-        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
-            bench.iter(|| lanes::stats::f64::dot(black_box(&a), black_box(&b)));
-        });
-        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
-            bench.iter(|| naive_dot_f64(black_box(&a), black_box(&b)));
         });
     }
 
