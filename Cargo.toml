@@ -1,0 +1,31 @@
+[package]
+name = "lanes"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+description = "High-performance computational algorithm kernels with runtime SIMD dispatch"
+categories = ["algorithms", "science", "no-std"]
+keywords = ["simd", "algorithms", "performance", "kernels"]
+readme = "README.md"
+repository = "https://github.com/themankindproject/lanes"
+exclude = ["fuzz"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dependencies]
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
+rand = "0.8"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[[bench]]
+name = "kernels"
+harness = false

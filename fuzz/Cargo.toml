@@ -1,0 +1,38 @@
+[package]
+name = "lanes-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.lanes]
+path = ".."
+
+# Prevent this from interfering with the parent crate's build.
+[workspace]
+
+[[bin]]
+name = "fuzz_dot"
+path = "fuzz_targets/fuzz_dot.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_reductions"
+path = "fuzz_targets/fuzz_reductions.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_sqrt"
+path = "fuzz_targets/fuzz_sqrt.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_ml"
+path = "fuzz_targets/fuzz_ml.rs"
+doc = false
