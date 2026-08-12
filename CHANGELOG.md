@@ -10,14 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **f64 (double-precision) support** across every family. Each of
-  `stats`, `distance`, `math`, `ml` is now split into an `f32` and an
+  `stats`, `distance`, `math`, `ml` is split into an `f32` and an
   `f64` submodule, so the same function name serves both precisions:
   `lanes::stats::f32::sum` and `lanes::stats::f64::sum`.
 - `f64` kernels on all backends: scalar reference, SSE2 (2-lane), AVX2
   (4-lane), AVX-512F (8-lane), NEON (2-lane). Includes f64 `exp`/`sqrt`/
   `rsqrt`/`clip` maps and ML activations (`softmax`, `sigmoid`, `silu`,
   `gelu`, `relu`).
-- The public API is now precision-first: `lanes::stats::f32::*` /
+- The public API is precision-first: `lanes::stats::f32::*` /
   `lanes::stats::f64::*` (and the same split for `distance`, `math`,
   `ml`). The old flat `lanes::stats::sum` path is replaced by
   `lanes::stats::f32::sum`.
@@ -29,25 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared reduction-kernel macros (`src/kernels/macros.rs`) that generate
   the chunked-loop skeleton for every backend; new reductions are now a
   few lines per backend instead of a hand-written unsafe copy.
-
-### Changed
-
-- **Breaking:** the public API now requires a precision submodule
-  (`lanes::stats::f32::sum`, not `lanes::stats::sum`). Update imports to
-  the `f32` family for the previous behavior.
-
-## [0.1.0] - Unreleased
-
-### Added
-
-- Core algorithms `sum`, `min`, `max`, `dot` for `f32` slices with a small,
-  stable public API (`lanes::{sum,min,max,dot,Backend,Error}`).
 - Layered architecture: public API → algorithm layer → kernel layer →
   backend layer, with runtime dispatch cached in a `OnceLock`.
-- Scalar reference kernels (always available) plus real SIMD kernels:
-  - AVX2 + FMA (`sum`, `min`, `max`, `dot`),
-  - AVX-512F (`sum`, `min`, `max`, `dot`),
-  - NEON (`sum`, `min`, `max`, `dot`).
 - Runtime CPU detection (`is_x86_feature_detected!`, aarch64 auxiliary
   vector) with `platform::supports` gates before every unsafe kernel call.
 - `LANES_BACKEND` environment override for benchmarking and debugging.
@@ -59,9 +42,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a cargo-fuzz target (`fuzz/`, nightly-only, not in CI).
 - Criterion benchmarks for all kernels vs naive baselines at sizes
   `16 … 1_000_000` ([docs/benchmarking.md](docs/benchmarking.md)).
-- CI (`fmt`, `check`, `test`, `clippy`, `doc`) on stable + MSRV 1.89
-  across Linux/macOS/Windows; wasm32 `no_std` check; benchmark workflow
-  with backend matrix; release dry-run workflow.
+- CI: fmt + clippy + test, doctest, MSRV, Miri, fuzz smoke, native
+  aarch64, and llvm-cov coverage on every push and PR.
 
-[Unreleased]: https://github.com/themankindproject/lanes/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/themankindproject/lanes/releases/tag/v0.1.0
+### Changed
+
+- **Breaking:** the public API now requires a precision submodule
+  (`lanes::stats::f32::sum`, not `lanes::stats::sum`). Update imports to
+  the `f32` family for the previous behavior.
+
+### Fixed
+
+- AVX-512 `l1_norm`/`max_norm` (f32 + f64) used a hand-rolled
+  `andnot`-with-sign-mask abs; replaced with the native `_mm512_abs_ps`/
+  `_mm512_abs_pd`, roughly 2× faster on the AVX-512 path.
+
+[Unreleased]: https://github.com/themankindproject/lanes/commits/main

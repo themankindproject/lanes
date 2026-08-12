@@ -7,9 +7,10 @@ public API.
 ## Layering
 
 ```
-Public API        lanes::sum, min, max, dot, Backend, Error
+Public API        lanes::stats::f32/f64, distance::f32/f64, math::f32/f64,
+     │            ml::f32/f64 — plus Backend, Error
      │
-Algorithm layer   src/algorithms/mod.rs   — input validation, backend lookup
+Algorithm layer   src/algorithms/           — input validation, backend lookup
      │
 Kernel layer      src/kernels/            — dispatch fns (match on Backend)
      │                                       │                    │
@@ -20,8 +21,9 @@ Kernel layer      src/kernels/            — dispatch fns (match on Backend)
 Backend layer     src/platform/           — CPU feature detection + LANES_BACKEND
 ```
 
-* **Public API** — the crate root re-exports the four algorithms and the
-  `Backend`/`Error` types. This is the only stable surface.
+* **Public API** — the four families (`stats`, `distance`, `math`, `ml`),
+  each split into `f32` and `f64` submodules, plus the `Backend`/`Error`
+  types. This is the only stable surface.
 * **Algorithm layer** — validates inputs (length checks, empty-slice rules),
   resolves the backend once, and calls the kernel dispatcher. No unsafe code.
 * **Kernel layer** — `dispatch_*` functions map a `Backend` to the matching
@@ -44,7 +46,7 @@ Two designs were considered:
    resolves once into a `OnceLock`, so every subsequent call is a single
    atomic load; the kernel dispatcher then does one `match` on a `Copy` enum.
 
-The skeleton ships design 2: it is simpler, keeps the public API to four
+The skeleton ships design 2: it is simpler, keeps the public API to free
 functions plus two types, and makes "sum, then dot, then min" as cheap as if
 the user inlined the backend themselves. If a future use case demonstrates a
 need to pin different backends per call site, `LANES_BACKEND` (below) is the
@@ -56,8 +58,9 @@ With the `std` feature, the environment variable `LANES_BACKEND` forces a
 backend for the whole process. Accepted values: `scalar`, `sse2`, `avx2`,
 `avx512`, `neon`. The requested backend is honored **only if it is compiled in
 and actually detectable on the host CPU**; otherwise lanes falls back to
-auto-detection. This is used by `benches.yml` to produce comparable numbers
-per backend and by developers to reproduce bugs on a specific path.
+auto-detection. This is used by `docs/benchmarking.md`'s manual workflow to
+produce comparable numbers per backend and by developers to reproduce bugs on
+a specific path.
 
 ### Kernel code generation
 
@@ -66,7 +69,7 @@ tail) is shared across every backend via the macros in `src/kernels/macros.rs`
 (`simd_reduce!` for single-input reductions like `sum`/`min`/`max`,
 `simd_reduce2!` for pairwise reductions like `dot`). Each backend module
 supplies only the per-op identity, vector combine, horizontal reduce, and
-scalar tail — so adding a new reduction to all four x86 tiers is one macro
+scalar tail — so adding a new reduction to all three x86 tiers is one macro
 invocation per backend, not a new copy of the unsafe skeleton. The generated
 functions remain `#[target_feature(...)]` `unsafe fn`s gated by
 `platform::supports`, so the safety model is unchanged.
@@ -109,8 +112,9 @@ is asserted on integer-exact test vectors.
 
 | Feature | Default | Effect |
 | --- | --- | --- |
-| `std` | on | Runtime CPU detection, `LANES_BACKEND`, `std::error::Error`. |
-| (none) | — | `no_std` build; `Backend::detect()` returns `Scalar`. |
+| `std` | on | Runtime CPU detection, `LANES_BACKEND`, `std::error::Error`. Implies `alloc`. |
+| `alloc` | on (via `std`) | `Vec`-returning families (`math`, `ml`, `stats::variance`). |
+| (none) | — | `no_std` build; `Backend::detect()` returns `Scalar`; `stats`/`distance` only. |
 
 There is intentionally no `nightly` or `wasm` feature yet: nothing in the
 crate needs nightly, and WASM gets no special-cased code until a SIMD128

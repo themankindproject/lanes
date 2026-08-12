@@ -8,8 +8,8 @@
 //!
 //! With the `std` feature, the environment variable `LANES_BACKEND` can
 //! force a specific backend for benchmarking or debugging. Accepted values:
-//! `scalar`, `avx2`, `avx512`, `neon`. The request is honoured only if the
-//! backend is both compiled in and actually supported by the host CPU;
+//! `scalar`, `sse2`, `avx2`, `avx512`, `neon`. The request is honoured only
+//! if the backend is both compiled in and actually supported by the host CPU;
 //! otherwise detection proceeds as usual (a requested backend is never
 //! invoked on hardware that does not support it).
 

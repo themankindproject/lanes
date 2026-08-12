@@ -59,10 +59,10 @@ baseline, fix them by bounding the input domain.
 
 ## CI
 
-`benches.yml` runs the ladder for `scalar` and `avx2` on push to `main`
-(when `src/` or `benches/` change) and on demand via `workflow_dispatch`,
-then uploads `target/criterion/` reports as artifacts. GH-hosted runners do
-not expose AVX-512; add a self-hosted matrix row for it.
+Benchmarks are not run in CI (the dedicated workflow was removed to keep CI
+minimal). Run the ladder locally with the `LANES_BACKEND` instructions above;
+criterion HTML reports are a local artifact. GH-hosted runners do not expose
+AVX-512; use a self-hosted runner for that tier.
 
 ## Reporting
 

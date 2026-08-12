@@ -98,9 +98,7 @@ crate::simd_reduce!(
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
     _mm512_setzero_ps(),
-    |acc: __m512, v: __m512| _mm512_add_ps(acc, unsafe {
-        _mm512_andnot_ps(_mm512_set1_ps(-0.0), v)
-    }),
+    |acc: __m512, v: __m512| unsafe { _mm512_add_ps(acc, _mm512_abs_ps(v)) },
     |v| unsafe { _mm512_reduce_add_ps(v) },
     |r: f32, v: f32| r + v.abs()
 );
@@ -113,9 +111,7 @@ crate::simd_reduce!(
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
     _mm512_set1_ps(0.0),
-    |acc: __m512, v: __m512| _mm512_max_ps(acc, unsafe {
-        _mm512_andnot_ps(_mm512_set1_ps(-0.0), v)
-    }),
+    |acc: __m512, v: __m512| unsafe { _mm512_max_ps(acc, _mm512_abs_ps(v)) },
     |v| unsafe { _mm512_reduce_max_ps(v) },
     |r: f32, v: f32| f32::max(r, v.abs())
 );
@@ -497,9 +493,7 @@ crate::simd_reduce!(
     8,
     |p| unsafe { _mm512_loadu_pd(p) },
     _mm512_setzero_pd(),
-    |acc: __m512d, v: __m512d| unsafe {
-        _mm512_add_pd(acc, _mm512_andnot_pd(_mm512_set1_pd(-0.0), v))
-    },
+    |acc: __m512d, v: __m512d| unsafe { _mm512_add_pd(acc, _mm512_abs_pd(v)) },
     |v| unsafe { _mm512_reduce_add_pd(v) },
     |r: f64, v: f64| r + v.abs()
 );
@@ -511,9 +505,7 @@ crate::simd_reduce!(
     8,
     |p| unsafe { _mm512_loadu_pd(p) },
     _mm512_set1_pd(0.0),
-    |acc: __m512d, v: __m512d| unsafe {
-        _mm512_max_pd(acc, _mm512_andnot_pd(_mm512_set1_pd(-0.0), v))
-    },
+    |acc: __m512d, v: __m512d| unsafe { _mm512_max_pd(acc, _mm512_abs_pd(v)) },
     |v| unsafe { _mm512_reduce_max_pd(v) },
     |r: f64, v: f64| f64::max(r, v.abs())
 );

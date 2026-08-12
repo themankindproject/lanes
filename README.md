@@ -150,7 +150,8 @@ bumped only in minor releases.
 See [CONTRIBUTING.md](CONTRIBUTING.md) — concrete recipes for adding
 algorithms, backends, benchmarks, and property tests.
 
-CI runs `fmt`, `clippy`, `test`, a `no_std` check, and doc build on every
+CI runs `fmt`, `clippy`, `test`, `doctest`, a `no_std`/wasm check, MSRV,
+Miri, fuzz smoke, native aarch64 tests, and llvm-cov coverage on every
 push and PR.
 
 ## License
