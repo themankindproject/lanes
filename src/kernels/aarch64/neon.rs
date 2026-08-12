@@ -608,7 +608,7 @@ crate::simd_argminmax!(
     // mask blends the index vector correctly (an i32 index vector would
     // need a 64→32 mask expansion that can't track the two halves of an
     // f64 lane independently).
-    vcombine_s64(vcreate_s64(1), vcreate_s64(0)),
+    unsafe { vcombine_s64(vcreate_s64(1), vcreate_s64(0)) },
     |i: i64| unsafe { vdupq_n_s64(i) },
     |a, b| unsafe { vaddq_s64(a, b) },
     |a: float64x2_t, b: float64x2_t| unsafe { vcgtq_f64(a, b) },
@@ -624,7 +624,7 @@ crate::simd_argminmax!(
     "neon",
     2,
     |p| unsafe { vld1q_f64(p) },
-    vcombine_s64(vcreate_s64(1), vcreate_s64(0)),
+    unsafe { vcombine_s64(vcreate_s64(1), vcreate_s64(0)) },
     |i: i64| unsafe { vdupq_n_s64(i) },
     |a, b| unsafe { vaddq_s64(a, b) },
     |a: float64x2_t, b: float64x2_t| unsafe { vcltq_f64(a, b) },
@@ -1219,7 +1219,7 @@ mod tests {
             eprintln!("DEBUG argmax {data:?} -> ({m}, {idx})");
 
             // Trace the kernel's internal state.
-            let vidx = vcombine_s64(vcreate_s64(1), vcreate_s64(0));
+            let vidx = unsafe { vcombine_s64(vcreate_s64(1), vcreate_s64(0)) };
             let mut iv = [0_i64; 2];
             unsafe { vst1q_s64(iv.as_mut_ptr(), vidx) };
             eprintln!("DEBUG vidx = {iv:?}");
