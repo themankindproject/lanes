@@ -317,6 +317,39 @@ crate::simd_map!(
     |x: f32| x.max(0.0)
 );
 
+// Tanh map: tanh(x) = 1 - 2/(exp(2x)+1) from the vector vexp kernel.
+crate::simd_map!(
+    tanh,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    |v| unsafe {
+        let e = vexp_neon(vaddq_f32(v, v));
+        vsubq_f32(
+            vdupq_n_f32(1.0),
+            vdivq_f32(vdupq_n_f32(2.0), vaddq_f32(e, vdupq_n_f32(1.0))),
+        )
+    },
+    |x: f32| 1.0 - 2.0 / (crate::kernels::exp::exp(2.0 * x) + 1.0)
+);
+
+// RMS norm: two-pass (sum of squares, then scale by rsqrt).
+crate::simd_rms_norm!(
+    rms_norm,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    vdupq_n_f32(0.0),
+    |acc: float32x4_t, v: float32x4_t| vaddq_f32(acc, vmulq_f32(v, v)),
+    |v| unsafe { vaddvq_f32(v) },
+    |v, inv| vmulq_f32(v, vdupq_n_f32(inv)),
+    crate::kernels::sqrt::sqrt
+);
+
 // Exp map: per-element exp, vector vexp for chunks + scalar exp for tails.
 crate::simd_map!(
     exp,
@@ -805,6 +838,41 @@ crate::simd_map!(
     |p, v| unsafe { vst1q_f64(p, v) },
     |v: float64x2_t| unsafe { vmaxq_f64(v, vdupq_n_f64(0.0)) },
     |x: f64| x.max(0.0)
+);
+
+// Tanh map (f64): tanh(x) = 1 - 2/(exp(2x)+1).
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    tanh_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    |v: float64x2_t| unsafe {
+        let e = vexp_128d(vaddq_f64(v, v));
+        vsubq_f64(
+            vdupq_n_f64(1.0),
+            vdivq_f64(vdupq_n_f64(2.0), vaddq_f64(e, vdupq_n_f64(1.0))),
+        )
+    },
+    |x: f64| 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * x) + 1.0)
+);
+
+// RMS norm (f64).
+#[cfg(feature = "alloc")]
+crate::simd_rms_norm!(
+    rms_norm_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    vdupq_n_f64(0.0),
+    |acc: float64x2_t, v: float64x2_t| vaddq_f64(acc, vmulq_f64(v, v)),
+    |v| unsafe { hsum_128d(v) },
+    |v, inv| vmulq_f64(v, vdupq_n_f64(inv)),
+    crate::kernels::sqrt::sqrt_f64
 );
 
 #[cfg(test)]

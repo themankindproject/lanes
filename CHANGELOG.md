@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `std_dev` (`stats`), `tanh` (`math`), `rms_norm` and
+  `cosine_similarity` (`ml`) in both `f32` and `f64`. `tanh` and
+  `rms_norm` get SIMD kernels on every backend (scalar, SSE2, AVX2,
+  AVX-512F, NEON); `std_dev`/`cosine_similarity` compose the existing
+  reduction kernels.
 - **f64 (double-precision) support** across every family. Each of
   `stats`, `distance`, `math`, `ml` is split into an `f32` and an
   `f64` submodule, so the same function name serves both precisions:

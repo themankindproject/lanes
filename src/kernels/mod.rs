@@ -296,6 +296,32 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_tanh,
+    [values: &[f32], out: &mut [f32]],
+    (),
+    scalar::tanh,
+    x86::sse2::tanh,
+    x86::avx2::tanh,
+    x86::avx512::tanh,
+    aarch64::neon::tanh,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_rms_norm,
+    [values: &[f32], eps: f32, out: &mut [f32]],
+    (),
+    scalar::rms_norm,
+    x86::sse2::rms_norm,
+    x86::avx2::rms_norm,
+    x86::avx512::rms_norm,
+    aarch64::neon::rms_norm,
+    id,
+    alloc
+);
+
+dispatch!(
     dispatch_sqrt,
     [values: &[f32], out: &mut [f32]],
     (),
@@ -588,6 +614,32 @@ dispatch!(
     x86::avx2::relu_f64,
     x86::avx512::relu_f64,
     aarch64::neon::relu_f64,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_tanh_f64,
+    [values: &[f64], out: &mut [f64]],
+    (),
+    scalar::tanh_f64,
+    x86::sse2::tanh_f64,
+    x86::avx2::tanh_f64,
+    x86::avx512::tanh_f64,
+    aarch64::neon::tanh_f64,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_rms_norm_f64,
+    [values: &[f64], eps: f64, out: &mut [f64]],
+    (),
+    scalar::rms_norm_f64,
+    x86::sse2::rms_norm_f64,
+    x86::avx2::rms_norm_f64,
+    x86::avx512::rms_norm_f64,
+    aarch64::neon::rms_norm_f64,
     id,
     alloc
 );

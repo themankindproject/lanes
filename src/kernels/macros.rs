@@ -491,6 +491,75 @@ macro_rules! simd_map_param {
     };
 }
 
+/// Generate an RMS-norm kernel (two-pass: sum of squares → rsqrt → scale).
+///
+/// Pass 1 reduces `sum(x²)` over vector chunks plus a scalar tail; pass 2
+/// scales every element by `rsqrt(sum/n + eps)`. The rsqrt is the scalar
+/// `kernels::sqrt::sqrt` (IEEE-correct), so only the add/mul are vectorized;
+/// the reduction dominates and this matches the other reduction kernels.
+///
+/// # Parameters
+///
+/// * `$name` — function name.
+/// * `$t` — scalar element type (`f32` or `f64`).
+/// * `$feat` — `target_feature` string.
+/// * `$lanes` — vector width in `$t` elements.
+/// * `$load` — `fn(*const $t) -> V`.
+/// * `$store` — `fn(*mut $t, V)`.
+/// * `$acc_ident` — zero identity vector.
+/// * `$combine` — `fn(V, V) -> V` `acc + v*v` per lane.
+/// * `$reduce` — `fn(V) -> $t` horizontal sum.
+/// * `$scale` — `fn(V, $t) -> V` multiply every lane by the scalar `1/√(ms+eps)`.
+/// * `$sqrt` — scalar sqrt (`kernels::sqrt::sqrt` / `sqrt_f64`).
+#[macro_export]
+macro_rules! simd_rms_norm {
+    (
+        $name:ident, $t:ty, $feat:literal, $lanes:expr,
+        $load:expr, $store:expr, $acc_ident:expr, $combine:expr, $reduce:expr,
+        $scale:expr, $sqrt:expr
+    ) => {
+        /// Vector RMS norm. See the scalar reference for semantics.
+        ///
+        /// # Safety
+        /// Caller must ensure the CPU feature is available and that `values`
+        /// and `out` have equal lengths.
+        #[cfg(feature = "alloc")]
+        #[inline]
+        #[allow(clippy::cast_precision_loss)] // `len as $t` is inherent to the mean
+        #[target_feature(enable = $feat)]
+        pub(crate) unsafe fn $name(values: &[$t], eps: $t, out: &mut [$t]) {
+            let len = values.len();
+            let chunks = len / $lanes;
+            let rem = len % $lanes;
+            let ptr = values.as_ptr();
+
+            let mut acc = $acc_ident;
+            for i in 0..chunks {
+                let v = $load(unsafe { ptr.add(i * $lanes) });
+                acc = $combine(acc, v);
+            }
+            let mut sum_sq = $reduce(acc);
+            for i in 0..rem {
+                let x = unsafe { *values.get_unchecked(chunks * $lanes + i) };
+                sum_sq += x * x;
+            }
+            // Empty input: out untouched (caller may pass an empty out).
+            if len == 0 {
+                return;
+            }
+            let inv = 1.0 / $sqrt(sum_sq / len as $t + eps);
+            for i in 0..chunks {
+                let v = $load(unsafe { ptr.add(i * $lanes) });
+                $store(unsafe { out.as_mut_ptr().add(i * $lanes) }, $scale(v, inv));
+            }
+            for i in 0..rem {
+                let x = unsafe { *values.get_unchecked(chunks * $lanes + i) };
+                unsafe { *out.get_unchecked_mut(chunks * $lanes + i) = x * inv };
+            }
+        }
+    };
+}
+
 /// Generate an index-tracking reduction kernel (`argmax`, `argmin`).
 ///
 /// The chunked vector loop keeps a *pair* accumulator — the extremum value

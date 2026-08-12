@@ -277,6 +277,39 @@ crate::simd_map!(
     |x: f32| x.max(0.0)
 );
 
+// Tanh map: tanh(x) = 1 - 2/(exp(2x)+1) from the vector vexp kernel.
+crate::simd_map!(
+    tanh,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    |p, v| unsafe { _mm256_storeu_ps(p, v) },
+    |v| unsafe {
+        let e = vexp_256(_mm256_add_ps(v, v));
+        _mm256_sub_ps(
+            _mm256_set1_ps(1.0),
+            _mm256_div_ps(_mm256_set1_ps(2.0), _mm256_add_ps(e, _mm256_set1_ps(1.0))),
+        )
+    },
+    |x: f32| 1.0 - 2.0 / (crate::kernels::exp::exp(2.0 * x) + 1.0)
+);
+
+// RMS norm: two-pass (sum of squares, then scale by rsqrt).
+crate::simd_rms_norm!(
+    rms_norm,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    |p, v| unsafe { _mm256_storeu_ps(p, v) },
+    _mm256_setzero_ps(),
+    |acc: __m256, v: __m256| _mm256_add_ps(acc, _mm256_mul_ps(v, v)),
+    |v| unsafe { hsum_256(v) },
+    |v, inv| _mm256_mul_ps(v, _mm256_set1_ps(inv)),
+    crate::kernels::sqrt::sqrt
+);
+
 // Exp map: per-element exp, vector vexp for chunks + scalar exp for tails.
 crate::simd_map!(
     exp,
@@ -891,6 +924,41 @@ crate::simd_map!(
     |p, v| unsafe { _mm256_storeu_pd(p, v) },
     |v: __m256d| unsafe { _mm256_max_pd(v, _mm256_set1_pd(0.0)) },
     |x: f64| x.max(0.0)
+);
+
+// Tanh map (f64): tanh(x) = 1 - 2/(exp(2x)+1).
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    tanh_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |v: __m256d| unsafe {
+        let e = vexp_256d(_mm256_add_pd(v, v));
+        _mm256_sub_pd(
+            _mm256_set1_pd(1.0),
+            _mm256_div_pd(_mm256_set1_pd(2.0), _mm256_add_pd(e, _mm256_set1_pd(1.0))),
+        )
+    },
+    |x: f64| 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * x) + 1.0)
+);
+
+// RMS norm (f64).
+#[cfg(feature = "alloc")]
+crate::simd_rms_norm!(
+    rms_norm_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    _mm256_setzero_pd(),
+    |acc: __m256d, v: __m256d| _mm256_add_pd(acc, _mm256_mul_pd(v, v)),
+    |v| unsafe { hsum_256d(v) },
+    |v, inv| _mm256_mul_pd(v, _mm256_set1_pd(inv)),
+    crate::kernels::sqrt::sqrt_f64
 );
 
 #[cfg(test)]

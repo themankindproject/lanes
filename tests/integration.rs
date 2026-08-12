@@ -618,3 +618,129 @@ fn f64_sigmoid_silu_gelu_relu() {
     assert_eq!(r, [0.0, 0.0, 0.0, 1.0, 5.0]);
     assert!(lanes::ml::f64::relu(&[]).is_empty());
 }
+
+#[cfg(feature = "alloc")]
+#[test]
+fn std_dev_known_and_empty() {
+    let s = lanes::stats::f32::std_dev(&[1.0_f32, 2.0, 3.0]).unwrap();
+    assert!((s - (2.0_f32 / 3.0).sqrt()).abs() < 1e-6, "s={s}");
+    assert_eq!(lanes::stats::f32::std_dev(&[4.0]), Some(0.0));
+    assert_eq!(lanes::stats::f32::std_dev(&[] as &[f32]), None);
+
+    let s = lanes::stats::f64::std_dev(&[1.0_f64, 2.0, 3.0]).unwrap();
+    assert!((s - (2.0_f64 / 3.0).sqrt()).abs() < 1e-12, "s={s}");
+    assert_eq!(lanes::stats::f64::std_dev(&[4.0]), Some(0.0));
+    assert_eq!(lanes::stats::f64::std_dev(&[] as &[f64]), None);
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn tanh_known_and_saturation() {
+    let t = lanes::math::f32::tanh(&[0.0_f32, 1.0, -1.0, 50.0, -50.0]);
+    assert!(t[0].abs() < 1e-6, "t[0]={}", t[0]);
+    assert!((t[1] - 0.761_594_2).abs() < 1e-5, "t[1]={}", t[1]);
+    assert!((t[2] + 0.761_594_2).abs() < 1e-5, "t[2]={}", t[2]);
+    assert!((t[3] - 1.0).abs() < 1e-6, "t[3]={}", t[3]);
+    assert!((t[4] + 1.0).abs() < 1e-6, "t[4]={}", t[4]);
+    assert!(lanes::math::f32::tanh(&[]).is_empty());
+
+    let t = lanes::math::f64::tanh(&[0.0_f64, 1.0, -1.0, 100.0, -100.0]);
+    assert!(t[0].abs() < 1e-12);
+    assert!(
+        (t[1] - 0.761_594_155_955_764_9).abs() < 1e-12,
+        "t[1]={}",
+        t[1]
+    );
+    assert!(
+        (t[2] + 0.761_594_155_955_764_9).abs() < 1e-12,
+        "t[2]={}",
+        t[2]
+    );
+    assert!((t[3] - 1.0).abs() < 1e-12);
+    assert!((t[4] + 1.0).abs() < 1e-12);
+    assert!(lanes::math::f64::tanh(&[]).is_empty());
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn rms_norm_known_and_empty() {
+    // mean(x²) for [3,4] = 12.5; rms = √12.5 ≈ 3.535534.
+    let v = lanes::ml::f32::rms_norm(&[3.0_f32, 4.0], 0.0);
+    assert!((v[0] - 3.0 / 12.5_f32.sqrt()).abs() < 1e-5, "v[0]={}", v[0]);
+    assert!((v[1] - 4.0 / 12.5_f32.sqrt()).abs() < 1e-5, "v[1]={}", v[1]);
+    assert!(lanes::ml::f32::rms_norm(&[], 1e-5).is_empty());
+    // eps guards the all-zero case.
+    let z = lanes::ml::f32::rms_norm(&[0.0_f32; 4], 1e-4);
+    assert!(z.iter().all(|x| x.abs() < 1e-6));
+
+    let v = lanes::ml::f64::rms_norm(&[3.0_f64, 4.0], 0.0);
+    assert!(
+        (v[0] - 3.0 / 12.5_f64.sqrt()).abs() < 1e-12,
+        "v[0]={}",
+        v[0]
+    );
+    assert!(
+        (v[1] - 4.0 / 12.5_f64.sqrt()).abs() < 1e-12,
+        "v[1]={}",
+        v[1]
+    );
+    assert!(lanes::ml::f64::rms_norm(&[], 1e-5).is_empty());
+    let z = lanes::ml::f64::rms_norm(&[0.0_f64; 4], 1e-8);
+    assert!(z.iter().all(|x| x.abs() < 1e-12));
+}
+
+#[test]
+fn cosine_similarity_known_cases() {
+    // Identical vectors → 1.0.
+    assert_eq!(
+        lanes::ml::f32::cosine_similarity(&[1.0_f32, 2.0], &[1.0_f32, 2.0]),
+        Ok(Some(1.0))
+    );
+    // Orthogonal → 0.0.
+    assert!(
+        lanes::ml::f32::cosine_similarity(&[1.0_f32, 0.0], &[0.0_f32, 1.0])
+            .unwrap()
+            .unwrap()
+            .abs()
+            < 1e-6
+    );
+    // Opposite → -1.0.
+    assert_eq!(
+        lanes::ml::f32::cosine_similarity(&[1.0_f32], &[-1.0_f32]),
+        Ok(Some(-1.0))
+    );
+    // Length mismatch → error.
+    assert!(lanes::ml::f32::cosine_similarity(&[1.0_f32], &[1.0_f32, 2.0]).is_err());
+    // Empty → None.
+    assert_eq!(lanes::ml::f32::cosine_similarity(&[], &[]), Ok(None));
+    // Zero vector → None.
+    assert_eq!(
+        lanes::ml::f32::cosine_similarity(&[0.0_f32], &[1.0_f32]),
+        Ok(None)
+    );
+
+    assert!(
+        (lanes::ml::f64::cosine_similarity(&[1.0_f64, 2.0], &[1.0_f64, 2.0])
+            .unwrap()
+            .unwrap()
+            - 1.0)
+            .abs()
+            < 1e-12
+    );
+    assert!(
+        lanes::ml::f64::cosine_similarity(&[1.0_f64, 0.0], &[0.0_f64, 1.0])
+            .unwrap()
+            .unwrap()
+            .abs()
+            < 1e-12
+    );
+    assert_eq!(
+        lanes::ml::f64::cosine_similarity(&[1.0_f64], &[-1.0_f64]),
+        Ok(Some(-1.0))
+    );
+    assert!(lanes::ml::f64::cosine_similarity(&[1.0_f64], &[1.0_f64, 2.0]).is_err());
+    assert_eq!(
+        lanes::ml::f64::cosine_similarity(&[0.0_f64], &[1.0_f64]),
+        Ok(None)
+    );
+}

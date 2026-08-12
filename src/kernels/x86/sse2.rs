@@ -277,6 +277,39 @@ crate::simd_map!(
     |x: f32| x.max(0.0)
 );
 
+// Tanh map: tanh(x) = 1 - 2/(exp(2x)+1) from the vector vexp kernel.
+crate::simd_map!(
+    tanh,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    |p, v| unsafe { _mm_storeu_ps(p, v) },
+    |v| unsafe {
+        let e = vexp_128(_mm_add_ps(v, v));
+        _mm_sub_ps(
+            _mm_set1_ps(1.0),
+            _mm_div_ps(_mm_set1_ps(2.0), _mm_add_ps(e, _mm_set1_ps(1.0))),
+        )
+    },
+    |x: f32| 1.0 - 2.0 / (crate::kernels::exp::exp(2.0 * x) + 1.0)
+);
+
+// RMS norm: two-pass (sum of squares, then scale by rsqrt).
+crate::simd_rms_norm!(
+    rms_norm,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    |p, v| unsafe { _mm_storeu_ps(p, v) },
+    _mm_setzero_ps(),
+    |acc: __m128, v: __m128| _mm_add_ps(acc, _mm_mul_ps(v, v)),
+    |v| unsafe { hsum_128(v) },
+    |v, inv| _mm_mul_ps(v, _mm_set1_ps(inv)),
+    crate::kernels::sqrt::sqrt
+);
+
 // Exp map: per-element exp, vector vexp for chunks + scalar exp for tails.
 crate::simd_map!(
     exp,
@@ -864,6 +897,41 @@ crate::simd_map!(
     |p, v| unsafe { _mm_storeu_pd(p, v) },
     |v: __m128d| unsafe { _mm_max_pd(v, _mm_set1_pd(0.0)) },
     |x: f64| x.max(0.0)
+);
+
+// Tanh map (f64): tanh(x) = 1 - 2/(exp(2x)+1).
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    tanh_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    |p, v| unsafe { _mm_storeu_pd(p, v) },
+    |v: __m128d| unsafe {
+        let e = vexp_128d(_mm_add_pd(v, v));
+        _mm_sub_pd(
+            _mm_set1_pd(1.0),
+            _mm_div_pd(_mm_set1_pd(2.0), _mm_add_pd(e, _mm_set1_pd(1.0))),
+        )
+    },
+    |x: f64| 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * x) + 1.0)
+);
+
+// RMS norm (f64).
+#[cfg(feature = "alloc")]
+crate::simd_rms_norm!(
+    rms_norm_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    |p, v| unsafe { _mm_storeu_pd(p, v) },
+    _mm_setzero_pd(),
+    |acc: __m128d, v: __m128d| _mm_add_pd(acc, _mm_mul_pd(v, v)),
+    |v| unsafe { hsum_128d(v) },
+    |v, inv| _mm_mul_pd(v, _mm_set1_pd(inv)),
+    crate::kernels::sqrt::sqrt_f64
 );
 
 #[cfg(test)]

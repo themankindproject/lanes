@@ -233,6 +233,39 @@ crate::simd_map!(
     |x: f32| x.max(0.0)
 );
 
+// Tanh map: tanh(x) = 1 - 2/(exp(2x)+1) from the vector vexp kernel.
+crate::simd_map!(
+    tanh,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    |p, v| unsafe { _mm512_storeu_ps(p, v) },
+    |v| unsafe {
+        let e = vexp_512(_mm512_add_ps(v, v));
+        _mm512_sub_ps(
+            _mm512_set1_ps(1.0),
+            _mm512_div_ps(_mm512_set1_ps(2.0), _mm512_add_ps(e, _mm512_set1_ps(1.0))),
+        )
+    },
+    |x: f32| 1.0 - 2.0 / (crate::kernels::exp::exp(2.0 * x) + 1.0)
+);
+
+// RMS norm: two-pass (sum of squares, then scale by rsqrt).
+crate::simd_rms_norm!(
+    rms_norm,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    |p, v| unsafe { _mm512_storeu_ps(p, v) },
+    _mm512_setzero_ps(),
+    |acc: __m512, v: __m512| _mm512_add_ps(acc, _mm512_mul_ps(v, v)),
+    |v| unsafe { _mm512_reduce_add_ps(v) },
+    |v, inv| _mm512_mul_ps(v, _mm512_set1_ps(inv)),
+    crate::kernels::sqrt::sqrt
+);
+
 // Exp map: per-element exp, vector vexp for chunks + scalar exp for tails.
 crate::simd_map!(
     exp,
@@ -745,6 +778,41 @@ crate::simd_map!(
     |p, v| unsafe { _mm512_storeu_pd(p, v) },
     |v: __m512d| unsafe { _mm512_max_pd(v, _mm512_set1_pd(0.0)) },
     |x: f64| x.max(0.0)
+);
+
+// Tanh map (f64): tanh(x) = 1 - 2/(exp(2x)+1).
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    tanh_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |v: __m512d| unsafe {
+        let e = vexp_512d(_mm512_add_pd(v, v));
+        _mm512_sub_pd(
+            _mm512_set1_pd(1.0),
+            _mm512_div_pd(_mm512_set1_pd(2.0), _mm512_add_pd(e, _mm512_set1_pd(1.0))),
+        )
+    },
+    |x: f64| 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * x) + 1.0)
+);
+
+// RMS norm (f64).
+#[cfg(feature = "alloc")]
+crate::simd_rms_norm!(
+    rms_norm_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    _mm512_setzero_pd(),
+    |acc: __m512d, v: __m512d| _mm512_add_pd(acc, _mm512_mul_pd(v, v)),
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |v, inv| _mm512_mul_pd(v, _mm512_set1_pd(inv)),
+    crate::kernels::sqrt::sqrt_f64
 );
 
 #[cfg(test)]

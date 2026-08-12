@@ -1,8 +1,10 @@
 //! Machine-learning kernels built on the `lanes` core.
 //!
 //! These functions compose the core reductions (`sum`, `max`, `dot`) into
-//! higher-level ML ops. Each is dispatched to the best SIMD backend at
-//! runtime, exactly like the core functions.
+//! higher-level ML ops (softmax, activations, `rms_norm`,
+//! `cosine_similarity`).
+//! Each is dispatched to the best SIMD backend at runtime, exactly like the
+//! core functions.
 //!
 //! Precision is selected by the submodule: [`f32`] for single-precision,
 //! [`f64`] for double-precision.
@@ -11,6 +13,7 @@ pub mod f32 {
     //! Single-precision (`f32`) ML kernels.
 
     use crate::dispatch::Backend;
+    use crate::error::Error;
     use crate::kernels;
     use alloc::vec::Vec;
 
@@ -119,12 +122,70 @@ pub mod f32 {
         kernels::dispatch_relu(backend, values, &mut out);
         out
     }
+
+    /// RMS norm over a slice: `x_i / sqrt(mean(x²) + eps)`.
+    ///
+    /// The standard LLM normalization (Llama, Qwen). `eps` guards against
+    /// division by zero for all-zero input; a typical value is `1e-5`.
+    /// Returns a new `Vec` of the same length; an empty slice yields an empty
+    /// `Vec`.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::ml::f32::rms_norm(&[3.0_f32, 4.0], 0.0);
+    /// let r = 12.5_f32.sqrt(); // sqrt(mean(9, 16))
+    /// assert!((v[0] - 3.0 / r).abs() < 1e-6);
+    /// assert!((v[1] - 4.0 / r).abs() < 1e-6);
+    /// ```
+    #[must_use]
+    pub fn rms_norm(values: &[f32], eps: f32) -> Vec<f32> {
+        let mut out = alloc::vec![0.0_f32; values.len()];
+        let backend = Backend::detect();
+        kernels::dispatch_rms_norm(backend, values, eps, &mut out);
+        out
+    }
+
+    /// Cosine similarity between two equal-length slices:
+    /// `dot(a, b) / (|a|·|b|)`.
+    ///
+    /// Returns an error if the slices have different lengths. Returns `None`
+    /// if either vector has zero length (so the angle is undefined). The
+    /// result is in `[-1, 1]` up to rounding.
+    ///
+    /// # Errors
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
+    ///
+    /// # Example
+    /// ```
+    /// let s = lanes::ml::f32::cosine_similarity(&[1.0_f32, 0.0], &[1.0_f32, 0.0]);
+    /// assert_eq!(s, Ok(Some(1.0)));
+    /// ```
+    pub fn cosine_similarity(a: &[f32], b: &[f32]) -> Result<Option<f32>, Error> {
+        if a.len() != b.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len(),
+            });
+        }
+        if a.is_empty() {
+            return Ok(None);
+        }
+        let backend = Backend::detect();
+        let dot = kernels::dispatch_dot(backend, a, b);
+        let na = kernels::sqrt::sqrt(kernels::dispatch_sum_sq(backend, a));
+        let nb = kernels::sqrt::sqrt(kernels::dispatch_sum_sq(backend, b));
+        if na == 0.0 || nb == 0.0 {
+            return Ok(None);
+        }
+        Ok(Some(dot / (na * nb)))
+    }
 }
 
 pub mod f64 {
     //! Double-precision (`f64`) ML kernels.
 
     use crate::dispatch::Backend;
+    use crate::error::Error;
     use crate::kernels;
     use alloc::vec::Vec;
 
@@ -232,5 +293,62 @@ pub mod f64 {
         let backend = Backend::detect();
         kernels::dispatch_relu_f64(backend, values, &mut out);
         out
+    }
+
+    /// RMS norm over a slice: `x_i / sqrt(mean(x²) + eps)`.
+    ///
+    /// The standard LLM normalization (Llama, Qwen). `eps` guards against
+    /// division by zero for all-zero input; a typical value is `1e-5`.
+    /// Returns a new `Vec` of the same length; an empty slice yields an empty
+    /// `Vec`.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::ml::f64::rms_norm(&[3.0_f64, 4.0], 0.0);
+    /// let r = 12.5_f64.sqrt(); // sqrt(mean(9, 16))
+    /// assert!((v[0] - 3.0 / r).abs() < 1e-12);
+    /// assert!((v[1] - 4.0 / r).abs() < 1e-12);
+    /// ```
+    #[must_use]
+    pub fn rms_norm(values: &[f64], eps: f64) -> Vec<f64> {
+        let mut out = alloc::vec![0.0_f64; values.len()];
+        let backend = Backend::detect();
+        kernels::dispatch_rms_norm_f64(backend, values, eps, &mut out);
+        out
+    }
+
+    /// Cosine similarity between two equal-length slices:
+    /// `dot(a, b) / (|a|·|b|)`.
+    ///
+    /// Returns an error if the slices have different lengths. Returns `None`
+    /// if either vector has zero length (so the angle is undefined). The
+    /// result is in `[-1, 1]` up to rounding.
+    ///
+    /// # Errors
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
+    ///
+    /// # Example
+    /// ```
+    /// let s = lanes::ml::f64::cosine_similarity(&[1.0_f64, 0.0], &[1.0_f64, 0.0]);
+    /// assert_eq!(s, Ok(Some(1.0)));
+    /// ```
+    pub fn cosine_similarity(a: &[f64], b: &[f64]) -> Result<Option<f64>, Error> {
+        if a.len() != b.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len(),
+            });
+        }
+        if a.is_empty() {
+            return Ok(None);
+        }
+        let backend = Backend::detect();
+        let dot = kernels::dispatch_dot_f64(backend, a, b);
+        let na = kernels::sqrt::sqrt_f64(kernels::dispatch_sum_sq_f64(backend, a));
+        let nb = kernels::sqrt::sqrt_f64(kernels::dispatch_sum_sq_f64(backend, b));
+        if na == 0.0 || nb == 0.0 {
+            return Ok(None);
+        }
+        Ok(Some(dot / (na * nb)))
     }
 }

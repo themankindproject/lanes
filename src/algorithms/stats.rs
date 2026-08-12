@@ -176,6 +176,25 @@ pub mod f32 {
         Some(kernels::dispatch_sum(backend, &centered) / n as f32)
     }
 
+    /// Compute the (population) standard deviation of a slice:
+    /// `sqrt(variance(x))`.
+    ///
+    /// Returns [`None`] if the slice is empty. Same numerical properties as
+    /// [`variance`](Self::variance).
+    ///
+    /// Gated on `alloc`: shares variance's two-pass heap buffer.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::stats::f32::std_dev(&[1.0_f32, 2.0, 3.0]).unwrap();
+    /// assert!((v - (2.0_f32 / 3.0).sqrt()).abs() < 1e-6);
+    /// ```
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn std_dev(values: &[f32]) -> Option<f32> {
+        variance(values).map(crate::kernels::sqrt::sqrt)
+    }
+
     /// Compute the dot product of two slices (linear algebra, part of the
     /// `stats` family).
     ///
@@ -370,6 +389,25 @@ pub mod f64 {
         let centered: alloc::vec::Vec<f64> =
             values.iter().map(|x| (x - mean) * (x - mean)).collect();
         Some(kernels::dispatch_sum_f64(backend, &centered) / n as f64)
+    }
+
+    /// Compute the (population) standard deviation of a slice:
+    /// `sqrt(variance(x))`.
+    ///
+    /// Returns [`None`] if the slice is empty. Same numerical properties as
+    /// [`variance`](Self::variance).
+    ///
+    /// Gated on `alloc`: shares variance's two-pass heap buffer.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::stats::f64::std_dev(&[1.0_f64, 2.0, 3.0]).unwrap();
+    /// assert!((v - (2.0_f64 / 3.0).sqrt()).abs() < 1e-12);
+    /// ```
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn std_dev(values: &[f64]) -> Option<f64> {
+        variance(values).map(crate::kernels::sqrt::sqrt_f64)
     }
 
     /// Compute the dot product of two slices (double precision, linear

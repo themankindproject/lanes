@@ -73,6 +73,31 @@ pub(crate) fn relu(values: &[f32], out: &mut [f32]) {
     }
 }
 
+/// Elementwise `tanh` into `out`. Derived from the crate's `exp`:
+/// `tanh(x) = 1 - 2/(exp(2x) + 1)`. Saturates to ±1 (exp under/overflow);
+/// NaN propagates.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn tanh(values: &[f32], out: &mut [f32]) {
+    map(values, out, |x| 1.0 - 2.0 / (exp::exp(2.0 * x) + 1.0));
+}
+
+/// RMS norm into `out`: `x_i * rsqrt(mean(x²) + eps)`. Empty input leaves
+/// `out` untouched. The epsilon guards the all-zero case.
+#[cfg(feature = "alloc")]
+#[inline]
+#[allow(clippy::cast_precision_loss)] // `len as f32` is inherent to the mean
+pub(crate) fn rms_norm(values: &[f32], eps: f32, out: &mut [f32]) {
+    if values.is_empty() {
+        return;
+    }
+    let mean_sq = values.iter().map(|x| x * x).sum::<f32>() / values.len() as f32;
+    let inv = 1.0 / crate::kernels::sqrt::sqrt(mean_sq + eps);
+    for (i, &v) in values.iter().enumerate() {
+        out[i] = v * inv;
+    }
+}
+
 /// Compute the sum of all elements in a slice.
 ///
 /// Returns `0.0` for an empty slice.
@@ -396,6 +421,32 @@ pub(crate) fn gelu_f64(values: &[f64], out: &mut [f64]) {
 pub(crate) fn relu_f64(values: &[f64], out: &mut [f64]) {
     for (v, o) in values.iter().zip(out) {
         *o = (*v).max(0.0);
+    }
+}
+
+/// Elementwise `tanh` into `out`. Derived from the crate's `exp`:
+/// `tanh(x) = 1 - 2/(exp(2x) + 1)`. Saturates to ±1; NaN propagates.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn tanh_f64(values: &[f64], out: &mut [f64]) {
+    for (v, o) in values.iter().zip(out) {
+        *o = 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * *v) + 1.0);
+    }
+}
+
+/// RMS norm into `out`: `x_i * rsqrt(mean(x²) + eps)`. Empty input leaves
+/// `out` untouched.
+#[cfg(feature = "alloc")]
+#[inline]
+#[allow(clippy::cast_precision_loss)] // `len as f64` is inherent to the mean
+pub(crate) fn rms_norm_f64(values: &[f64], eps: f64, out: &mut [f64]) {
+    if values.is_empty() {
+        return;
+    }
+    let mean_sq = values.iter().map(|x| x * x).sum::<f64>() / values.len() as f64;
+    let inv = 1.0 / crate::kernels::sqrt::sqrt_f64(mean_sq + eps);
+    for (i, &v) in values.iter().enumerate() {
+        out[i] = v * inv;
     }
 }
 

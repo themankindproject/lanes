@@ -561,4 +561,58 @@ proptest! {
             );
         }
     }
+
+    #[test]
+    fn prop_tanh_matches_naive(values in softmax_f32_vec()) {
+        // tanh(x) = 1 - 2/(e^(2x)+1); |x| ≤ 40 keeps e^(2x) finite.
+        let got = lanes::math::f32::tanh(&values);
+        let want: Vec<f32> = values.iter().map(|&x| x.tanh()).collect();
+        for i in 0..values.len() {
+            let (g, w) = (got[i], want[i]);
+            // tanh is in [-1,1]; absolute tolerance suffices.
+            prop_assert!(
+                (g - w).abs() <= 2e-6,
+                "lane {i}: tanh({}) = {g}, want {w}",
+                values[i]
+            );
+        }
+    }
+
+    #[test]
+    fn prop_rms_norm_matches_naive(values in bounded_f32_vec(), eps in 1e-6_f32..1e-2) {
+        let got = lanes::ml::f32::rms_norm(&values, eps);
+        let mean_sq: f32 = values.iter().map(|x| x * x).sum::<f32>() / values.len() as f32;
+        let inv = 1.0 / (mean_sq + eps).sqrt();
+        let want: Vec<f32> = values.iter().map(|&x| x * inv).collect();
+        for i in 0..values.len() {
+            let tol = want[i].abs() * 2e-6 + 1e-6;
+            prop_assert!(
+                (got[i] - want[i]).abs() <= tol,
+                "lane {i}: rms_norm({}) = {}, want {}",
+                values[i], got[i], want[i]
+            );
+        }
+    }
+
+    #[test]
+    fn prop_cosine_similarity_matches_naive(a in bounded_f32_vec()) {
+        // Derive b from a (same pattern as prop_dot_matches_naive): a
+        // second filtered strategy rejects too often.
+        let b: Vec<f32> = a.iter().map(|x| x * 0.5 + 1.0).collect();
+        let got = lanes::ml::f32::cosine_similarity(&a, &b).unwrap();
+        let naive = {
+            let dot: f32 = a.iter().zip(&b).map(|(&x, &y)| x * y).sum();
+            let na = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let nb = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if na == 0.0 || nb == 0.0 { None } else { Some(dot / (na * nb)) }
+        };
+        match (got, naive) {
+            (None, None) => {}
+            (Some(g), Some(w)) => {
+                let tol = w.abs() * 2e-6 + 1e-6;
+                prop_assert!((g - w).abs() <= tol, "cos({g}) vs naive {w}");
+            }
+            (g, w) => prop_assert!(false, "cos: got {g:?}, naive {w:?}"),
+        }
+    }
 }

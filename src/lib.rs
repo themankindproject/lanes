@@ -116,7 +116,8 @@ pub use dispatch::Backend;
 pub use error::Error;
 
 /// Statistical reductions (aggregates over slices): `sum`, `prod`, `min`,
-/// `max`, `argmax`, `argmin`, `sum_sq`, `mean`, `variance`, `dot`.
+/// `max`, `argmax`, `argmin`, `sum_sq`, `mean`, `variance`, `std_dev`,
+/// `dot`.
 ///
 /// Precision is selected via the [`f32`] or [`f64`] submodule.
 pub mod stats {
@@ -131,16 +132,17 @@ pub mod distance {
 }
 
 /// Elementwise math functions (per-element maps): `sqrt`, `clip`, `rsqrt`,
-/// `exp`. Precision is selected via the [`f32`] or [`f64`] submodule.
+/// `exp`, `tanh`. Precision is selected via the [`f32`] or [`f64`] submodule.
 #[cfg(feature = "alloc")]
 pub mod math {
     pub use crate::algorithms::math::{f32, f64};
 }
 
-/// ML kernels built on the `lanes` core (softmax, and future layer-norm,
-/// quantize, argmax, cosine-sim). Available on any target with an allocator:
-/// built with `std`, or with `no_std` + the `alloc` feature.
-/// Precision is selected via the [`f32`] or [`f64`] submodule.
+/// ML kernels built on the `lanes` core (softmax, `rms_norm`,
+/// `cosine_similarity`, and future layer-norm, quantize, argmax). Available
+/// on any target with an allocator: built with `std`, or with `no_std` +
+/// the `alloc` feature. Precision is selected via the [`f32`] or [`f64`]
+/// submodule.
 #[cfg(feature = "alloc")]
 pub mod ml {
     pub use crate::algorithms::ml::{f32, f64};
