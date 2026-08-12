@@ -1,4 +1,4 @@
-//! Fuzz target for `lanes::dot`.
+//! Fuzz target for `lanes::stats::f32::dot`.
 //!
 //! Verifies that the dot product function never panics regardless of
 //! input, and that mismatched lengths correctly produce an error.
@@ -17,7 +17,7 @@ struct DotInput {
 }
 
 fuzz_target!(|input: DotInput| {
-    let result = lanes::dot(&input.a, &input.b);
+    let result = lanes::stats::f32::dot(&input.a, &input.b);
 
     match result {
         Ok(value) => {

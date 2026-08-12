@@ -15,13 +15,26 @@ runtime. Write your code once; `lanes` picks the backend.
 
 ## Kernels
 
+Every operation is available in **single precision** (`f32`) and **double
+precision** (`f64`) via a family submodule. The kernels below are shown for
+`f32`; the `f64` family has the identical shape.
+
 | Function | Description | Backends |
 | --- | --- | --- |
-| `lanes::stats::sum(&[f32]) -> f32` | Sum, `0.0` for empty input | scalar, SSE2, AVX2, AVX-512F, NEON |
-| `lanes::stats::prod(&[f32]) -> f32` | Product, `1.0` for empty input | scalar, SSE2, AVX2, AVX-512F, NEON |
-| `lanes::stats::min(&[f32]) -> Option<f32>` | Minimum (`None` for empty) | scalar, SSE2, AVX2, AVX-512F, NEON |
-| `lanes::stats::max(&[f32]) -> Option<f32>` | Maximum (`None` for empty) | scalar, SSE2, AVX2, AVX-512F, NEON |
-| `lanes::stats::dot(&[f32], &[f32]) -> Result<f32, Error>` | Dot product, length-checked | scalar, SSE2, AVX2+FMA, AVX-512F, NEON |
+| `lanes::stats::f32::sum(&[f32]) -> f32` | Sum, `0.0` for empty input | scalar, SSE2, AVX2, AVX-512F, NEON |
+| `lanes::stats::f32::prod(&[f32]) -> f32` | Product, `1.0` for empty input | scalar, SSE2, AVX2, AVX-512F, NEON |
+| `lanes::stats::f32::min(&[f32]) -> Option<f32>` | Minimum (`None` for empty) | scalar, SSE2, AVX2, AVX-512F, NEON |
+| `lanes::stats::f32::max(&[f32]) -> Option<f32>` | Maximum (`None` for empty) | scalar, SSE2, AVX2, AVX-512F, NEON |
+| `lanes::stats::f32::dot(&[f32], &[f32]) -> Result<f32, Error>` | Dot product, length-checked | scalar, SSE2, AVX2+FMA, AVX-512F, NEON |
+
+Families: [`lanes::stats`](https://docs.rs/lanes/latest/lanes/stats/index.html)
+(sum, prod, min, max, argmax, argmin, sum_sq, mean, variance, dot),
+[`lanes::distance`](https://docs.rs/lanes/latest/lanes/distance/index.html)
+(l1_norm, l2_norm, max_norm),
+[`lanes::math`](https://docs.rs/lanes/latest/lanes/math/index.html)
+(sqrt, clip, rsqrt, exp), and
+[`lanes::ml`](https://docs.rs/lanes/latest/lanes/ml/index.html)
+(softmax, sigmoid, silu, gelu, relu) — each split into `f32`/`f64`.
 
 The scope is intentionally narrow — **few, fast, correct kernels**, not a
 zoo of wrappers. The architecture (see
@@ -82,7 +95,7 @@ lanes = "0.1"
 ```
 
 ```rust
-use lanes::stats::{dot, sum};
+use lanes::stats::f32::{dot, sum};
 
 let a = vec![1.0_f32; 1024];
 let b = vec![2.0_f32; 1024];
@@ -91,6 +104,9 @@ let dot_product = dot(&a, &b)?;
 let total = sum(&a);
 # Ok::<(), lanes::Error>(())
 ```
+
+For double precision, use `lanes::stats::f64` (same functions, `f64`
+slices).
 
 ## Feature flags
 

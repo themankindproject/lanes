@@ -35,6 +35,50 @@ pub(crate) fn sqrt(x: f32) -> f32 {
     }
 }
 
+/// `f64` square root. Delegates to `f64::sqrt` in `std` builds; uses a
+/// portable Newton iteration (seeded from the f32 fast-inverse-sqrt magic)
+/// in `no_std`.
+///
+/// IEEE 754 semantics: `sqrt(±0) = ±0`, `sqrt(x < 0) = NaN`,
+/// `sqrt(inf) = inf`, `sqrt(nan) = nan`. For all finite positive inputs the
+/// result is correctly rounded (`std`) or within ~1 ulp (`no_std`).
+#[inline]
+pub(crate) fn sqrt_f64(x: f64) -> f64 {
+    #[cfg(feature = "std")]
+    {
+        x.sqrt()
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        sqrt_f64_no_std(x)
+    }
+}
+
+/// Std-free `f64` square root: f32 magic guess + Newton in f64.
+#[cfg(any(not(feature = "std"), test))]
+#[allow(dead_code)] // only reachable on no_std builds; clippy --all-features sees std
+#[inline]
+fn sqrt_f64_no_std(x: f64) -> f64 {
+    if x <= 0.0 {
+        // sqrt(±0) = ±0, sqrt(neg) = NaN (IEEE). NaN propagates.
+        return if x == 0.0 { x } else { f64::NAN };
+    }
+    if x.is_infinite() {
+        return f64::INFINITY; // sqrt(+inf) = inf
+    }
+    // Seed with the f32 fast-inverse-sqrt magic on the high bits, then
+    // Newton in f64: g = 0.5*(g + x/g). From a ~4% guess, four iterations
+    // reach full f64 precision (error² per step).
+    let hi = (x.to_bits() >> 32) as u32;
+    let rsqrt_guess = 0x5F37_59DFu32.wrapping_sub(hi >> 1);
+    let mut g = f64::from_bits(u64::from(rsqrt_guess) << 32) * x;
+    g = 0.5 * (g + x / g);
+    g = 0.5 * (g + x / g);
+    g = 0.5 * (g + x / g);
+    g = 0.5 * (g + x / g);
+    g
+}
+
 /// Std-free `f32` square root: magic-number guess + Newton in f64.
 ///
 /// Compiled in `no_std` builds (where it is the implementation) and in

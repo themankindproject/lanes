@@ -71,7 +71,7 @@ fn approx_reduction_eq(a: f32, b: f32, inputs: &[f32]) -> bool {
 proptest! {
     #[test]
     fn prop_sum_matches_naive(values in finite_f32_vec()) {
-        let lanes_result = lanes::stats::sum(&values);
+        let lanes_result = lanes::stats::f32::sum(&values);
         let naive_result: f32 = values.iter().sum();
 
         prop_assert!(
@@ -91,7 +91,7 @@ proptest! {
         // fractional values would legitimately round differently per
         // backend (a documented non-equality).
         let values: Vec<f32> = values.iter().map(|&x| x as f32).collect();
-        let lanes_result = lanes::stats::prod(&values);
+        let lanes_result = lanes::stats::f32::prod(&values);
         let naive_result: f32 = values.iter().product();
         prop_assert_eq!(lanes_result, naive_result, "prod mismatch for len {}", values.len());
     }
@@ -101,7 +101,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_softmax_sums_to_one(values in softmax_f32_vec()) {
-        let out = lanes::ml::softmax(&values);
+        let out = lanes::ml::f32::softmax(&values);
         if values.is_empty() {
             prop_assert!(out.is_empty());
         } else {
@@ -117,7 +117,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_softmax_matches_f64_reference(values in softmax_f32_vec()) {
-        let out = lanes::ml::softmax(&values);
+        let out = lanes::ml::f32::softmax(&values);
         if values.is_empty() {
             prop_assert!(out.is_empty());
             return Ok(());
@@ -143,7 +143,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_sigmoid_matches_f64_reference(values in softmax_f32_vec()) {
-        let out = lanes::ml::sigmoid(&values);
+        let out = lanes::ml::f32::sigmoid(&values);
         if values.is_empty() {
             prop_assert!(out.is_empty());
             return Ok(());
@@ -169,7 +169,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_sigmoid_in_unit_interval_and_symmetry(values in softmax_f32_vec()) {
-        let out = lanes::ml::sigmoid(&values);
+        let out = lanes::ml::f32::sigmoid(&values);
         if values.is_empty() {
             prop_assert!(out.is_empty());
             return Ok(());
@@ -180,7 +180,7 @@ proptest! {
             // |x| ≳ 16 in f32 (exp under/overflow), well within [-40, 40].
             prop_assert!((0.0..=1.0).contains(&s), "lane {i}: {s} out of [0,1]");
             // sigmoid(x) + sigmoid(-x) == 1 (within exp tolerance).
-            let neg = lanes::ml::sigmoid(&[-x]);
+            let neg = lanes::ml::f32::sigmoid(&[-x]);
             prop_assert!(
                 (f64::from(s) + f64::from(neg[0]) - 1.0).abs() < 1e-4,
                 "lane {i}: symmetry broken at x={x}"
@@ -193,8 +193,8 @@ proptest! {
 proptest! {
     #[test]
     fn prop_silu_equals_x_times_sigmoid(values in softmax_f32_vec()) {
-        let silu_out = lanes::ml::silu(&values);
-        let sig = lanes::ml::sigmoid(&values);
+        let silu_out = lanes::ml::f32::silu(&values);
+        let sig = lanes::ml::f32::sigmoid(&values);
         if values.is_empty() {
             prop_assert!(silu_out.is_empty());
             return Ok(());
@@ -215,7 +215,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_gelu_linear_in_tail(values in softmax_f32_vec()) {
-        let out = lanes::ml::gelu(&values);
+        let out = lanes::ml::f32::gelu(&values);
         if values.is_empty() {
             prop_assert!(out.is_empty());
             return Ok(());
@@ -245,7 +245,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_relu_is_max_zero(values in softmax_f32_vec()) {
-        let out = lanes::ml::relu(&values);
+        let out = lanes::ml::f32::relu(&values);
         if values.is_empty() {
             prop_assert!(out.is_empty());
             return Ok(());
@@ -262,8 +262,8 @@ proptest! {
     fn prop_softmax_shift_invariance(values in softmax_f32_vec(), shift in -40.0_f32..40.0) {
         if values.is_empty() { return Ok(()); }
         let shifted: Vec<f32> = values.iter().map(|&x| x + shift).collect();
-        let a = lanes::ml::softmax(&values);
-        let b = lanes::ml::softmax(&shifted);
+        let a = lanes::ml::f32::softmax(&values);
+        let b = lanes::ml::f32::softmax(&shifted);
         for i in 0..a.len() {
             prop_assert!((a[i] - b[i]).abs() < 1e-5, "lane {i}");
         }
@@ -278,7 +278,7 @@ proptest! {
         // Make b the same length as a for a valid dot product.
         let b: Vec<f32> = a.iter().map(|x| x * 0.5 + 1.0).collect();
 
-        let lanes_result = lanes::stats::dot(&a, &b).unwrap();
+        let lanes_result = lanes::stats::f32::dot(&a, &b).unwrap();
         let naive_result: f32 = a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum();
 
         // Products may themselves round; include a small absolute slack on
@@ -303,7 +303,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_min_matches_naive(values in finite_f32_vec()) {
-        let lanes_result = lanes::stats::min(&values);
+        let lanes_result = lanes::stats::f32::min(&values);
         let naive_result = values.iter().copied().reduce(f32::min);
 
         match (lanes_result, naive_result) {
@@ -322,7 +322,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_max_matches_naive(values in finite_f32_vec()) {
-        let lanes_result = lanes::stats::max(&values);
+        let lanes_result = lanes::stats::f32::max(&values);
         let naive_result = values.iter().copied().reduce(f32::max);
 
         match (lanes_result, naive_result) {
@@ -343,7 +343,7 @@ proptest! {
     ) {
         // b is always longer than a, so we get LengthMismatch.
         let b: Vec<f32> = (0..a.len() + extra).map(|i| i as f32).collect();
-        let result = lanes::stats::dot(&a, &b);
+        let result = lanes::stats::f32::dot(&a, &b);
         prop_assert!(result.is_err());
     }
 }
@@ -351,7 +351,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_sum_sq_matches_naive(values in finite_f32_vec()) {
-        let got = lanes::stats::sum_sq(&values);
+        let got = lanes::stats::f32::sum_sq(&values);
         // Exact for values whose squares are exactly representable; use a
         // tolerance for larger magnitudes (reduction order may differ).
         let want: f32 = values.iter().map(|x| x * x).sum();
@@ -371,7 +371,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_l1_norm_matches_naive(values in finite_f32_vec()) {
-        let got = lanes::distance::l1_norm(&values);
+        let got = lanes::distance::f32::l1_norm(&values);
         let want: f32 = values.iter().map(|x| x.abs()).sum();
         let tol = values.len() as f32 * f32::EPSILON * want.abs().max(1.0);
         prop_assert!(
@@ -384,7 +384,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_max_norm_matches_naive(values in finite_f32_vec()) {
-        let got = lanes::distance::max_norm(&values);
+        let got = lanes::distance::f32::max_norm(&values);
         let want = values.iter().copied().map(f32::abs).reduce(f32::max);
         prop_assert_eq!(got, want, "max_norm mismatch for len {}", values.len());
     }
@@ -393,7 +393,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_mean_matches_f64_reference(values in mid_f32_vec()) {
-        let got = lanes::stats::mean(&values);
+        let got = lanes::stats::f32::mean(&values);
         if values.is_empty() {
             prop_assert!(got.is_none());
             return Ok(());
@@ -421,7 +421,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_variance_matches_f64_reference(values in mid_f32_vec()) {
-        let got = lanes::stats::variance(&values);
+        let got = lanes::stats::f32::variance(&values);
         if values.is_empty() {
             prop_assert!(got.is_none());
             return Ok(());
@@ -457,7 +457,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_l2_norm_matches_f64_reference(values in mid_f32_vec()) {
-        let got = lanes::distance::l2_norm(&values);
+        let got = lanes::distance::f32::l2_norm(&values);
         // Independent f64 ground truth.
         let want = (values.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt()) as f32;
         if !got.is_finite() || !want.is_finite() {
@@ -477,7 +477,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_sqrt_matches_naive(values in finite_f32_vec()) {
-        let got = lanes::math::sqrt(&values);
+        let got = lanes::math::f32::sqrt(&values);
         let want: Vec<f32> = values.iter().map(|x| x.sqrt()).collect();
         for i in 0..values.len() {
             let (g, w) = (got[i], want[i]);
@@ -503,7 +503,7 @@ proptest! {
         delta in 0.0_f32..20.0,
     ) {
         let hi = lo + delta; // valid bounds: lo <= hi
-        let got = lanes::math::clip(&values, lo, hi);
+        let got = lanes::math::f32::clip(&values, lo, hi);
         let want: Vec<f32> = values.iter().map(|&x| x.clamp(lo, hi)).collect();
         // Exact: clamp is a pure min/max (except NaN, which propagates both
         // sides identically).
@@ -522,7 +522,7 @@ proptest! {
 proptest! {
     #[test]
     fn prop_rsqrt_matches_naive(values in finite_f32_vec()) {
-        let got = lanes::math::rsqrt(&values);
+        let got = lanes::math::f32::rsqrt(&values);
         let want: Vec<f32> = values.iter().map(|&x| 1.0 / x.sqrt()).collect();
         for i in 0..values.len() {
             let (g, w) = (got[i], want[i]);
@@ -548,7 +548,7 @@ proptest! {
     #[test]
     fn prop_exp_matches_naive(values in softmax_f32_vec()) {
         // softmax_f32_vec bounds to [-40, 40] where exp stays finite.
-        let got = lanes::math::exp(&values);
+        let got = lanes::math::f32::exp(&values);
         let want: Vec<f32> = values.iter().map(|&x| x.exp()).collect();
         for i in 0..values.len() {
             let (g, w) = (got[i], want[i]);

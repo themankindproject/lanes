@@ -1,4 +1,4 @@
-//! Fuzz target for `lanes::math::sqrt` (per-element map).
+//! Fuzz target for `lanes::math::f32::sqrt` (per-element map).
 //!
 //! Verifies sqrt never panics, never returns non-NaN for negative/NaN input
 //! beyond the IEEE contract, and that `sqrt(x)²` round-trips x within a
@@ -17,7 +17,7 @@ struct SqrtInput {
 }
 
 fuzz_target!(|input: SqrtInput| {
-    let out = lanes::math::sqrt(&input.values);
+    let out = lanes::math::f32::sqrt(&input.values);
 
     assert_eq!(out.len(), input.values.len());
 

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **f64 (double-precision) support** across every family. Each of
+  `stats`, `distance`, `math`, `ml` is now split into an `f32` and an
+  `f64` submodule, so the same function name serves both precisions:
+  `lanes::stats::f32::sum` and `lanes::stats::f64::sum`.
+- `f64` kernels on all backends: scalar reference, SSE2 (2-lane), AVX2
+  (4-lane), AVX-512F (8-lane), NEON (2-lane). Includes f64 `exp`/`sqrt`/
+  `rsqrt`/`clip` maps and ML activations (`softmax`, `sigmoid`, `silu`,
+  `gelu`, `relu`).
+- The public API is now precision-first: `lanes::stats::f32::*` /
+  `lanes::stats::f64::*` (and the same split for `distance`, `math`,
+  `ml`). The old flat `lanes::stats::sum` path is replaced by
+  `lanes::stats::f32::sum`.
 - `lanes::prod` — product reduction across all backends (scalar, SSE2,
   AVX2, AVX-512F, NEON); `1.0` for empty input.
 - SSE2 backend tier (mandatory 128-bit baseline on x86-64) for
@@ -17,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared reduction-kernel macros (`src/kernels/macros.rs`) that generate
   the chunked-loop skeleton for every backend; new reductions are now a
   few lines per backend instead of a hand-written unsafe copy.
+
+### Changed
+
+- **Breaking:** the public API now requires a precision submodule
+  (`lanes::stats::f32::sum`, not `lanes::stats::sum`). Update imports to
+  the `f32` family for the previous behavior.
 
 ## [0.1.0] - Unreleased
 

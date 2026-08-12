@@ -56,7 +56,7 @@ fn main() {
     println!();
 
     let test = vec![1.0_f32; 16];
-    let result = lanes::stats::sum(&test);
+    let result = lanes::stats::f32::sum(&test);
     println!("Validation: sum([1.0; 16]) = {result} (expected 16.0)");
 
     if (result - 16.0).abs() < f32::EPSILON {

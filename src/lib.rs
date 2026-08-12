@@ -10,13 +10,13 @@
 //! ## Quick Start
 //!
 //! ```rust
-//! use lanes::stats::{dot, sum};
+//! use lanes::stats::f32 as stats;
 //!
 //! let a = vec![1.0_f32; 1024];
 //! let b = vec![2.0_f32; 1024];
 //!
-//! let dot_product = dot(&a, &b).unwrap();
-//! let total = sum(&a);
+//! let dot_product = stats::dot(&a, &b).unwrap();
+//! let total = stats::sum(&a);
 //!
 //! assert_eq!(total, 1024.0);
 //! assert_eq!(dot_product, 2048.0);
@@ -25,14 +25,29 @@
 //! ## Architecture
 //!
 //! The crate is layered as public API → algorithm layer → kernel layer →
-//! backend layer. The public entry points ([`stats::sum`], [`stats::prod`],
-//! [`stats::min`], [`stats::max`], [`stats::dot`]) validate their inputs,
-//! resolve the execution backend once (cached in a `OnceLock`), and dispatch
-//! to the matching optimized kernel. Every operation has a portable scalar
-//! fallback.
+//! backend layer. The public entry points ([`stats::f32::sum`],
+//! [`stats::f64::sum`], [`stats::f32::min`], [`stats::f32::max`],
+//! [`stats::f32::dot`]) validate their inputs, resolve the execution backend
+//! once (cached in a `OnceLock`), and dispatch to the matching optimized
+//! kernel. Every operation has a portable scalar fallback.
 //!
 //! See the [architecture document](https://github.com/themankindproject/lanes/blob/main/docs/architecture.md)
 //! for the full design, dispatch model, and extension roadmap.
+//!
+//! ## Precision families
+//!
+//! Every family (`stats`, `distance`, `math`, `ml`) is split into an `f32`
+//! (single-precision) and an `f64` (double-precision) submodule. Pick the
+//! precision at the call site:
+//!
+//! ```rust
+//! use lanes::stats::{f32, f64};
+//!
+//! let s32 = f32::sum(&[1.0_f32, 2.0, 3.0]);
+//! let s64 = f64::sum(&[1.0_f64, 2.0, 3.0]);
+//! assert_eq!(s32, 6.0_f32);
+//! assert_eq!(s64, 6.0_f64);
+//! ```
 //!
 //! ## Supported backends
 //!
@@ -50,8 +65,9 @@
 //!
 //! ## Floating-point semantics
 //!
-//! All kernels operate on `f32`. The following is documented precisely so
-//! results are predictable across backends:
+//! All kernels operate on `f32` or `f64` (chosen via the family submodule).
+//! The following is documented precisely so results are predictable across
+//! backends:
 //!
 //! * **Reduction order** is backend-dependent. Scalar kernels reduce strictly
 //!   left-to-right; SIMD kernels reduce in fixed-width chunks and then
@@ -104,29 +120,31 @@ pub use error::Error;
 
 /// Statistical reductions (aggregates over slices): `sum`, `prod`, `min`,
 /// `max`, `argmax`, `argmin`, `sum_sq`, `mean`, `variance`, `dot`.
+///
+/// Precision is selected via the [`f32`] or [`f64`] submodule.
 pub mod stats {
-    #[cfg(feature = "alloc")]
-    pub use crate::algorithms::stats::variance;
-    pub use crate::algorithms::stats::{argmax, argmin, dot, max, mean, min, prod, sum, sum_sq};
+    pub use crate::algorithms::stats::{f32, f64};
 }
 
 /// Distance and norm functions: `l1_norm`, `l2_norm`, `max_norm`.
 /// All are `no_std`-clean (the sqrt for `l2_norm` is the std-free kernel).
+/// Precision is selected via the [`f32`] or [`f64`] submodule.
 pub mod distance {
-    pub use crate::algorithms::distance::{l1_norm, l2_norm, max_norm};
+    pub use crate::algorithms::distance::{f32, f64};
 }
 
 /// Elementwise math functions (per-element maps): `sqrt`, `clip`, `rsqrt`,
-/// `exp`.
+/// `exp`. Precision is selected via the [`f32`] or [`f64`] submodule.
 #[cfg(feature = "alloc")]
 pub mod math {
-    pub use crate::algorithms::math::{clip, exp, rsqrt, sqrt};
+    pub use crate::algorithms::math::{f32, f64};
 }
 
 /// ML kernels built on the `lanes` core (softmax, and future layer-norm,
 /// quantize, argmax, cosine-sim). Available on any target with an allocator:
 /// built with `std`, or with `no_std` + the `alloc` feature.
+/// Precision is selected via the [`f32`] or [`f64`] submodule.
 #[cfg(feature = "alloc")]
 pub mod ml {
-    pub use crate::algorithms::ml::{gelu, relu, sigmoid, silu, softmax};
+    pub use crate::algorithms::ml::{f32, f64};
 }

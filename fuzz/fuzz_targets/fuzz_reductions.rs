@@ -21,39 +21,39 @@ fuzz_target!(|input: ReductionsInput| {
     let v = &input.values;
 
     // None of these may panic on any input.
-    let _ = lanes::stats::sum(v);
-    let _ = lanes::stats::prod(v);
-    let _ = lanes::stats::min(v);
-    let _ = lanes::stats::max(v);
-    let _ = lanes::stats::sum_sq(v);
-    let _ = lanes::stats::mean(v);
-    let _ = lanes::distance::l1_norm(v);
-    let _ = lanes::distance::l2_norm(v);
-    let _ = lanes::distance::max_norm(v);
+    let _ = lanes::stats::f32::sum(v);
+    let _ = lanes::stats::f32::prod(v);
+    let _ = lanes::stats::f32::min(v);
+    let _ = lanes::stats::f32::max(v);
+    let _ = lanes::stats::f32::sum_sq(v);
+    let _ = lanes::stats::f32::mean(v);
+    let _ = lanes::distance::f32::l1_norm(v);
+    let _ = lanes::distance::f32::l2_norm(v);
+    let _ = lanes::distance::f32::max_norm(v);
 
     // Empty-input contracts.
     if v.is_empty() {
-        assert_eq!(lanes::stats::sum(v), 0.0);
-        assert_eq!(lanes::stats::prod(v), 1.0);
-        assert_eq!(lanes::stats::min(v), None);
-        assert_eq!(lanes::stats::max(v), None);
-        assert_eq!(lanes::stats::sum_sq(v), 0.0);
-        assert_eq!(lanes::stats::mean(v), None);
-        assert_eq!(lanes::distance::l1_norm(v), 0.0);
-        assert_eq!(lanes::distance::max_norm(v), None);
+        assert_eq!(lanes::stats::f32::sum(v), 0.0);
+        assert_eq!(lanes::stats::f32::prod(v), 1.0);
+        assert_eq!(lanes::stats::f32::min(v), None);
+        assert_eq!(lanes::stats::f32::max(v), None);
+        assert_eq!(lanes::stats::f32::sum_sq(v), 0.0);
+        assert_eq!(lanes::stats::f32::mean(v), None);
+        assert_eq!(lanes::distance::f32::l1_norm(v), 0.0);
+        assert_eq!(lanes::distance::f32::max_norm(v), None);
     }
 
     // Non-empty min/max must be Some.
     if !v.is_empty() {
-        assert!(lanes::stats::min(v).is_some());
-        assert!(lanes::stats::max(v).is_some());
-        assert!(lanes::stats::mean(v).is_some());
-        assert!(lanes::distance::max_norm(v).is_some());
+        assert!(lanes::stats::f32::min(v).is_some());
+        assert!(lanes::stats::f32::max(v).is_some());
+        assert!(lanes::stats::f32::mean(v).is_some());
+        assert!(lanes::distance::f32::max_norm(v).is_some());
     }
 
     // min <= max when both are finite (NaN semantics differ per backend and
     // are documented — don't assert on NaN presence).
-    if let (Some(lo), Some(hi)) = (lanes::stats::min(v), lanes::stats::max(v)) {
+    if let (Some(lo), Some(hi)) = (lanes::stats::f32::min(v), lanes::stats::f32::max(v)) {
         if lo.is_finite() && hi.is_finite() {
             assert!(lo <= hi, "min {lo} > max {hi}");
         }

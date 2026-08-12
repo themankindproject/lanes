@@ -29,6 +29,7 @@ use core::arch::x86_64::*;
 // Sum reduction: accumulate 16-wide, horizontal-sum, scalar tail.
 crate::simd_reduce!(
     sum,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -41,6 +42,7 @@ crate::simd_reduce!(
 // Product reduction: 16-wide multiply, scalar-multiply tail.
 crate::simd_reduce!(
     prod,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -53,6 +55,7 @@ crate::simd_reduce!(
 // Minimum reduction: `vminps` semantics, `minf` tail.
 crate::simd_reduce!(
     min,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -65,6 +68,7 @@ crate::simd_reduce!(
 // Maximum reduction: `vmaxps` semantics, `maxf` tail.
 crate::simd_reduce!(
     max,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -76,6 +80,7 @@ crate::simd_reduce!(
 // Sum of squares: 16-wide multiply-accumulate (acc += v*v).
 crate::simd_reduce!(
     sum_sq,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -88,6 +93,7 @@ crate::simd_reduce!(
 // L1 norm: sum of absolute values.
 crate::simd_reduce!(
     l1_norm,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -102,6 +108,7 @@ crate::simd_reduce!(
 // Max norm: maximum absolute value.
 crate::simd_reduce!(
     max_norm,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -116,7 +123,8 @@ crate::simd_reduce!(
 // Dot product: 16-wide multiply-accumulate (mul+add; AVX-512F has no FMA).
 crate::simd_reduce2!(
     dot,
-    "avx512f",
+    f32,
+    ["avx512f"],
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
     _mm512_setzero_ps(),
@@ -130,6 +138,7 @@ crate::simd_reduce2!(
 #[cfg(feature = "alloc")]
 crate::simd_softmax!(
     softmax,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -141,11 +150,13 @@ crate::simd_softmax!(
     _mm512_mul_ps,
     |v| unsafe { _mm512_reduce_add_ps(v) },
     |v| unsafe { _mm512_reduce_max_ps(v) },
-    |s| unsafe { _mm512_set1_ps(s) }
+    |s| unsafe { _mm512_set1_ps(s) },
+    |x: f32| crate::kernels::exp::exp(x)
 );
 
 crate::simd_map!(
     sigmoid,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -166,6 +177,7 @@ crate::simd_map!(
 );
 crate::simd_map!(
     silu,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -186,6 +198,7 @@ crate::simd_map!(
 );
 crate::simd_map!(
     gelu,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -215,6 +228,7 @@ crate::simd_map!(
 );
 crate::simd_map!(
     relu,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -226,6 +240,7 @@ crate::simd_map!(
 // Exp map: per-element exp, vector vexp for chunks + scalar exp for tails.
 crate::simd_map!(
     exp,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -236,6 +251,7 @@ crate::simd_map!(
 // Sqrt: one-pass map, native hardware sqrt (correctly rounded, IEEE).
 crate::simd_map!(
     sqrt,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -247,6 +263,7 @@ crate::simd_map!(
 // Clip: one-pass map with lo/hi params, min(max(v, lo), hi).
 crate::simd_map_param!(
     clip,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -262,6 +279,7 @@ crate::simd_map_param!(
 // hardware approximation — correctness-first).
 crate::simd_map!(
     rsqrt,
+    f32,
     "avx512f",
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
@@ -271,6 +289,7 @@ crate::simd_map!(
 );
 crate::simd_exp!(
     vexp_512,
+    f32,
     "avx512f",
     __m512,
     __m512i,
@@ -296,6 +315,446 @@ crate::simd_exp!(
     |a, b| unsafe { _mm512_and_si512(a, b) },
     |a, b| unsafe { _mm512_andnot_si512(a, b) },
     |a, b| unsafe { _mm512_or_si512(a, b) }
+);
+
+/// Horizontal argmax of the 16 lanes: `(max value, its index)`.
+///
+/// Ties resolve to the lowest lane. The index is read from `idx` at the
+/// first lane equal to the max.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX-512F.
+#[allow(clippy::cast_sign_loss)]
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn argmax_pair_512(v: __m512, idx: __m512i) -> (f32, usize) {
+    let m = unsafe { _mm512_reduce_max_ps(v) };
+    let eq = unsafe { _mm512_cmp_ps_mask(v, _mm512_set1_ps(m), _CMP_EQ_OQ) };
+    let lane = eq.trailing_zeros() as usize;
+    let mut idxs = [0_i32; 16];
+    unsafe { _mm512_storeu_si512(idxs.as_mut_ptr().cast(), idx) };
+    (m, idxs[lane] as usize)
+}
+
+/// Horizontal argmin of the 16 lanes: `(min value, its index)`.
+///
+/// Ties resolve to the lowest lane. The index is read from `idx` at the
+/// first lane equal to the min.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX-512F.
+#[allow(clippy::cast_sign_loss)]
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn argmin_pair_512(v: __m512, idx: __m512i) -> (f32, usize) {
+    let m = unsafe { _mm512_reduce_min_ps(v) };
+    let eq = unsafe { _mm512_cmp_ps_mask(v, _mm512_set1_ps(m), _CMP_EQ_OQ) };
+    let lane = eq.trailing_zeros() as usize;
+    let mut idxs = [0_i32; 16];
+    unsafe { _mm512_storeu_si512(idxs.as_mut_ptr().cast(), idx) };
+    (m, idxs[lane] as usize)
+}
+
+// Argmax: index of the first occurrence of the maximum.
+crate::simd_argminmax!(
+    argmax,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+    _mm512_set1_epi32,
+    _mm512_add_epi32,
+    |a, b| unsafe { _mm512_cmp_ps_mask(a, b, _CMP_GT_OQ) },
+    |mask: __mmask16, a: __m512, b: __m512| unsafe { _mm512_mask_blend_ps(mask, b, a) },
+    |mask: __mmask16, a: __m512i, b: __m512i| unsafe { _mm512_mask_blend_epi32(mask, b, a) },
+    |cand: f32, cur: f32| cand > cur,
+    |v, iv| unsafe { argmax_pair_512(v, iv) }
+);
+
+// Argmin: index of the first occurrence of the minimum.
+crate::simd_argminmax!(
+    argmin,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+    _mm512_set1_epi32,
+    _mm512_add_epi32,
+    |a, b| unsafe { _mm512_cmp_ps_mask(a, b, _CMP_LT_OQ) },
+    |mask: __mmask16, a: __m512, b: __m512| unsafe { _mm512_mask_blend_ps(mask, b, a) },
+    |mask: __mmask16, a: __m512i, b: __m512i| unsafe { _mm512_mask_blend_epi32(mask, b, a) },
+    |cand: f32, cur: f32| cand < cur,
+    |v, iv| unsafe { argmin_pair_512(v, iv) }
+);
+
+// ===========================================================================
+// f64 (double-precision) kernels. AVX-512F `__m512d` = 8 lanes. Horizontal
+// reductions use the built-in `_mm512_reduce_*_pd`; masks are `__mmask8`.
+// ===========================================================================
+
+/// Horizontal argmax of the 8 f64 lanes: `(max value, its index)`.
+///
+/// Ties resolve to the lowest lane.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX-512F.
+#[allow(clippy::cast_sign_loss)]
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn argmax_pair_512d(v: __m512d, idx: __m512i) -> (f64, usize) {
+    let m = unsafe { _mm512_reduce_max_pd(v) };
+    let eq = unsafe { _mm512_cmp_pd_mask(v, _mm512_set1_pd(m), _CMP_EQ_OQ) };
+    let lane = eq.trailing_zeros() as usize;
+    let mut idxs = [0_i32; 8];
+    unsafe { _mm512_storeu_si512(idxs.as_mut_ptr().cast(), idx) };
+    (m, idxs[lane] as usize)
+}
+
+/// Horizontal argmin of the 8 f64 lanes: `(min value, its index)`.
+///
+/// Ties resolve to the lowest lane.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX-512F.
+#[allow(clippy::cast_sign_loss)]
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn argmin_pair_512d(v: __m512d, idx: __m512i) -> (f64, usize) {
+    let m = unsafe { _mm512_reduce_min_pd(v) };
+    let eq = unsafe { _mm512_cmp_pd_mask(v, _mm512_set1_pd(m), _CMP_EQ_OQ) };
+    let lane = eq.trailing_zeros() as usize;
+    let mut idxs = [0_i32; 8];
+    unsafe { _mm512_storeu_si512(idxs.as_mut_ptr().cast(), idx) };
+    (m, idxs[lane] as usize)
+}
+
+// f64 reductions for AVX-512F (8 lanes).
+crate::simd_reduce!(
+    sum_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_setzero_pd(),
+    _mm512_add_pd,
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |r, v| r + v
+);
+
+crate::simd_reduce!(
+    prod_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_set1_pd(1.0),
+    _mm512_mul_pd,
+    |v| unsafe { _mm512_reduce_mul_pd(v) },
+    |r, v| r * v
+);
+
+crate::simd_reduce!(
+    min_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_set1_pd(f64::INFINITY),
+    _mm512_min_pd,
+    |v| unsafe { _mm512_reduce_min_pd(v) },
+    f64::min
+);
+
+crate::simd_reduce!(
+    max_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_set1_pd(f64::NEG_INFINITY),
+    _mm512_max_pd,
+    |v| unsafe { _mm512_reduce_max_pd(v) },
+    f64::max
+);
+
+crate::simd_reduce!(
+    sum_sq_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_setzero_pd(),
+    |acc: __m512d, v: __m512d| _mm512_add_pd(acc, _mm512_mul_pd(v, v)),
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |r: f64, v: f64| r + v * v
+);
+
+crate::simd_reduce!(
+    l1_norm_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_setzero_pd(),
+    |acc: __m512d, v: __m512d| unsafe {
+        _mm512_add_pd(acc, _mm512_andnot_pd(_mm512_set1_pd(-0.0), v))
+    },
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |r: f64, v: f64| r + v.abs()
+);
+
+crate::simd_reduce!(
+    max_norm_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_set1_pd(0.0),
+    |acc: __m512d, v: __m512d| unsafe {
+        _mm512_max_pd(acc, _mm512_andnot_pd(_mm512_set1_pd(-0.0), v))
+    },
+    |v| unsafe { _mm512_reduce_max_pd(v) },
+    |r: f64, v: f64| f64::max(r, v.abs())
+);
+
+crate::simd_reduce2!(
+    dot_f64,
+    f64,
+    ["avx512f"],
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_setzero_pd(),
+    |acc: __m512d, a: __m512d, b: __m512d| _mm512_fmadd_pd(a, b, acc),
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |r, a, b| r + a * b
+);
+
+crate::simd_argminmax!(
+    argmax_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 0, 0, 0, 0, 0, 0),
+    _mm512_set1_epi32,
+    _mm512_add_epi32,
+    |a: __m512d, b: __m512d| unsafe { _mm512_cmp_pd_mask(a, b, _CMP_GT_OQ) },
+    |mask: __mmask8, a: __m512d, b: __m512d| unsafe { _mm512_mask_blend_pd(mask, b, a) },
+    // The index vector holds 8 meaningful i32 lanes; blend those with the
+    // widened mask (the high 8 lanes are garbage and never read).
+    |mask: __mmask8, a: __m512i, b: __m512i| unsafe { _mm512_mask_blend_epi32(mask as u16, b, a) },
+    |cand: f64, cur: f64| cand > cur,
+    |v, iv| unsafe { argmax_pair_512d(v, iv) }
+);
+
+crate::simd_argminmax!(
+    argmin_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 0, 0, 0, 0, 0, 0),
+    _mm512_set1_epi32,
+    _mm512_add_epi32,
+    |a: __m512d, b: __m512d| unsafe { _mm512_cmp_pd_mask(a, b, _CMP_LT_OQ) },
+    |mask: __mmask8, a: __m512d, b: __m512d| unsafe { _mm512_mask_blend_pd(mask, b, a) },
+    // The index vector holds 8 meaningful i32 lanes; blend those with the
+    // widened mask (the high 8 lanes are garbage and never read).
+    |mask: __mmask8, a: __m512i, b: __m512i| unsafe { _mm512_mask_blend_epi32(mask as u16, b, a) },
+    |cand: f64, cur: f64| cand < cur,
+    |v, iv| unsafe { argmin_pair_512d(v, iv) }
+);
+
+// f64 elementwise maps for AVX-512F (8 lanes).
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    sqrt_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |v| unsafe { _mm512_sqrt_pd(v) },
+    |x: f64| crate::kernels::sqrt::sqrt_f64(x)
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    rsqrt_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |v: __m512d| unsafe { _mm512_div_pd(_mm512_set1_pd(1.0), _mm512_sqrt_pd(v)) },
+    |x: f64| 1.0 / crate::kernels::sqrt::sqrt_f64(x)
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map_param!(
+    clip_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |v: __m512d, lo: f64, hi: f64| unsafe {
+        _mm512_min_pd(_mm512_max_pd(v, _mm512_set1_pd(lo)), _mm512_set1_pd(hi))
+    },
+    |x: f64, lo: f64, hi: f64| x.clamp(lo, hi)
+);
+
+// f64 vector exp for AVX-512F (8 lanes).
+#[cfg(feature = "alloc")]
+crate::simd_exp_f64!(
+    vexp_512d,
+    "avx512f",
+    __m512d,
+    __m512i,
+    |s| unsafe { _mm512_set1_pd(s) },
+    |i| unsafe { _mm512_set1_epi64(i) },
+    |a, b| unsafe { _mm512_mul_pd(a, b) },
+    |a, b| unsafe { _mm512_add_pd(a, b) },
+    |a, b| unsafe { _mm512_sub_pd(a, b) },
+    |a, b| unsafe { _mm512_and_pd(a, b) },
+    |a, b| unsafe { _mm512_andnot_pd(a, b) },
+    |a, b| unsafe { _mm512_or_pd(a, b) },
+    |a, b| unsafe {
+        _mm512_maskz_mov_pd(_mm512_cmp_pd_mask(a, b, _CMP_GT_OQ), _mm512_set1_pd(-1.0))
+    },
+    |v| unsafe { _mm512_castpd_si512(v) },
+    |v| unsafe { _mm512_castsi512_pd(v) },
+    |v| unsafe { _mm512_cvttpd_epi64(v) },
+    |v| unsafe { _mm512_slli_epi64(v, 52) },
+    |a, b| unsafe { _mm512_add_epi64(a, b) },
+    |a, b| unsafe { _mm512_maskz_mov_epi64(_mm512_cmpgt_epi64_mask(a, b), _mm512_set1_epi64(-1)) },
+    |a, b| unsafe { _mm512_maskz_mov_epi64(_mm512_cmpgt_epi64_mask(b, a), _mm512_set1_epi64(-1)) },
+    |a, b| unsafe { _mm512_and_si512(a, b) },
+    |a, b| unsafe { _mm512_andnot_si512(a, b) },
+    |a, b| unsafe { _mm512_or_si512(a, b) }
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    exp_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |v: __m512d| unsafe { vexp_512d(v) },
+    |x: f64| crate::kernels::exp::exp_f64(x)
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_softmax!(
+    softmax_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |a, b| unsafe { _mm512_max_pd(a, b) },
+    |a, b| unsafe { _mm512_sub_pd(a, b) },
+    |v| unsafe { vexp_512d(v) },
+    |a, b| unsafe { _mm512_add_pd(a, b) },
+    |a, b| unsafe { _mm512_mul_pd(a, b) },
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |v| unsafe { _mm512_reduce_max_pd(v) },
+    |s| unsafe { _mm512_set1_pd(s) },
+    |x: f64| crate::kernels::exp::exp_f64(x)
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    sigmoid_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |v: __m512d| unsafe {
+        _mm512_div_pd(
+            _mm512_set1_pd(1.0),
+            _mm512_add_pd(
+                _mm512_set1_pd(1.0),
+                vexp_512d(_mm512_xor_pd(
+                    v,
+                    _mm512_castsi512_pd(_mm512_set1_epi64(i64::MIN)),
+                )),
+            ),
+        )
+    },
+    |x: f64| 1.0 / (1.0 + crate::kernels::exp::exp_f64(-x))
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    silu_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |v: __m512d| unsafe {
+        _mm512_div_pd(
+            v,
+            _mm512_add_pd(
+                _mm512_set1_pd(1.0),
+                vexp_512d(_mm512_xor_pd(
+                    v,
+                    _mm512_castsi512_pd(_mm512_set1_epi64(i64::MIN)),
+                )),
+            ),
+        )
+    },
+    |x: f64| x / (1.0 + crate::kernels::exp::exp_f64(-x))
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    gelu_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |v: __m512d| unsafe {
+        let x2 = _mm512_mul_pd(v, v);
+        let x3 = _mm512_mul_pd(x2, v);
+        let z = _mm512_mul_pd(
+            _mm512_set1_pd(0.797_884_560_802_865_4),
+            _mm512_add_pd(v, _mm512_mul_pd(_mm512_set1_pd(0.044_715), x3)),
+        );
+        let e = vexp_512d(_mm512_add_pd(z, z));
+        let tanh_z = _mm512_sub_pd(
+            _mm512_set1_pd(1.0),
+            _mm512_div_pd(_mm512_set1_pd(2.0), _mm512_add_pd(e, _mm512_set1_pd(1.0))),
+        );
+        _mm512_mul_pd(
+            _mm512_set1_pd(0.5),
+            _mm512_mul_pd(v, _mm512_add_pd(_mm512_set1_pd(1.0), tanh_z)),
+        )
+    },
+    |x: f64| {
+        let z = 0.797_884_560_802_865_4 * (x + 0.044_715 * x * x * x);
+        let tanh_z = 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * z) + 1.0);
+        0.5 * x * (1.0 + tanh_z)
+    }
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    relu_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |v: __m512d| unsafe { _mm512_max_pd(v, _mm512_set1_pd(0.0)) },
+    |x: f64| x.max(0.0)
 );
 
 #[cfg(test)]
@@ -401,6 +860,54 @@ mod tests {
                 .unwrap_or(0.0);
             assert_eq!(simd, scalar, "max_norm mismatch for len {len}");
         }
+    }
+
+    #[test]
+    fn argmax_matches_scalar_when_available() {
+        if !std::arch::is_x86_feature_detected!("avx512f") {
+            return;
+        }
+        for len in [1, 2, 3, 7, 8, 9, 15, 16, 17, 33, 63, 64, 65, 512, 1024] {
+            let data = exact_data(len, 31, 4_096);
+            // SAFETY: tested inside the feature guard.
+            let (v, i) = unsafe { argmax(&data) };
+            assert_eq!(v, data[i], "argmax value mismatch for len {len}");
+            assert_eq!(
+                i,
+                data.iter()
+                    .enumerate()
+                    .fold(0, |bi, (i, &x)| { if x > data[bi] { i } else { bi } }),
+                "argmax index mismatch for len {len}"
+            );
+        }
+        // Tie-break: first occurrence wins.
+        let tied = [1.0_f32, 5.0, 3.0, 5.0, 2.0];
+        // SAFETY: tested inside the feature guard.
+        assert_eq!(unsafe { argmax(&tied) }, (5.0, 1));
+    }
+
+    #[test]
+    fn argmin_matches_scalar_when_available() {
+        if !std::arch::is_x86_feature_detected!("avx512f") {
+            return;
+        }
+        for len in [1, 2, 3, 7, 8, 9, 15, 16, 17, 33, 63, 64, 65, 512, 1024] {
+            let data = exact_data(len, 37, 4_096);
+            // SAFETY: tested inside the feature guard.
+            let (v, i) = unsafe { argmin(&data) };
+            assert_eq!(v, data[i], "argmin value mismatch for len {len}");
+            assert_eq!(
+                i,
+                data.iter()
+                    .enumerate()
+                    .fold(0, |bi, (i, &x)| { if x < data[bi] { i } else { bi } }),
+                "argmin index mismatch for len {len}"
+            );
+        }
+        // Tie-break: first occurrence wins.
+        let tied = [3.0_f32, 1.0, 2.0, 1.0, 4.0];
+        // SAFETY: tested inside the feature guard.
+        assert_eq!(unsafe { argmin(&tied) }, (1.0, 1));
     }
 
     #[cfg(feature = "alloc")]

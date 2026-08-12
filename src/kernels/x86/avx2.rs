@@ -29,6 +29,7 @@ use core::arch::x86_64::*;
 // Sum reduction: accumulate 8-wide, horizontal-sum, scalar tail.
 crate::simd_reduce!(
     sum,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -41,6 +42,7 @@ crate::simd_reduce!(
 // Product reduction: 8-wide multiply, scalar-multiply tail.
 crate::simd_reduce!(
     prod,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -53,6 +55,7 @@ crate::simd_reduce!(
 // Minimum reduction: `vminps` semantics, `minf` tail.
 crate::simd_reduce!(
     min,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -65,6 +68,7 @@ crate::simd_reduce!(
 // Maximum reduction: `vmaxps` semantics, `maxf` tail.
 crate::simd_reduce!(
     max,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -76,6 +80,7 @@ crate::simd_reduce!(
 // Sum of squares: 8-wide multiply-accumulate (acc += v*v).
 crate::simd_reduce!(
     sum_sq,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -88,6 +93,7 @@ crate::simd_reduce!(
 // L1 norm: sum of absolute values.
 crate::simd_reduce!(
     l1_norm,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -100,6 +106,7 @@ crate::simd_reduce!(
 // Max norm: maximum absolute value.
 crate::simd_reduce!(
     max_norm,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -109,11 +116,55 @@ crate::simd_reduce!(
     |r: f32, v: f32| f32::max(r, v.abs())
 );
 
-// Dot product: 8-wide fused multiply-accumulate (AVX2 + FMA).
-crate::simd_reduce2_feat!(
-    dot,
+// Argmax: index of the first occurrence of the maximum.
+crate::simd_argminmax!(
+    argmax,
+    f32,
     "avx2",
-    "fma",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7),
+    _mm256_set1_epi32,
+    _mm256_add_epi32,
+    |a, b| unsafe { _mm256_cmp_ps(a, b, _CMP_GT_OQ) },
+    |mask: __m256, a: __m256, b: __m256| unsafe { _mm256_blendv_ps(b, a, mask) },
+    |mask: __m256, a: __m256i, b: __m256i| {
+        let m = unsafe { _mm256_castps_si256(mask) };
+        // SAFETY: caller guarantees AVX2; blendv_epi8 selects per byte and
+        // the mask is all-ones per dword lane, so whole indices are picked.
+        unsafe { _mm256_blendv_epi8(b, a, m) }
+    },
+    |cand: f32, cur: f32| cand > cur,
+    |v, iv| unsafe { argmax_pair_256(v, iv) }
+);
+
+// Argmin: index of the first occurrence of the minimum.
+crate::simd_argminmax!(
+    argmin,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7),
+    _mm256_set1_epi32,
+    _mm256_add_epi32,
+    |a, b| unsafe { _mm256_cmp_ps(a, b, _CMP_LT_OQ) },
+    |mask: __m256, a: __m256, b: __m256| unsafe { _mm256_blendv_ps(b, a, mask) },
+    |mask: __m256, a: __m256i, b: __m256i| {
+        let m = unsafe { _mm256_castps_si256(mask) };
+        // SAFETY: caller guarantees AVX2; blendv_epi8 selects per byte and
+        // the mask is all-ones per dword lane, so whole indices are picked.
+        unsafe { _mm256_blendv_epi8(b, a, m) }
+    },
+    |cand: f32, cur: f32| cand < cur,
+    |v, iv| unsafe { argmin_pair_256(v, iv) }
+);
+
+// Dot product: 8-wide fused multiply-accumulate (AVX2 + FMA).
+crate::simd_reduce2!(
+    dot,
+    f32,
+    ["avx2", "fma"],
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
     _mm256_setzero_ps(),
@@ -127,6 +178,7 @@ crate::simd_reduce2_feat!(
 #[cfg(feature = "alloc")]
 crate::simd_softmax!(
     softmax,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -138,11 +190,13 @@ crate::simd_softmax!(
     _mm256_mul_ps,
     |v| unsafe { hsum_256(v) },
     |v| unsafe { hmax_256(v) },
-    |s| unsafe { _mm256_set1_ps(s) }
+    |s| unsafe { _mm256_set1_ps(s) },
+    |x: f32| crate::kernels::exp::exp(x)
 );
 
 crate::simd_map!(
     sigmoid,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -163,6 +217,7 @@ crate::simd_map!(
 );
 crate::simd_map!(
     silu,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -183,6 +238,7 @@ crate::simd_map!(
 );
 crate::simd_map!(
     gelu,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -212,6 +268,7 @@ crate::simd_map!(
 );
 crate::simd_map!(
     relu,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -223,6 +280,7 @@ crate::simd_map!(
 // Exp map: per-element exp, vector vexp for chunks + scalar exp for tails.
 crate::simd_map!(
     exp,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -233,6 +291,7 @@ crate::simd_map!(
 // Sqrt: one-pass map, native hardware sqrt (correctly rounded, IEEE).
 crate::simd_map!(
     sqrt,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -244,6 +303,7 @@ crate::simd_map!(
 // Clip: one-pass map with lo/hi params, min(max(v, lo), hi).
 crate::simd_map_param!(
     clip,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -258,6 +318,7 @@ crate::simd_map_param!(
 // hardware approximation — correctness-first).
 crate::simd_map!(
     rsqrt,
+    f32,
     "avx2",
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
@@ -267,6 +328,7 @@ crate::simd_map!(
 );
 crate::simd_exp!(
     vexp_256,
+    f32,
     "avx2",
     __m256,
     __m256i,
@@ -364,6 +426,472 @@ unsafe fn hmax_256(v: __m256) -> f32 {
     let m = unsafe { _mm_max_ps(m, s) };
     unsafe { _mm_cvtss_f32(m) }
 }
+
+/// Horizontal argmax of the 8 lanes: `(max value, its index)`.
+///
+/// Ties resolve to the lowest lane. The index is read from `idx` at the
+/// first lane equal to the max.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX2.
+#[allow(clippy::cast_sign_loss)]
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn argmax_pair_256(v: __m256, idx: __m256i) -> (f32, usize) {
+    let m = unsafe { hmax_256(v) };
+    let eq = unsafe { _mm256_cmp_ps(v, _mm256_set1_ps(m), _CMP_EQ_OQ) };
+    let lane = unsafe { _mm256_movemask_ps(eq) }.trailing_zeros() as usize;
+    let mut idxs = [0_i32; 8];
+    unsafe { _mm256_storeu_si256(idxs.as_mut_ptr().cast(), idx) };
+    (m, idxs[lane] as usize)
+}
+
+/// Horizontal argmin of the 8 lanes: `(min value, its index)`.
+///
+/// Ties resolve to the lowest lane. The index is read from `idx` at the
+/// first lane equal to the min.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX2.
+#[allow(clippy::cast_sign_loss)]
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn argmin_pair_256(v: __m256, idx: __m256i) -> (f32, usize) {
+    let m = unsafe { hmin_256(v) };
+    let eq = unsafe { _mm256_cmp_ps(v, _mm256_set1_ps(m), _CMP_EQ_OQ) };
+    let lane = unsafe { _mm256_movemask_ps(eq) }.trailing_zeros() as usize;
+    let mut idxs = [0_i32; 8];
+    unsafe { _mm256_storeu_si256(idxs.as_mut_ptr().cast(), idx) };
+    (m, idxs[lane] as usize)
+}
+
+// ===========================================================================
+// f64 (double-precision) kernels. AVX2 `__m256d` = 4 lanes. Same contracts
+// as the f32 versions; horizontals use `hadd_pd` + cross-128 extract.
+// ===========================================================================
+
+/// Horizontal sum of the 4 f64 lanes in a `__m256d` register.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX2.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn hsum_256d(v: __m256d) -> f64 {
+    // SAFETY: caller guarantees AVX2.
+    let hi128 = unsafe { _mm256_extractf128_pd(v, 1) };
+    let lo128 = unsafe { _mm256_castpd256_pd128(v) };
+    let sum128 = unsafe { _mm_add_pd(lo128, hi128) }; // [l0+l2, l1+l3]
+    let hi = unsafe { _mm_unpackhi_pd(sum128, sum128) }; // [l1+l3, l1+l3]
+    let s = unsafe { _mm_add_sd(sum128, hi) }; // [sum, _]
+    unsafe { _mm_cvtsd_f64(s) }
+}
+
+/// Horizontal product of the 4 f64 lanes in a `__m256d` register.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX2.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn hprod_256d(v: __m256d) -> f64 {
+    // SAFETY: caller guarantees AVX2.
+    let hi128 = unsafe { _mm256_extractf128_pd(v, 1) };
+    let lo128 = unsafe { _mm256_castpd256_pd128(v) };
+    let m = unsafe { _mm_mul_pd(lo128, hi128) }; // [l0*l2, l1*l3]
+    let hi = unsafe { _mm_unpackhi_pd(m, m) }; // [l1*l3, l1*l3]
+    let m = unsafe { _mm_mul_sd(m, hi) }; // [l0*l1*l2*l3, _]
+    unsafe { _mm_cvtsd_f64(m) }
+}
+
+/// Horizontal minimum of the 4 f64 lanes in a `__m256d` register.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX2.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn hmin_256d(v: __m256d) -> f64 {
+    // SAFETY: caller guarantees AVX2.
+    let hi128 = unsafe { _mm256_extractf128_pd(v, 1) };
+    let lo128 = unsafe { _mm256_castpd256_pd128(v) };
+    let m = unsafe { _mm_min_pd(lo128, hi128) }; // [min(l0,l2), min(l1,l3)]
+    let hi = unsafe { _mm_unpackhi_pd(m, m) }; // [min(l1,l3), min(l1,l3)]
+    let m = unsafe { _mm_min_sd(m, hi) }; // [min all, _]
+    unsafe { _mm_cvtsd_f64(m) }
+}
+
+/// Horizontal maximum of the 4 f64 lanes in a `__m256d` register.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX2.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn hmax_256d(v: __m256d) -> f64 {
+    // SAFETY: caller guarantees AVX2.
+    let hi128 = unsafe { _mm256_extractf128_pd(v, 1) };
+    let lo128 = unsafe { _mm256_castpd256_pd128(v) };
+    let m = unsafe { _mm_max_pd(lo128, hi128) }; // [max(l0,l2), max(l1,l3)]
+    let hi = unsafe { _mm_unpackhi_pd(m, m) }; // [max(l1,l3), max(l1,l3)]
+    let m = unsafe { _mm_max_sd(m, hi) }; // [max all, _]
+    unsafe { _mm_cvtsd_f64(m) }
+}
+
+/// Horizontal argmax of the 4 f64 lanes: `(max value, its index)`.
+///
+/// Ties resolve to the lowest lane.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX2.
+#[allow(clippy::cast_sign_loss)]
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn argmax_pair_256d(v: __m256d, idx: __m256i) -> (f64, usize) {
+    let m = unsafe { hmax_256d(v) };
+    let eq = unsafe { _mm256_cmp_pd(v, _mm256_set1_pd(m), _CMP_EQ_OQ) };
+    let lane = unsafe { _mm256_movemask_pd(eq) }.trailing_zeros() as usize;
+    let mut idxs = [0_i32; 4];
+    unsafe { _mm256_storeu_si256(idxs.as_mut_ptr().cast(), idx) };
+    (m, idxs[lane] as usize)
+}
+
+/// Horizontal argmin of the 4 f64 lanes: `(min value, its index)`.
+///
+/// Ties resolve to the lowest lane.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX2.
+#[allow(clippy::cast_sign_loss)]
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn argmin_pair_256d(v: __m256d, idx: __m256i) -> (f64, usize) {
+    let m = unsafe { hmin_256d(v) };
+    let eq = unsafe { _mm256_cmp_pd(v, _mm256_set1_pd(m), _CMP_EQ_OQ) };
+    let lane = unsafe { _mm256_movemask_pd(eq) }.trailing_zeros() as usize;
+    let mut idxs = [0_i32; 4];
+    unsafe { _mm256_storeu_si256(idxs.as_mut_ptr().cast(), idx) };
+    (m, idxs[lane] as usize)
+}
+
+// f64 reductions for AVX2 (4 lanes).
+crate::simd_reduce!(
+    sum_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    _mm256_setzero_pd(),
+    _mm256_add_pd,
+    |v| unsafe { hsum_256d(v) },
+    |r, v| r + v
+);
+
+crate::simd_reduce!(
+    prod_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    _mm256_set1_pd(1.0),
+    _mm256_mul_pd,
+    |v| unsafe { hprod_256d(v) },
+    |r, v| r * v
+);
+
+crate::simd_reduce!(
+    min_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    _mm256_set1_pd(f64::INFINITY),
+    _mm256_min_pd,
+    |v| unsafe { hmin_256d(v) },
+    f64::min
+);
+
+crate::simd_reduce!(
+    max_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    _mm256_set1_pd(f64::NEG_INFINITY),
+    _mm256_max_pd,
+    |v| unsafe { hmax_256d(v) },
+    f64::max
+);
+
+crate::simd_reduce!(
+    sum_sq_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    _mm256_setzero_pd(),
+    |acc: __m256d, v: __m256d| _mm256_add_pd(acc, _mm256_mul_pd(v, v)),
+    |v| unsafe { hsum_256d(v) },
+    |r: f64, v: f64| r + v * v
+);
+
+crate::simd_reduce!(
+    l1_norm_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    _mm256_setzero_pd(),
+    |acc: __m256d, v: __m256d| _mm256_add_pd(acc, _mm256_andnot_pd(_mm256_set1_pd(-0.0), v)),
+    |v| unsafe { hsum_256d(v) },
+    |r: f64, v: f64| r + v.abs()
+);
+
+crate::simd_reduce!(
+    max_norm_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    _mm256_set1_pd(0.0),
+    |acc: __m256d, v: __m256d| _mm256_max_pd(acc, _mm256_andnot_pd(_mm256_set1_pd(-0.0), v)),
+    |v| unsafe { hmax_256d(v) },
+    |r: f64, v: f64| f64::max(r, v.abs())
+);
+
+crate::simd_reduce2!(
+    dot_f64,
+    f64,
+    ["avx2", "fma"],
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    _mm256_setzero_pd(),
+    |acc: __m256d, a: __m256d, b: __m256d| _mm256_fmadd_pd(a, b, acc),
+    |v| unsafe { hsum_256d(v) },
+    |r, a, b| r + a * b
+);
+
+crate::simd_argminmax!(
+    argmax_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    _mm256_setr_epi32(0, 1, 2, 3, 0, 0, 0, 0),
+    _mm256_set1_epi32,
+    _mm256_add_epi32,
+    |a: __m256d, b: __m256d| _mm256_cmp_pd(a, b, _CMP_GT_OQ),
+    |mask: __m256d, a: __m256d, b: __m256d| unsafe { _mm256_blendv_pd(b, a, mask) },
+    |mask: __m256d, a: __m256i, b: __m256i| unsafe {
+        let m = _mm256_castpd_si256(mask);
+        _mm256_or_si256(_mm256_and_si256(m, a), _mm256_andnot_si256(m, b))
+    },
+    |a: f64, b: f64| a > b,
+    |v, idx| unsafe { argmax_pair_256d(v, idx) }
+);
+
+crate::simd_argminmax!(
+    argmin_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    _mm256_setr_epi32(0, 1, 2, 3, 0, 0, 0, 0),
+    _mm256_set1_epi32,
+    _mm256_add_epi32,
+    |a: __m256d, b: __m256d| _mm256_cmp_pd(a, b, _CMP_LT_OQ),
+    |mask: __m256d, a: __m256d, b: __m256d| unsafe { _mm256_blendv_pd(b, a, mask) },
+    |mask: __m256d, a: __m256i, b: __m256i| unsafe {
+        let m = _mm256_castpd_si256(mask);
+        _mm256_or_si256(_mm256_and_si256(m, a), _mm256_andnot_si256(m, b))
+    },
+    |a: f64, b: f64| a < b,
+    |v, idx| unsafe { argmin_pair_256d(v, idx) }
+);
+
+// f64 elementwise maps for AVX2 (4 lanes).
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    sqrt_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |v| unsafe { _mm256_sqrt_pd(v) },
+    |x: f64| crate::kernels::sqrt::sqrt_f64(x)
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    rsqrt_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |v: __m256d| unsafe { _mm256_div_pd(_mm256_set1_pd(1.0), _mm256_sqrt_pd(v)) },
+    |x: f64| 1.0 / crate::kernels::sqrt::sqrt_f64(x)
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map_param!(
+    clip_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |v: __m256d, lo: f64, hi: f64| unsafe {
+        _mm256_min_pd(_mm256_max_pd(v, _mm256_set1_pd(lo)), _mm256_set1_pd(hi))
+    },
+    |x: f64, lo: f64, hi: f64| x.clamp(lo, hi)
+);
+
+// f64 vector exp for AVX2 (4 lanes).
+#[cfg(feature = "alloc")]
+crate::simd_exp_f64!(
+    vexp_256d,
+    "avx2",
+    __m256d,
+    __m256i,
+    |s| unsafe { _mm256_set1_pd(s) },
+    |i| unsafe { _mm256_set1_epi64x(i) },
+    |a, b| unsafe { _mm256_mul_pd(a, b) },
+    |a, b| unsafe { _mm256_add_pd(a, b) },
+    |a, b| unsafe { _mm256_sub_pd(a, b) },
+    |a, b| unsafe { _mm256_and_pd(a, b) },
+    |a, b| unsafe { _mm256_andnot_pd(a, b) },
+    |a, b| unsafe { _mm256_or_pd(a, b) },
+    |a, b| unsafe { _mm256_cmp_pd(a, b, _CMP_GT_OQ) },
+    |v| unsafe { _mm256_castpd_si256(v) },
+    |v| unsafe { _mm256_castsi256_pd(v) },
+    |v| unsafe { _mm256_cvttpd_epi64(v) },
+    |v| unsafe { _mm256_slli_epi64(v, 52) },
+    |a, b| unsafe { _mm256_add_epi64(a, b) },
+    |a, b| unsafe { _mm256_cmpgt_epi64(a, b) },
+    |a, b| unsafe { _mm256_cmpgt_epi64(b, a) },
+    |a, b| unsafe { _mm256_and_si256(a, b) },
+    |a, b| unsafe { _mm256_andnot_si256(a, b) },
+    |a, b| unsafe { _mm256_or_si256(a, b) }
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    exp_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |v: __m256d| unsafe { vexp_256d(v) },
+    |x: f64| crate::kernels::exp::exp_f64(x)
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_softmax!(
+    softmax_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |a, b| unsafe { _mm256_max_pd(a, b) },
+    |a, b| unsafe { _mm256_sub_pd(a, b) },
+    |v| unsafe { vexp_256d(v) },
+    |a, b| unsafe { _mm256_add_pd(a, b) },
+    |a, b| unsafe { _mm256_mul_pd(a, b) },
+    |v| unsafe { hsum_256d(v) },
+    |v| unsafe { hmax_256d(v) },
+    |s| unsafe { _mm256_set1_pd(s) },
+    |x: f64| crate::kernels::exp::exp_f64(x)
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    sigmoid_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |v: __m256d| unsafe {
+        _mm256_div_pd(
+            _mm256_set1_pd(1.0),
+            _mm256_add_pd(
+                _mm256_set1_pd(1.0),
+                vexp_256d(_mm256_xor_pd(
+                    v,
+                    _mm256_castsi256_pd(_mm256_set1_epi64x(i64::MIN)),
+                )),
+            ),
+        )
+    },
+    |x: f64| 1.0 / (1.0 + crate::kernels::exp::exp_f64(-x))
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    silu_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |v: __m256d| unsafe {
+        _mm256_div_pd(
+            v,
+            _mm256_add_pd(
+                _mm256_set1_pd(1.0),
+                vexp_256d(_mm256_xor_pd(
+                    v,
+                    _mm256_castsi256_pd(_mm256_set1_epi64x(i64::MIN)),
+                )),
+            ),
+        )
+    },
+    |x: f64| x / (1.0 + crate::kernels::exp::exp_f64(-x))
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    gelu_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |v: __m256d| unsafe {
+        let x2 = _mm256_mul_pd(v, v);
+        let x3 = _mm256_mul_pd(x2, v);
+        let z = _mm256_mul_pd(
+            _mm256_set1_pd(0.797_884_560_802_865_4),
+            _mm256_add_pd(v, _mm256_mul_pd(_mm256_set1_pd(0.044_715), x3)),
+        );
+        let e = vexp_256d(_mm256_add_pd(z, z));
+        let tanh_z = _mm256_sub_pd(
+            _mm256_set1_pd(1.0),
+            _mm256_div_pd(_mm256_set1_pd(2.0), _mm256_add_pd(e, _mm256_set1_pd(1.0))),
+        );
+        _mm256_mul_pd(
+            _mm256_set1_pd(0.5),
+            _mm256_mul_pd(v, _mm256_add_pd(_mm256_set1_pd(1.0), tanh_z)),
+        )
+    },
+    |x: f64| {
+        let z = 0.797_884_560_802_865_4 * (x + 0.044_715 * x * x * x);
+        let tanh_z = 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * z) + 1.0);
+        0.5 * x * (1.0 + tanh_z)
+    }
+);
+
+#[cfg(feature = "alloc")]
+crate::simd_map!(
+    relu_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |v: __m256d| unsafe { _mm256_max_pd(v, _mm256_set1_pd(0.0)) },
+    |x: f64| x.max(0.0)
+);
 
 #[cfg(test)]
 #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
@@ -467,6 +995,54 @@ mod tests {
             let scalar = data.iter().copied().reduce(f32::max).unwrap();
             assert_eq!(simd, scalar, "max mismatch for len {len}");
         }
+    }
+
+    #[test]
+    fn argmax_matches_scalar_when_available() {
+        if !std::arch::is_x86_feature_detected!("avx2") {
+            return;
+        }
+        for len in [1, 2, 3, 7, 8, 9, 15, 16, 17, 33, 63, 64, 65, 512, 1024] {
+            let data = exact_data(len, 31, 4_096);
+            // SAFETY: tested inside the feature guard.
+            let (v, i) = unsafe { argmax(&data) };
+            assert_eq!(v, data[i], "argmax value mismatch for len {len}");
+            assert_eq!(
+                i,
+                data.iter()
+                    .enumerate()
+                    .fold(0, |bi, (i, &x)| { if x > data[bi] { i } else { bi } }),
+                "argmax index mismatch for len {len}"
+            );
+        }
+        // Tie-break: first occurrence wins.
+        let tied = [1.0_f32, 5.0, 3.0, 5.0, 2.0];
+        // SAFETY: tested inside the feature guard.
+        assert_eq!(unsafe { argmax(&tied) }, (5.0, 1));
+    }
+
+    #[test]
+    fn argmin_matches_scalar_when_available() {
+        if !std::arch::is_x86_feature_detected!("avx2") {
+            return;
+        }
+        for len in [1, 2, 3, 7, 8, 9, 15, 16, 17, 33, 63, 64, 65, 512, 1024] {
+            let data = exact_data(len, 37, 4_096);
+            // SAFETY: tested inside the feature guard.
+            let (v, i) = unsafe { argmin(&data) };
+            assert_eq!(v, data[i], "argmin value mismatch for len {len}");
+            assert_eq!(
+                i,
+                data.iter()
+                    .enumerate()
+                    .fold(0, |bi, (i, &x)| { if x < data[bi] { i } else { bi } }),
+                "argmin index mismatch for len {len}"
+            );
+        }
+        // Tie-break: first occurrence wins.
+        let tied = [3.0_f32, 1.0, 2.0, 1.0, 4.0];
+        // SAFETY: tested inside the feature guard.
+        assert_eq!(unsafe { argmin(&tied) }, (1.0, 1));
     }
 
     #[test]

@@ -21,11 +21,11 @@ fuzz_target!(|input: MlInput| {
     let v = &input.values;
 
     // None may panic on any input.
-    let sm = lanes::ml::softmax(v);
-    let sg = lanes::ml::sigmoid(v);
-    let sl = lanes::ml::silu(v);
-    let gl = lanes::ml::gelu(v);
-    let rl = lanes::ml::relu(v);
+    let sm = lanes::ml::f32::softmax(v);
+    let sg = lanes::ml::f32::sigmoid(v);
+    let sl = lanes::ml::f32::silu(v);
+    let gl = lanes::ml::f32::gelu(v);
+    let rl = lanes::ml::f32::relu(v);
 
     assert_eq!(sm.len(), v.len());
     assert_eq!(sg.len(), v.len());

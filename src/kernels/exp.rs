@@ -43,6 +43,44 @@ pub fn exp(x: f32) -> f32 {
     exp_reference(x)
 }
 
+/// Std-free `f64` exponential, `no_std`.
+///
+/// Range-reduces `x = n·ln2 + r` in `f64`, evaluates a degree-20 polynomial
+/// on `r` (error < 2^-53 over `|r| ≤ 0.35`), scales by `2^n`. Accurately
+/// rounded to within 1-2 ulp of `f64::exp` over the full finite range.
+#[inline]
+pub fn exp_f64(x: f64) -> f64 {
+    if x.is_nan() || x.is_infinite() {
+        // mirror f64 semantics
+        return if x.is_nan() {
+            f64::NAN
+        } else if x > 0.0 {
+            f64::INFINITY
+        } else {
+            0.0
+        };
+    }
+    // Saturation: exp saturates below ln(2^-1074) ≈ -745.13 → 0 and above
+    // ln(f64::MAX) ≈ 709.78 → inf.
+    if x < -745.13 {
+        return 0.0;
+    }
+    if x > 709.782_712_893_384 {
+        return f64::INFINITY;
+    }
+    // n = round(x / ln2), r = x - n*ln2. Use the fdlibm hi/lo ln2 split:
+    // n*ln2_hi is exact for |n| < 2^28 (ln2_hi has 24 significant bits) and
+    // n*ln2_lo is a tiny correction, keeping |r| error ~2^-70 — a plain
+    // single-part ln2 would leave |r| error ~|n|·2^-53, which after scaling
+    // by 2^n becomes many ulps for |x| ≳ 100.
+    let n = round_f64(x * INV_LN2_F64);
+    let r = (x - n * LN2_HI) - n * LN2_LO;
+    // exp(r) degree-20 poly, Horner on descending coefficients (the f32
+    // degree-13 is not enough for f64 precision).
+    let poly = COEFFS_F64.iter().fold(0.0, |acc, &c| acc * r + c);
+    poly * f64_pow2(n)
+}
+
 /// High-accuracy `f32` exp reference, `no_std`, used as the correctness oracle.
 ///
 /// Reduces `x = n·ln2 + r` in `f64` (frexp-style), then evaluates a degree-13
@@ -97,6 +135,13 @@ pub fn exp_reference(x: f32) -> f32 {
 const LN2_F64: f64 = 0.693_147_180_559_945_3;
 const INV_LN2_F64: f64 = 1.442_695_040_888_963_4;
 
+/// fdlibm hi/lo split of `ln(2)`: `ln2_hi + ln2_lo == ln(2)` to ~2^-70, and
+/// `ln2_hi` has only 24 significant bits so `n·ln2_hi` is exact for
+/// `|n| < 2^28` (all finite f64 inputs). Used by [`exp_f64`] to keep the
+/// range-reduction remainder error below ~2^-70.
+const LN2_HI: f64 = 6.931_471_803_691_238e-1;
+const LN2_LO: f64 = 1.908_214_929_270_588e-10;
+
 /// Taylor coefficients for `exp(r) = 1 + r + r²/2 + … + r¹³/13!`, in
 /// **descending** power order (from `c₁₃ = 1/13!` down to the constant
 /// `c₀ = 1`), for Horner evaluation `((…(1/13!·r + 1/12!)·r + …)·r + 1)`
@@ -117,6 +162,33 @@ const COEFFS: [f64; 14] = [
     0.5,                   // 1/2!
     1.0,                   // 1/1!
     1.0,                   // c₀ (constant term)
+];
+
+/// Taylor coefficients for `exp(r) = 1 + r + r²/2 + … + r²⁰/20!`, in
+/// descending power order, for the f64 [`exp_f64`] (degree 20 reaches
+/// < 2^-53 error on `|r| ≤ 0.35`).
+const COEFFS_F64: [f64; 21] = [
+    1.0 / 2_432_902_008_176_640_000.0, // 1/20!
+    1.0 / 121_645_100_408_832_000.0,   // 1/19!
+    1.0 / 6_402_373_705_728_000.0,     // 1/18!
+    1.0 / 355_687_428_096_000.0,       // 1/17!
+    1.0 / 20_922_789_888_000.0,        // 1/16!
+    1.0 / 1_307_674_368_000.0,         // 1/15!
+    1.0 / 87_178_291_200.0,            // 1/14!
+    1.0 / 6_227_020_800.0,             // 1/13!
+    1.0 / 479_001_600.0,               // 1/12!
+    1.0 / 39_916_800.0,                // 1/11!
+    1.0 / 3_628_800.0,                 // 1/10!
+    1.0 / 362_880.0,                   // 1/9!
+    1.0 / 40_320.0,                    // 1/8!
+    1.0 / 5_040.0,                     // 1/7!
+    1.0 / 720.0,                       // 1/6!
+    1.0 / 120.0,                       // 1/5!
+    1.0 / 24.0,                        // 1/4!
+    1.0 / 6.0,                         // 1/3!
+    0.5,                               // 1/2!
+    1.0,                               // 1/1!
+    1.0,                               // c₀ (constant term)
 ];
 
 /// Round half away from zero, `no_std`-safe.
