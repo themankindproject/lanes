@@ -57,6 +57,37 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --doc --all-features
 
+  # Line coverage via LLVM source-based instrumentation (llvm-cov), run on
+  # the same pinned toolchain as everything else. Produces lcov, enforces a
+  # minimum line threshold, and uploads to Codecov when a token is present.
+  coverage:
+    name: coverage (llvm-cov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - name: install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - name: generate coverage (lcov)
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+      - name: enforce coverage threshold
+        # ~70% line coverage: scalar + native-backend kernels are fully
+        # exercised, but the non-native SIMD files (avx2/avx512 on this
+        # runner, or neon on x86) are only compiled, not executed, so a
+        # higher gate would fail on the host's single selected backend.
+        run: cargo llvm-cov --all-features --summary-only --fail-under-lines 70
+      - name: upload to Codecov
+        if: ${{ env.CODECOV_TOKEN != '' }}
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: true
+
   # Execute the NEON kernels on real ARM64 silicon. The aarch64 code is
   # compiled by the `ci` job's clippy/check but only *runs* here — this
   # validates the per-backend tests on hardware.
