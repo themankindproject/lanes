@@ -608,15 +608,15 @@ crate::simd_argminmax!(
     |a, b| unsafe { vaddq_s32(a, b) },
     |a: float64x2_t, b: float64x2_t| unsafe { vcgtq_f64(a, b) },
     |mask: uint64x2_t, a: float64x2_t, b: float64x2_t| unsafe { vbslq_f64(mask, a, b) },
+    // Blend the i32 index vector per 64-bit lane: the mask is uint64x2_t
+    // (one bit per f64 lane), so reinterpret the index vector to i64 lanes,
+    // blend, and reinterpret back. (A 64→32-bit reinterpret of the mask
+    // would wrongly set the upper 32-bit half of each lane's mask.)
     |mask: uint64x2_t, a: int32x4_t, b: int32x4_t| unsafe {
-        // Reinterpret the 64-bit mask as 32-bit lanes (each 64-bit lane's
-        // bits duplicate across its two 32-bit halves, which is exactly the
-        // per-lane select we need for the i32 index vector).
-        let m = vreinterpretq_u32_u64(mask);
-        vreinterpretq_s32_u32(vbslq_u32(
-            m,
-            vreinterpretq_u32_s32(a),
-            vreinterpretq_u32_s32(b),
+        vreinterpretq_s32_s64(vbslq_s64(
+            mask,
+            vreinterpretq_s64_s32(a),
+            vreinterpretq_s64_s32(b),
         ))
     },
     |a: f64, b: f64| a > b,
@@ -635,11 +635,10 @@ crate::simd_argminmax!(
     |a: float64x2_t, b: float64x2_t| unsafe { vcltq_f64(a, b) },
     |mask: uint64x2_t, a: float64x2_t, b: float64x2_t| unsafe { vbslq_f64(mask, a, b) },
     |mask: uint64x2_t, a: int32x4_t, b: int32x4_t| unsafe {
-        let m = vreinterpretq_u32_u64(mask);
-        vreinterpretq_s32_u32(vbslq_u32(
-            m,
-            vreinterpretq_u32_s32(a),
-            vreinterpretq_u32_s32(b),
+        vreinterpretq_s32_s64(vbslq_s64(
+            mask,
+            vreinterpretq_s64_s32(a),
+            vreinterpretq_s64_s32(b),
         ))
     },
     |a: f64, b: f64| a < b,

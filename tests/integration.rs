@@ -592,9 +592,17 @@ fn f64_softmax_sums_to_one() {
 #[test]
 fn f64_sigmoid_silu_gelu_relu() {
     let s = lanes::ml::f64::sigmoid(&[0.0_f64, 1.0, -1.0]);
-    assert!((s[0] - 0.5).abs() < 1e-12);
-    assert!((s[1] - 0.731_058_578_630_092_5).abs() < 1e-12);
-    assert!((s[2] - 0.268_941_421_369_907_5).abs() < 1e-12);
+    assert!((s[0] - 0.5).abs() < 1e-12, "s[0]={}", s[0]);
+    assert!(
+        (s[1] - 0.731_058_578_630_092_5).abs() < 1e-12,
+        "s[1]={}",
+        s[1]
+    );
+    assert!(
+        (s[2] - 0.268_941_421_369_907_5).abs() < 1e-12,
+        "s[2]={}",
+        s[2]
+    );
 
     let si = lanes::ml::f64::silu(&[0.0_f64, 1.0, -1.0]);
     assert!(si[0].abs() < 1e-12);
