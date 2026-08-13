@@ -40,55 +40,6 @@
 /// within 1-2 ulp of `f32::exp` over the full finite range.
 #[inline]
 pub fn exp(x: f32) -> f32 {
-    exp_reference(x)
-}
-
-/// Std-free `f64` exponential, `no_std`.
-///
-/// Range-reduces `x = n·ln2 + r` in `f64`, evaluates a degree-20 polynomial
-/// on `r` (error < 2^-53 over `|r| ≤ 0.35`), scales by `2^n`. Accurately
-/// rounded to within 1-2 ulp of `f64::exp` over the full finite range.
-#[inline]
-pub fn exp_f64(x: f64) -> f64 {
-    if x.is_nan() || x.is_infinite() {
-        // mirror f64 semantics
-        return if x.is_nan() {
-            f64::NAN
-        } else if x > 0.0 {
-            f64::INFINITY
-        } else {
-            0.0
-        };
-    }
-    // Saturation: exp saturates below ln(2^-1074) ≈ -745.13 → 0 and above
-    // ln(f64::MAX) ≈ 709.78 → inf.
-    if x < -745.13 {
-        return 0.0;
-    }
-    if x > 709.782_712_893_384 {
-        return f64::INFINITY;
-    }
-    // n = round(x / ln2), r = x - n*ln2. Use the fdlibm hi/lo ln2 split:
-    // n*ln2_hi is exact for |n| < 2^28 (ln2_hi has 24 significant bits) and
-    // n*ln2_lo is a tiny correction, keeping |r| error ~2^-70 — a plain
-    // single-part ln2 would leave |r| error ~|n|·2^-53, which after scaling
-    // by 2^n becomes many ulps for |x| ≳ 100.
-    let n = round_f64(x * INV_LN2_F64);
-    let r = (x - n * LN2_HI) - n * LN2_LO;
-    // exp(r) degree-20 poly, Horner on descending coefficients (the f32
-    // degree-13 is not enough for f64 precision).
-    let poly = COEFFS_F64.iter().fold(0.0, |acc, &c| acc * r + c);
-    poly * f64_pow2(n)
-}
-
-/// High-accuracy `f32` exp reference, `no_std`, used as the correctness oracle.
-///
-/// Reduces `x = n·ln2 + r` in `f64` (frexp-style), then evaluates a degree-13
-/// polynomial on `r` in `f64` (error < 1e-16), then scales by `2^n`. The
-/// result is rounded once to `f32`, so it is the correctly-rounded exp to
-/// within 1 ulp — this is the "ground truth" the fast path is tested against.
-#[inline]
-pub fn exp_reference(x: f32) -> f32 {
     let xd = f64::from(x);
     if xd.is_nan() || xd.is_infinite() {
         // mirror f32 semantics
@@ -129,6 +80,44 @@ pub fn exp_reference(x: f32) -> f32 {
     } else {
         scaled as f32
     }
+}
+
+/// Std-free `f64` exponential, `no_std`.
+///
+/// Range-reduces `x = n·ln2 + r` in `f64`, evaluates a degree-20 polynomial
+/// on `r` (error < 2^-53 over `|r| ≤ 0.35`), scales by `2^n`. Accurately
+/// rounded to within 1-2 ulp of `f64::exp` over the full finite range.
+#[inline]
+pub fn exp_f64(x: f64) -> f64 {
+    if x.is_nan() || x.is_infinite() {
+        // mirror f64 semantics
+        return if x.is_nan() {
+            f64::NAN
+        } else if x > 0.0 {
+            f64::INFINITY
+        } else {
+            0.0
+        };
+    }
+    // Saturation: exp saturates below ln(2^-1074) ≈ -745.13 → 0 and above
+    // ln(f64::MAX) ≈ 709.78 → inf.
+    if x < -745.13 {
+        return 0.0;
+    }
+    if x > 709.782_712_893_384 {
+        return f64::INFINITY;
+    }
+    // n = round(x / ln2), r = x - n*ln2. Use the fdlibm hi/lo ln2 split:
+    // n*ln2_hi is exact for |n| < 2^28 (ln2_hi has 24 significant bits) and
+    // n*ln2_lo is a tiny correction, keeping |r| error ~2^-70 — a plain
+    // single-part ln2 would leave |r| error ~|n|·2^-53, which after scaling
+    // by 2^n becomes many ulps for |x| ≳ 100.
+    let n = round_f64(x * INV_LN2_F64);
+    let r = (x - n * LN2_HI) - n * LN2_LO;
+    // exp(r) degree-20 poly, Horner on descending coefficients (the f32
+    // degree-13 is not enough for f64 precision).
+    let poly = COEFFS_F64.iter().fold(0.0, |acc, &c| acc * r + c);
+    poly * f64_pow2(n)
 }
 
 /// `ln(2)` as `f64`, computed once (const can't call `f64::ln` in `no_std`).
@@ -289,32 +278,6 @@ mod tests {
     }
 
     #[test]
-    fn fast_matches_reference_sampled() {
-        // Sample the full finite range, including the reduction boundary.
-        let mut x = -100.0_f32;
-        while x < 100.0 {
-            let f = exp(x);
-            let r = exp_reference(x);
-            assert!(
-                ulps(f, r) <= 2,
-                "x={x}: fast={f} ref={r} ulps={}",
-                ulps(f, r)
-            );
-            x += 0.003; // ~66k samples, covers reduction bins densely
-        }
-    }
-
-    #[test]
-    fn fast_matches_reference_fine_near_zero() {
-        for i in -5000..5000 {
-            let x = i as f32 * 1e-4;
-            let f = exp(x);
-            let r = exp_reference(x);
-            assert!(ulps(f, r) <= 2, "x={x}: fast={f} ref={r}");
-        }
-    }
-
-    #[test]
     fn matches_std_exp_when_available() {
         // The fast path must agree with std's correctly-rounded exp to within
         // a few ulp over the practical range (not the extreme subnormals).
@@ -365,10 +328,10 @@ mod tests {
 
     #[test]
     fn reference_matches_std_exp() {
-        // The reference itself must be essentially correctly-rounded.
+        // exp itself must be essentially correctly-rounded.
         for i in -10000..10000 {
             let x = i as f32 * 0.01;
-            let r = exp_reference(x);
+            let r = exp(x);
             let s = x.exp();
             assert!(
                 ulps(r, s) <= 2,

@@ -152,17 +152,18 @@ pub(crate) fn clip(values: &[f32], lo: f32, hi: f32, out: &mut [f32]) {
     map(values, out, |x| x.clamp(lo, hi));
 }
 
-/// Elementwise reciprocal square root into `out`: `1/sqrt(x)`.
+/// Elementwise subtract a scalar into `out`: `x - p`.
 ///
-/// Gated on `alloc`: its only caller (`dispatch_rsqrt`) is alloc-gated.
+/// Gated on `alloc`: its only caller (`dispatch_sub_scalar`) is alloc-gated.
 #[cfg(feature = "alloc")]
 #[inline]
 pub(crate) fn sub_scalar(values: &[f32], p: f32, _p2: f32, out: &mut [f32]) {
-    for (o, &x) in out.iter_mut().zip(values) {
-        *o = x - p;
-    }
+    map(values, out, |x| x - p);
 }
 
+/// Elementwise reciprocal square root into `out`: `1/sqrt(x)`.
+///
+/// Gated on `alloc`: its only caller (`dispatch_rsqrt`) is alloc-gated.
 #[cfg(feature = "alloc")]
 pub(crate) fn rsqrt(values: &[f32], out: &mut [f32]) {
     map(values, out, |x| 1.0 / crate::kernels::sqrt::sqrt(x));
