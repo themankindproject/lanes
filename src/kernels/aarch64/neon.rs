@@ -146,13 +146,19 @@ crate::simd_reduce!(
 unsafe fn argmax_pair_neon(v: float32x4_t, idx: int32x4_t) -> (f32, usize) {
     let m = unsafe { vmaxvq_f32(v) };
     let eq = unsafe { vceqq_f32(v, vdupq_n_f32(m)) };
-    // Scan the 4 mask lanes; the first non-zero lane is the first max.
+    // First occurrence = smallest GLOBAL index among tied lanes.
     let mut mask = [0_u32; 4];
     unsafe { vst1q_u32(mask.as_mut_ptr(), eq) };
-    let lane = mask.iter().position(|&l| l != 0).unwrap_or(0);
     let mut idxs = [0_i32; 4];
     unsafe { vst1q_s32(idxs.as_mut_ptr(), idx) };
-    (m, idxs[lane] as usize)
+    let best = mask
+        .iter()
+        .zip(idxs)
+        .filter(|(m, _)| **m != 0)
+        .map(|(_, i)| i)
+        .min()
+        .unwrap_or(0);
+    (m, best as usize)
 }
 
 /// Horizontal argmin of the 4 lanes: `(min value, its index)`.
@@ -168,13 +174,19 @@ unsafe fn argmax_pair_neon(v: float32x4_t, idx: int32x4_t) -> (f32, usize) {
 unsafe fn argmin_pair_neon(v: float32x4_t, idx: int32x4_t) -> (f32, usize) {
     let m = unsafe { vminvq_f32(v) };
     let eq = unsafe { vceqq_f32(v, vdupq_n_f32(m)) };
-    // Scan the 4 mask lanes; the first non-zero lane is the first min.
+    // First occurrence = smallest GLOBAL index among tied lanes.
     let mut mask = [0_u32; 4];
     unsafe { vst1q_u32(mask.as_mut_ptr(), eq) };
-    let lane = mask.iter().position(|&l| l != 0).unwrap_or(0);
     let mut idxs = [0_i32; 4];
     unsafe { vst1q_s32(idxs.as_mut_ptr(), idx) };
-    (m, idxs[lane] as usize)
+    let best = mask
+        .iter()
+        .zip(idxs)
+        .filter(|(m, _)| **m != 0)
+        .map(|(_, i)| i)
+        .min()
+        .unwrap_or(0);
+    (m, best as usize)
 }
 
 // Argmax: index of the first occurrence of the maximum.
@@ -190,7 +202,14 @@ crate::simd_argminmax!(
     ),
     |i| unsafe { vdupq_n_s32(i) },
     |a, b| unsafe { vaddq_s32(a, b) },
-    |a, b| unsafe { vcgtq_f32(a, b) },
+    // NaN-aware dethrone (see scalar `argmax`): win = !NaN(a) && (a > b || NaN(b)).
+    // vceqq(x, x) is all-ones for non-NaN lanes, so it is the !NaN mask.
+    |a, b| unsafe {
+        let gt = vcgtq_f32(a, b);
+        let not_nan_b = vceqq_f32(b, b);
+        let not_nan_a = vceqq_f32(a, a);
+        vandq_u32(not_nan_a, vorrq_u32(gt, vmvnq_u32(not_nan_b)))
+    },
     |mask: uint32x4_t, a: float32x4_t, b: float32x4_t| unsafe { vbslq_f32(mask, a, b) },
     |mask: uint32x4_t, a: int32x4_t, b: int32x4_t| unsafe { vbslq_s32(mask, a, b) },
     |cand: f32, cur: f32| cand > cur,
@@ -210,7 +229,13 @@ crate::simd_argminmax!(
     ),
     |i| unsafe { vdupq_n_s32(i) },
     |a, b| unsafe { vaddq_s32(a, b) },
-    |a, b| unsafe { vcltq_f32(a, b) },
+    // NaN-aware dethrone (see argmax above).
+    |a, b| unsafe {
+        let lt = vcltq_f32(a, b);
+        let not_nan_b = vceqq_f32(b, b);
+        let not_nan_a = vceqq_f32(a, a);
+        vandq_u32(not_nan_a, vorrq_u32(lt, vmvnq_u32(not_nan_b)))
+    },
     |mask: uint32x4_t, a: float32x4_t, b: float32x4_t| unsafe { vbslq_f32(mask, a, b) },
     |mask: uint32x4_t, a: int32x4_t, b: int32x4_t| unsafe { vbslq_s32(mask, a, b) },
     |cand: f32, cur: f32| cand < cur,
@@ -326,13 +351,39 @@ crate::simd_map!(
     |p| unsafe { vld1q_f32(p) },
     |p, v| unsafe { vst1q_f32(p, v) },
     |v| unsafe {
+        // Piecewise: series for |x| < 0.1, exp form beyond (see scalar).
+        let x2 = vmulq_f32(v, v);
+        let x4 = vmulq_f32(x2, x2);
+        let series = vaddq_f32(
+            vsubq_f32(v, vdivq_f32(vmulq_f32(v, x2), vdupq_n_f32(3.0))),
+            vdivq_f32(vmulq_f32(v, x4), vdupq_n_f32(7.5)),
+        );
         let e = vexp_neon(vaddq_f32(v, v));
-        vsubq_f32(
-            vdupq_n_f32(1.0),
-            vdivq_f32(vdupq_n_f32(2.0), vaddq_f32(e, vdupq_n_f32(1.0))),
-        )
+        let em = vminq_f32(e, vdupq_n_f32(f32::MAX));
+        let ratio = vdivq_f32(
+            vsubq_f32(em, vdupq_n_f32(1.0)),
+            vaddq_f32(em, vdupq_n_f32(1.0)),
+        );
+        // copysign(ratio, v) via bit OR: ratio is positive (or NaN), so
+        // OR-ing v's sign bit restores ±0.0 and ±1.0 correctly.
+        let sign = vandq_u32(vreinterpretq_u32_f32(v), vdupq_n_u32(0x8000_0000));
+        let big = vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(ratio), sign));
+        let small = vcltq_f32(vabsq_f32(v), vdupq_n_f32(0.1));
+        vbslq_f32(small, series, big)
     },
-    |x: f32| 1.0 - 2.0 / (crate::kernels::exp::exp(2.0 * x) + 1.0)
+    |x: f32| {
+        if x.abs() < 0.1 {
+            let x2 = x * x;
+            x * (1.0 - x2 / 3.0 + 2.0 * x2 * x2 / 15.0)
+        } else {
+            let e = crate::kernels::exp::exp(2.0 * x);
+            if e.is_infinite() {
+                x.signum()
+            } else {
+                (e - 1.0) / (e + 1.0)
+            }
+        }
+    }
 );
 
 // RMS norm: two-pass (sum of squares, then scale by rsqrt).
@@ -508,11 +559,23 @@ unsafe fn argmax_pair_128d(v: float64x2_t, idx: int64x2_t) -> (f64, usize) {
     let m = unsafe { hmax_128d(v) };
     let eq = unsafe { vceqq_f64(v, vdupq_n_f64(m)) }; // uint64x2_t: [m==l0, m==l1]
     // Lane 0 is the max iff its mask bit is set (all-ones); ties → lane 0.
-    // usize::from(false) = 0 (lane 0 is the max), usize::from(true) = 1.
-    let lane = usize::from(unsafe { vgetq_lane_u64(eq, 0) } == 0);
+    // All-NaN chunk: neither mask is set; fall back to lane 0 (index 0).
+    let l0 = unsafe { vgetq_lane_u64(eq, 0) } != 0;
+    let l1 = unsafe { vgetq_lane_u64(eq, 1) } != 0;
+    if !l0 && !l1 {
+        return (f64::NAN, 0);
+    }
     let mut idxs = [0_i64; 2];
     unsafe { vst1q_s64(idxs.as_mut_ptr(), idx) };
-    (m, idxs[lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i64::MAX;
+    if l0 {
+        best = best.min(idxs[0]);
+    }
+    if l1 {
+        best = best.min(idxs[1]);
+    }
+    (m, best as usize)
 }
 
 /// Horizontal argmin of the 2 f64 lanes: `(min value, its index)`.
@@ -527,10 +590,24 @@ unsafe fn argmax_pair_128d(v: float64x2_t, idx: int64x2_t) -> (f64, usize) {
 unsafe fn argmin_pair_128d(v: float64x2_t, idx: int64x2_t) -> (f64, usize) {
     let m = unsafe { hmin_128d(v) };
     let eq = unsafe { vceqq_f64(v, vdupq_n_f64(m)) }; // uint64x2_t: [m==l0, m==l1]
-    let lane = usize::from(unsafe { vgetq_lane_u64(eq, 0) } == 0);
+    // Lane 0 is the min iff its mask bit is set (all-ones); ties → lane 0.
+    // All-NaN chunk: neither mask is set; fall back to lane 0 (index 0).
+    let l0 = unsafe { vgetq_lane_u64(eq, 0) } != 0;
+    let l1 = unsafe { vgetq_lane_u64(eq, 1) } != 0;
+    if !l0 && !l1 {
+        return (f64::NAN, 0);
+    }
     let mut idxs = [0_i64; 2];
     unsafe { vst1q_s64(idxs.as_mut_ptr(), idx) };
-    (m, idxs[lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i64::MAX;
+    if l0 {
+        best = best.min(idxs[0]);
+    }
+    if l1 {
+        best = best.min(idxs[1]);
+    }
+    (m, best as usize)
 }
 
 // f64 reductions for NEON (2 lanes).
@@ -643,7 +720,16 @@ crate::simd_argminmax!(
     unsafe { vcombine_s64(vcreate_s64(0), vcreate_s64(1)) },
     |i: i64| unsafe { vdupq_n_s64(i) },
     |a, b| unsafe { vaddq_s64(a, b) },
-    |a: float64x2_t, b: float64x2_t| unsafe { vcgtq_f64(a, b) },
+    // NaN-aware dethrone (see scalar `argmax`).
+    |a: float64x2_t, b: float64x2_t| unsafe {
+        let gt = vcgtq_f64(a, b);
+        let not_nan_b = vceqq_f64(b, b);
+        let not_nan_a = vceqq_f64(a, a);
+        // vmvnq has no 64-bit form; not_nan is all-ones/all-zeros, so the
+        // NaN mask is an equality with zero.
+        let nan_b = vceqq_u64(not_nan_b, vdupq_n_u64(0));
+        vandq_u64(not_nan_a, vorrq_u64(gt, nan_b))
+    },
     |mask: uint64x2_t, a: float64x2_t, b: float64x2_t| unsafe { vbslq_f64(mask, a, b) },
     |mask: uint64x2_t, a: int64x2_t, b: int64x2_t| unsafe { vbslq_s64(mask, a, b) },
     |a: f64, b: f64| a > b,
@@ -659,7 +745,16 @@ crate::simd_argminmax!(
     unsafe { vcombine_s64(vcreate_s64(0), vcreate_s64(1)) },
     |i: i64| unsafe { vdupq_n_s64(i) },
     |a, b| unsafe { vaddq_s64(a, b) },
-    |a: float64x2_t, b: float64x2_t| unsafe { vcltq_f64(a, b) },
+    // NaN-aware dethrone (see argmax_f64 above).
+    |a: float64x2_t, b: float64x2_t| unsafe {
+        let lt = vcltq_f64(a, b);
+        let not_nan_b = vceqq_f64(b, b);
+        let not_nan_a = vceqq_f64(a, a);
+        // vmvnq has no 64-bit form; not_nan is all-ones/all-zeros, so the
+        // NaN mask is an equality with zero.
+        let nan_b = vceqq_u64(not_nan_b, vdupq_n_u64(0));
+        vandq_u64(not_nan_a, vorrq_u64(lt, nan_b))
+    },
     |mask: uint64x2_t, a: float64x2_t, b: float64x2_t| unsafe { vbslq_f64(mask, a, b) },
     |mask: uint64x2_t, a: int64x2_t, b: int64x2_t| unsafe { vbslq_s64(mask, a, b) },
     |a: f64, b: f64| a < b,
@@ -850,13 +945,46 @@ crate::simd_map!(
     |p| unsafe { vld1q_f64(p) },
     |p, v| unsafe { vst1q_f64(p, v) },
     |v: float64x2_t| unsafe {
+        // Piecewise: Horner series through x¹³ for |x| < 0.1 (truncation
+        // < 0.1 ulp there; the exp form cancels to 0), exp form beyond.
+        let y = vmulq_f64(v, v);
+        let p = vdupq_n_f64(0.003_592_128_572_437_055);
+        let p = vaddq_f64(vmulq_f64(p, y), vdupq_n_f64(-0.008_863_235_529_902_197));
+        let p = vaddq_f64(vmulq_f64(p, y), vdupq_n_f64(0.021_869_488_536_155_2));
+        let p = vaddq_f64(vmulq_f64(p, y), vdupq_n_f64(-0.053_968_253_968_253_97));
+        let p = vaddq_f64(vmulq_f64(p, y), vdupq_n_f64(0.133_333_333_333_333_33));
+        let p = vaddq_f64(vmulq_f64(p, y), vdupq_n_f64(-0.333_333_333_333_333_3));
+        let series = vmulq_f64(v, vaddq_f64(vmulq_f64(p, y), vdupq_n_f64(1.0)));
         let e = vexp_128d(vaddq_f64(v, v));
-        vsubq_f64(
-            vdupq_n_f64(1.0),
-            vdivq_f64(vdupq_n_f64(2.0), vaddq_f64(e, vdupq_n_f64(1.0))),
-        )
+        let em = vminq_f64(e, vdupq_n_f64(f64::MAX));
+        let ratio = vdivq_f64(
+            vsubq_f64(em, vdupq_n_f64(1.0)),
+            vaddq_f64(em, vdupq_n_f64(1.0)),
+        );
+        let sign = vandq_u64(vreinterpretq_u64_f64(v), vdupq_n_u64(0x8000_0000_0000_0000));
+        let big = vreinterpretq_f64_u64(vorrq_u64(vreinterpretq_u64_f64(ratio), sign));
+        let small = vcltq_f64(vabsq_f64(v), vdupq_n_f64(0.1));
+        vbslq_f64(small, series, big)
     },
-    |x: f64| 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * x) + 1.0)
+    |x: f64| {
+        if x.abs() < 0.1 {
+            let y = x * x;
+            let p = 0.003_592_128_572_437_055_f64;
+            let p = p.mul_add(y, -0.008_863_235_529_902_197);
+            let p = p.mul_add(y, 0.021_869_488_536_155_2);
+            let p = p.mul_add(y, -0.053_968_253_968_253_97);
+            let p = p.mul_add(y, 0.133_333_333_333_333_33);
+            let p = p.mul_add(y, -0.333_333_333_333_333_3);
+            x * p.mul_add(y, 1.0)
+        } else {
+            let e = crate::kernels::exp::exp_f64(2.0 * x);
+            if e.is_infinite() {
+                x.signum()
+            } else {
+                (e - 1.0) / (e + 1.0)
+            }
+        }
+    }
 );
 
 // RMS norm (f64).

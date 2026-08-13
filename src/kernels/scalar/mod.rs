@@ -73,13 +73,27 @@ pub(crate) fn relu(values: &[f32], out: &mut [f32]) {
     }
 }
 
-/// Elementwise `tanh` into `out`. Derived from the crate's `exp`:
-/// `tanh(x) = 1 - 2/(exp(2x) + 1)`. Saturates to ±1 (exp under/overflow);
-/// NaN propagates.
+/// Elementwise `tanh` into `out`.
+///
+/// Piecewise: for `|x| < 0.1` a Taylor series `x - x³/3 + 2x⁵/15` is used
+/// (the `1 - 2/(exp(2x)+1)` form catastrophically cancels to 0 there);
+/// beyond that the exp form saturates correctly to ±1. NaN propagates.
 #[cfg(feature = "alloc")]
 #[inline]
 pub(crate) fn tanh(values: &[f32], out: &mut [f32]) {
-    map(values, out, |x| 1.0 - 2.0 / (exp::exp(2.0 * x) + 1.0));
+    map(values, out, |x| {
+        if x.abs() < 0.1 {
+            let x2 = x * x;
+            x * (1.0 - x2 / 3.0 + 2.0 * x2 * x2 / 15.0)
+        } else {
+            let e = exp::exp(2.0 * x);
+            if e.is_infinite() {
+                x.signum() // saturate to ±1; exp overflowed
+            } else {
+                (e - 1.0) / (e + 1.0) // Sterbenz-exact for e in [1, 2]
+            }
+        }
+    });
 }
 
 /// RMS norm into `out`: `x_i * rsqrt(mean(x²) + eps)`. Empty input leaves
@@ -225,7 +239,7 @@ pub(crate) fn dot(a: &[f32], b: &[f32]) -> f32 {
 pub(crate) fn argmax(values: &[f32]) -> (f32, usize) {
     let mut idx = 0;
     for (i, &v) in values.iter().enumerate() {
-        if v > values[idx] {
+        if !v.is_nan() && (values[idx].is_nan() || v > values[idx]) {
             idx = i;
         }
     }
@@ -241,7 +255,7 @@ pub(crate) fn argmax(values: &[f32]) -> (f32, usize) {
 pub(crate) fn argmin(values: &[f32]) -> (f32, usize) {
     let mut idx = 0;
     for (i, &v) in values.iter().enumerate() {
-        if v < values[idx] {
+        if !v.is_nan() && (values[idx].is_nan() || v < values[idx]) {
             idx = i;
         }
     }
@@ -308,7 +322,7 @@ pub(crate) fn dot_f64(a: &[f64], b: &[f64]) -> f64 {
 pub(crate) fn argmax_f64(values: &[f64]) -> (f64, usize) {
     let mut idx = 0;
     for (i, &v) in values.iter().enumerate() {
-        if v > values[idx] {
+        if !v.is_nan() && (values[idx].is_nan() || v > values[idx]) {
             idx = i;
         }
     }
@@ -323,7 +337,7 @@ pub(crate) fn argmax_f64(values: &[f64]) -> (f64, usize) {
 pub(crate) fn argmin_f64(values: &[f64]) -> (f64, usize) {
     let mut idx = 0;
     for (i, &v) in values.iter().enumerate() {
-        if v < values[idx] {
+        if !v.is_nan() && (values[idx].is_nan() || v < values[idx]) {
             idx = i;
         }
     }
@@ -424,13 +438,32 @@ pub(crate) fn relu_f64(values: &[f64], out: &mut [f64]) {
     }
 }
 
-/// Elementwise `tanh` into `out`. Derived from the crate's `exp`:
-/// `tanh(x) = 1 - 2/(exp(2x) + 1)`. Saturates to ±1; NaN propagates.
+/// Elementwise `tanh` into `out`. Piecewise: Horner Taylor series (through
+/// x¹³) for `|x| < 0.1` — truncation there is < 0.1 ulp, while the exp form
+/// `1 - 2/(e^2x+1)` cancels catastrophically; beyond, the exp form is
+/// cancellation-safe and saturates correctly to ±1. NaN propagates.
 #[cfg(feature = "alloc")]
 #[inline]
 pub(crate) fn tanh_f64(values: &[f64], out: &mut [f64]) {
     for (v, o) in values.iter().zip(out) {
-        *o = 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * *v) + 1.0);
+        *o = if v.abs() < 0.1 {
+            // tanh(x) = x·P(x²), P = Σ c_k·x^{2k} (odd-powers Taylor).
+            let y = v * v;
+            let p = 0.003_592_128_572_437_055_f64; // 21844/6081075
+            let p = p.mul_add(y, -0.008_863_235_529_902_197); // -1382/155925
+            let p = p.mul_add(y, 0.021_869_488_536_155_2); // 62/2835
+            let p = p.mul_add(y, -0.053_968_253_968_253_97); // -17/315
+            let p = p.mul_add(y, 0.133_333_333_333_333_33); // 2/15
+            let p = p.mul_add(y, -0.333_333_333_333_333_3); // -1/3
+            v * p.mul_add(y, 1.0)
+        } else {
+            let e = crate::kernels::exp::exp_f64(2.0 * v);
+            if e.is_infinite() {
+                v.signum() // saturate to ±1; exp overflowed
+            } else {
+                (e - 1.0) / (e + 1.0) // Sterbenz-exact for e in [1, 2]
+            }
+        };
     }
 }
 

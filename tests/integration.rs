@@ -361,6 +361,66 @@ fn argmax_consistent_with_max() {
 }
 
 #[test]
+fn argmax_ignores_nan_unless_all_nan() {
+    assert_eq!(
+        lanes::stats::f32::argmax(&[f32::NAN, 1.0, f32::NAN]),
+        Some(1)
+    );
+    assert_eq!(
+        lanes::stats::f32::argmax(&[f32::NAN, 3.0, 2.0, f32::NAN, 9.0]),
+        Some(4)
+    );
+    assert_eq!(
+        lanes::stats::f32::argmax(&[
+            5.0,
+            f32::NAN,
+            3.0,
+            f32::NAN,
+            8.0,
+            f32::NAN,
+            1.0,
+            f32::NAN,
+            4.0
+        ]),
+        Some(4)
+    );
+    assert_eq!(
+        lanes::stats::f32::argmax(&[f32::NAN, f32::NAN, f32::NAN]),
+        Some(0)
+    );
+}
+
+#[test]
+fn argmin_ignores_nan_unless_all_nan() {
+    assert_eq!(
+        lanes::stats::f32::argmin(&[f32::NAN, 1.0, f32::NAN]),
+        Some(1)
+    );
+    assert_eq!(
+        lanes::stats::f32::argmin(&[f32::NAN, 3.0, 2.0, f32::NAN, 9.0]),
+        Some(2)
+    );
+    assert_eq!(
+        lanes::stats::f32::argmin(&[
+            5.0,
+            f32::NAN,
+            3.0,
+            f32::NAN,
+            8.0,
+            f32::NAN,
+            1.0,
+            f32::NAN,
+            4.0
+        ]),
+        Some(6)
+    );
+    assert_eq!(
+        lanes::stats::f32::argmin(&[f32::NAN, f32::NAN, f32::NAN]),
+        Some(0)
+    );
+}
+
+#[test]
 fn argmin_empty_returns_none() {
     assert_eq!(lanes::stats::f32::argmin(&[] as &[f32]), None);
 }
@@ -511,6 +571,87 @@ fn f64_argmax_argmin_known() {
     );
     assert_eq!(lanes::stats::f64::argmax(&[] as &[f64]), None);
     assert_eq!(lanes::stats::f64::argmin(&[] as &[f64]), None);
+}
+
+#[test]
+fn f64_argmax_argmin_ignore_nan_unless_all_nan() {
+    assert_eq!(
+        lanes::stats::f64::argmax(&[f64::NAN, 1.0, f64::NAN]),
+        Some(1)
+    );
+    assert_eq!(
+        lanes::stats::f64::argmax(&[f64::NAN, 3.0, 2.0, f64::NAN, 9.0]),
+        Some(4)
+    );
+    assert_eq!(
+        lanes::stats::f64::argmax(&[
+            5.0,
+            f64::NAN,
+            3.0,
+            f64::NAN,
+            8.0,
+            f64::NAN,
+            1.0,
+            f64::NAN,
+            4.0
+        ]),
+        Some(4)
+    );
+    assert_eq!(
+        lanes::stats::f64::argmin(&[f64::NAN, 3.0, 2.0, f64::NAN, 9.0]),
+        Some(2)
+    );
+    assert_eq!(
+        lanes::stats::f64::argmin(&[
+            5.0,
+            f64::NAN,
+            3.0,
+            f64::NAN,
+            8.0,
+            f64::NAN,
+            1.0,
+            f64::NAN,
+            4.0
+        ]),
+        Some(6)
+    );
+    assert_eq!(
+        lanes::stats::f64::argmax(&[f64::NAN, f64::NAN, f64::NAN]),
+        Some(0)
+    );
+    assert_eq!(
+        lanes::stats::f64::argmin(&[f64::NAN, f64::NAN, f64::NAN]),
+        Some(0)
+    );
+}
+
+#[test]
+fn f64_argmax_argmin_ties_across_chunks() {
+    // Tie spanning chunk boundaries: the first global occurrence wins, even
+    // though the tie sits in a lower SIMD lane after the chunk loop.
+    let a = [
+        -1.456_816_089_375_683e144_f64,
+        2.904_355_210_078_954_5e-144,
+        -1.261_706_705_752_713_4e144,
+        -595_821_443.733_333_2,
+        -595_821_443.513_725_4,
+        -1.456_815_989_101_385_2e144,
+        5.853_478_681_697_126e170,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+        7.261_553_200_147_971e-95,
+        -2.721_116_718_732_734_6e306,
+        3.237_86e-319,
+    ];
+    assert_eq!(lanes::stats::f64::argmax(&a), Some(7));
+    assert_eq!(lanes::stats::f64::argmin(&a), Some(14));
+    // f32 tie inside a single chunk still resolves to the first occurrence.
+    assert_eq!(lanes::stats::f32::argmax(&[1.0, 5.0, 5.0, 1.0]), Some(1));
+    assert_eq!(lanes::stats::f32::argmin(&[1.0, 5.0, 5.0, 1.0]), Some(0));
 }
 
 #[test]

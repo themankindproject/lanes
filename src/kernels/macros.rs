@@ -641,7 +641,12 @@ macro_rules! simd_argminmax {
                 let v = unsafe { *values.get_unchecked(tail_start + i) };
                 let j = tail_start + i;
                 let (mv, mi) = result;
-                result = if $cmp_scalar(v, mv) { (v, j) } else { (mv, mi) };
+                // NaN-aware: a non-NaN candidate dethrones a NaN seed.
+                result = if !v.is_nan() && (mv.is_nan() || $cmp_scalar(v, mv)) {
+                    (v, j)
+                } else {
+                    (mv, mi)
+                };
             }
 
             result

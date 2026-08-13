@@ -242,13 +242,40 @@ crate::simd_map!(
     |p| unsafe { _mm512_loadu_ps(p) },
     |p, v| unsafe { _mm512_storeu_ps(p, v) },
     |v| unsafe {
+        // Piecewise: series for |x| < 0.1, exp form beyond (see scalar).
+        let x2 = _mm512_mul_ps(v, v);
+        let x4 = _mm512_mul_ps(x2, x2);
+        let series = _mm512_add_ps(
+            _mm512_sub_ps(v, _mm512_div_ps(_mm512_mul_ps(v, x2), _mm512_set1_ps(3.0))),
+            _mm512_div_ps(_mm512_mul_ps(v, x4), _mm512_set1_ps(7.5)),
+        );
         let e = vexp_512(_mm512_add_ps(v, v));
-        _mm512_sub_ps(
-            _mm512_set1_ps(1.0),
-            _mm512_div_ps(_mm512_set1_ps(2.0), _mm512_add_ps(e, _mm512_set1_ps(1.0))),
-        )
+        let em = _mm512_min_ps(e, _mm512_set1_ps(f32::MAX));
+        let ratio = _mm512_div_ps(
+            _mm512_sub_ps(em, _mm512_set1_ps(1.0)),
+            _mm512_add_ps(em, _mm512_set1_ps(1.0)),
+        );
+        let big = _mm512_or_ps(ratio, _mm512_and_ps(_mm512_set1_ps(-0.0), v));
+        let small_mask = _mm512_cmp_ps_mask(
+            _mm512_andnot_ps(_mm512_set1_ps(-0.0), v),
+            _mm512_set1_ps(0.1),
+            _CMP_LT_OQ,
+        );
+        _mm512_mask_blend_ps(small_mask, big, series)
     },
-    |x: f32| 1.0 - 2.0 / (crate::kernels::exp::exp(2.0 * x) + 1.0)
+    |x: f32| {
+        if x.abs() < 0.1 {
+            let x2 = x * x;
+            x * (1.0 - x2 / 3.0 + 2.0 * x2 * x2 / 15.0)
+        } else {
+            let e = crate::kernels::exp::exp(2.0 * x);
+            if e.is_infinite() {
+                x.signum()
+            } else {
+                (e - 1.0) / (e + 1.0)
+            }
+        }
+    }
 );
 
 // RMS norm: two-pass (sum of squares, then scale by rsqrt).
@@ -356,12 +383,25 @@ crate::simd_exp!(
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn argmax_pair_512(v: __m512, idx: __m512i) -> (f32, usize) {
-    let m = unsafe { _mm512_reduce_max_ps(v) };
+    // NaN lanes must never win: mask them to -inf before the reduction.
+    let nan = unsafe { _mm512_cmp_ps_mask(v, v, _CMP_UNORD_Q) };
+    let clean = unsafe { _mm512_mask_blend_ps(nan, v, _mm512_set1_ps(f32::NEG_INFINITY)) };
+    let m = unsafe { _mm512_reduce_max_ps(clean) };
     let eq = unsafe { _mm512_cmp_ps_mask(v, _mm512_set1_ps(m), _CMP_EQ_OQ) };
-    let lane = eq.trailing_zeros() as usize;
+    if eq == 0 {
+        // All-NaN chunk: match the scalar seed (NaN value, index 0).
+        return (f32::NAN, 0);
+    }
     let mut idxs = [0_i32; 16];
     unsafe { _mm512_storeu_si512(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i32::MAX;
+    for (l, idxv) in idxs.iter().enumerate() {
+        if eq & (1 << l) != 0 {
+            best = best.min(*idxv);
+        }
+    }
+    (m, best as usize)
 }
 
 /// Horizontal argmin of the 16 lanes: `(min value, its index)`.
@@ -375,12 +415,25 @@ unsafe fn argmax_pair_512(v: __m512, idx: __m512i) -> (f32, usize) {
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn argmin_pair_512(v: __m512, idx: __m512i) -> (f32, usize) {
-    let m = unsafe { _mm512_reduce_min_ps(v) };
+    // NaN lanes must never win: mask them to +inf before the reduction.
+    let nan = unsafe { _mm512_cmp_ps_mask(v, v, _CMP_UNORD_Q) };
+    let clean = unsafe { _mm512_mask_blend_ps(nan, v, _mm512_set1_ps(f32::INFINITY)) };
+    let m = unsafe { _mm512_reduce_min_ps(clean) };
     let eq = unsafe { _mm512_cmp_ps_mask(v, _mm512_set1_ps(m), _CMP_EQ_OQ) };
-    let lane = eq.trailing_zeros() as usize;
+    if eq == 0 {
+        // All-NaN chunk: match the scalar seed (NaN value, index 0).
+        return (f32::NAN, 0);
+    }
     let mut idxs = [0_i32; 16];
     unsafe { _mm512_storeu_si512(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i32::MAX;
+    for (l, idxv) in idxs.iter().enumerate() {
+        if eq & (1 << l) != 0 {
+            best = best.min(*idxv);
+        }
+    }
+    (m, best as usize)
 }
 
 // Argmax: index of the first occurrence of the maximum.
@@ -393,7 +446,13 @@ crate::simd_argminmax!(
     _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
     _mm512_set1_epi32,
     _mm512_add_epi32,
-    |a, b| unsafe { _mm512_cmp_ps_mask(a, b, _CMP_GT_OQ) },
+    // NaN-aware dethrone (see scalar `argmax`).
+    |a, b| unsafe {
+        let gt = _mm512_cmp_ps_mask(a, b, _CMP_GT_OQ);
+        let nan_b = _mm512_cmp_ps_mask(b, b, _CMP_UNORD_Q);
+        let nan_a = _mm512_cmp_ps_mask(a, a, _CMP_UNORD_Q);
+        !nan_a & (gt | nan_b)
+    },
     |mask: __mmask16, a: __m512, b: __m512| unsafe { _mm512_mask_blend_ps(mask, b, a) },
     |mask: __mmask16, a: __m512i, b: __m512i| unsafe { _mm512_mask_blend_epi32(mask, b, a) },
     |cand: f32, cur: f32| cand > cur,
@@ -410,7 +469,13 @@ crate::simd_argminmax!(
     _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
     _mm512_set1_epi32,
     _mm512_add_epi32,
-    |a, b| unsafe { _mm512_cmp_ps_mask(a, b, _CMP_LT_OQ) },
+    // NaN-aware dethrone (see argmax above).
+    |a, b| unsafe {
+        let lt = _mm512_cmp_ps_mask(a, b, _CMP_LT_OQ);
+        let nan_b = _mm512_cmp_ps_mask(b, b, _CMP_UNORD_Q);
+        let nan_a = _mm512_cmp_ps_mask(a, a, _CMP_UNORD_Q);
+        !nan_a & (lt | nan_b)
+    },
     |mask: __mmask16, a: __m512, b: __m512| unsafe { _mm512_mask_blend_ps(mask, b, a) },
     |mask: __mmask16, a: __m512i, b: __m512i| unsafe { _mm512_mask_blend_epi32(mask, b, a) },
     |cand: f32, cur: f32| cand < cur,
@@ -432,14 +497,27 @@ crate::simd_argminmax!(
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn argmax_pair_512d(v: __m512d, idx: __m512i) -> (f64, usize) {
-    let m = unsafe { _mm512_reduce_max_pd(v) };
+    // NaN lanes must never win: mask them to -inf before the reduction.
+    let nan = unsafe { _mm512_cmp_pd_mask(v, v, _CMP_UNORD_Q) };
+    let clean = unsafe { _mm512_mask_blend_pd(nan, v, _mm512_set1_pd(f64::NEG_INFINITY)) };
+    let m = unsafe { _mm512_reduce_max_pd(clean) };
     let eq = unsafe { _mm512_cmp_pd_mask(v, _mm512_set1_pd(m), _CMP_EQ_OQ) };
-    let lane = eq.trailing_zeros() as usize;
+    if eq == 0 {
+        // All-NaN chunk: match the scalar seed (NaN value, index 0).
+        return (f64::NAN, 0);
+    }
     // 16 i32: the 512-bit store covers 16 lanes; each f64 lane's index
     // occupies an i32 pair (see the invocation's duplicated `$vidx`).
     let mut idxs = [0_i32; 16];
     unsafe { _mm512_storeu_si512(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[2 * lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i32::MAX;
+    for (l, idxv) in idxs.iter().step_by(2).enumerate() {
+        if eq & (1 << l) != 0 {
+            best = best.min(*idxv);
+        }
+    }
+    (m, best as usize)
 }
 
 /// Horizontal argmin of the 8 f64 lanes: `(min value, its index)`.
@@ -452,14 +530,27 @@ unsafe fn argmax_pair_512d(v: __m512d, idx: __m512i) -> (f64, usize) {
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn argmin_pair_512d(v: __m512d, idx: __m512i) -> (f64, usize) {
-    let m = unsafe { _mm512_reduce_min_pd(v) };
+    // NaN lanes must never win: mask them to +inf before the reduction.
+    let nan = unsafe { _mm512_cmp_pd_mask(v, v, _CMP_UNORD_Q) };
+    let clean = unsafe { _mm512_mask_blend_pd(nan, v, _mm512_set1_pd(f64::INFINITY)) };
+    let m = unsafe { _mm512_reduce_min_pd(clean) };
     let eq = unsafe { _mm512_cmp_pd_mask(v, _mm512_set1_pd(m), _CMP_EQ_OQ) };
-    let lane = eq.trailing_zeros() as usize;
+    if eq == 0 {
+        // All-NaN chunk: match the scalar seed (NaN value, index 0).
+        return (f64::NAN, 0);
+    }
     // 16 i32: the 512-bit store covers 16 lanes; each f64 lane's index
     // occupies an i32 pair (see the invocation's duplicated `$vidx`).
     let mut idxs = [0_i32; 16];
     unsafe { _mm512_storeu_si512(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[2 * lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i32::MAX;
+    for (l, idxv) in idxs.iter().step_by(2).enumerate() {
+        if eq & (1 << l) != 0 {
+            best = best.min(*idxv);
+        }
+    }
+    (m, best as usize)
 }
 
 // f64 reductions for AVX-512F (8 lanes).
@@ -569,11 +660,20 @@ crate::simd_argminmax!(
     _mm512_setr_epi32(0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7),
     _mm512_set1_epi32,
     _mm512_add_epi32,
-    |a: __m512d, b: __m512d| unsafe { _mm512_cmp_pd_mask(a, b, _CMP_GT_OQ) },
+    // NaN-aware dethrone (see scalar `argmax`).
+    |a: __m512d, b: __m512d| unsafe {
+        let gt = _mm512_cmp_pd_mask(a, b, _CMP_GT_OQ);
+        let nan_b = _mm512_cmp_pd_mask(b, b, _CMP_UNORD_Q);
+        let nan_a = _mm512_cmp_pd_mask(a, a, _CMP_UNORD_Q);
+        !nan_a & (gt | nan_b)
+    },
     |mask: __mmask8, a: __m512d, b: __m512d| unsafe { _mm512_mask_blend_pd(mask, b, a) },
-    // Widen the 8-lane f64 mask to the 16-lane i32 index vector.
+    // Index vector holds one i32 index pair per f64 lane: blend i64
+    // lanes so the 8-bit f64 mask maps 1:1 onto the pairs.
     |mask: __mmask8, a: __m512i, b: __m512i| unsafe {
-        _mm512_mask_blend_epi32(mask as u16 | (mask as u16) << 1, b, a)
+        // f64 mask bits map 1:1 to i64 lanes (each holds an i32 index
+        // pair); blending i64 lanes keeps the pairs intact.
+        _mm512_mask_blend_epi64(mask, b, a)
     },
     |cand: f64, cur: f64| cand > cur,
     |v, iv| unsafe { argmax_pair_512d(v, iv) }
@@ -589,11 +689,19 @@ crate::simd_argminmax!(
     _mm512_setr_epi32(0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7),
     _mm512_set1_epi32,
     _mm512_add_epi32,
-    |a: __m512d, b: __m512d| unsafe { _mm512_cmp_pd_mask(a, b, _CMP_LT_OQ) },
+    // NaN-aware dethrone (see argmax_f64 above).
+    |a: __m512d, b: __m512d| unsafe {
+        let lt = _mm512_cmp_pd_mask(a, b, _CMP_LT_OQ);
+        let nan_b = _mm512_cmp_pd_mask(b, b, _CMP_UNORD_Q);
+        let nan_a = _mm512_cmp_pd_mask(a, a, _CMP_UNORD_Q);
+        !nan_a & (lt | nan_b)
+    },
     |mask: __mmask8, a: __m512d, b: __m512d| unsafe { _mm512_mask_blend_pd(mask, b, a) },
-    // Widen the 8-lane f64 mask to the 16-lane i32 index vector.
+    // Index vector holds one i32 index pair per f64 lane: blend i64
+    // lanes so the 8-bit f64 mask maps 1:1 onto the pairs.
     |mask: __mmask8, a: __m512i, b: __m512i| unsafe {
-        _mm512_mask_blend_epi32(mask as u16 | (mask as u16) << 1, b, a)
+        // Same widening rationale as argmax_f64: blend i64 lanes.
+        _mm512_mask_blend_epi64(mask, b, a)
     },
     |cand: f64, cur: f64| cand < cur,
     |v, iv| unsafe { argmin_pair_512d(v, iv) }
@@ -798,13 +906,61 @@ crate::simd_map!(
     |p| unsafe { _mm512_loadu_pd(p) },
     |p, v| unsafe { _mm512_storeu_pd(p, v) },
     |v: __m512d| unsafe {
+        // Piecewise: Horner series through x¹³ for |x| < 0.1 (truncation
+        // < 0.1 ulp there; the exp form cancels to 0), exp form beyond.
+        let y = _mm512_mul_pd(v, v);
+        let p = _mm512_set1_pd(0.003_592_128_572_437_055);
+        let p = _mm512_add_pd(
+            _mm512_mul_pd(p, y),
+            _mm512_set1_pd(-0.008_863_235_529_902_197),
+        );
+        let p = _mm512_add_pd(_mm512_mul_pd(p, y), _mm512_set1_pd(0.021_869_488_536_155_2));
+        let p = _mm512_add_pd(
+            _mm512_mul_pd(p, y),
+            _mm512_set1_pd(-0.053_968_253_968_253_97),
+        );
+        let p = _mm512_add_pd(
+            _mm512_mul_pd(p, y),
+            _mm512_set1_pd(0.133_333_333_333_333_33),
+        );
+        let p = _mm512_add_pd(
+            _mm512_mul_pd(p, y),
+            _mm512_set1_pd(-0.333_333_333_333_333_3),
+        );
+        let series = _mm512_mul_pd(v, _mm512_add_pd(_mm512_mul_pd(p, y), _mm512_set1_pd(1.0)));
         let e = vexp_512d(_mm512_add_pd(v, v));
-        _mm512_sub_pd(
-            _mm512_set1_pd(1.0),
-            _mm512_div_pd(_mm512_set1_pd(2.0), _mm512_add_pd(e, _mm512_set1_pd(1.0))),
-        )
+        let em = _mm512_min_pd(e, _mm512_set1_pd(f64::MAX));
+        let ratio = _mm512_div_pd(
+            _mm512_sub_pd(em, _mm512_set1_pd(1.0)),
+            _mm512_add_pd(em, _mm512_set1_pd(1.0)),
+        );
+        let big = _mm512_or_pd(ratio, _mm512_and_pd(_mm512_set1_pd(-0.0), v));
+        let small_mask = _mm512_cmp_pd_mask(
+            _mm512_andnot_pd(_mm512_set1_pd(-0.0), v),
+            _mm512_set1_pd(0.1),
+            _CMP_LT_OQ,
+        );
+        _mm512_mask_blend_pd(small_mask, big, series)
     },
-    |x: f64| 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * x) + 1.0)
+    |x: f64| {
+        if x.abs() < 0.1 {
+            let y = x * x;
+            let p = 0.003_592_128_572_437_055_f64;
+            let p = p.mul_add(y, -0.008_863_235_529_902_197);
+            let p = p.mul_add(y, 0.021_869_488_536_155_2);
+            let p = p.mul_add(y, -0.053_968_253_968_253_97);
+            let p = p.mul_add(y, 0.133_333_333_333_333_33);
+            let p = p.mul_add(y, -0.333_333_333_333_333_3);
+            x * p.mul_add(y, 1.0)
+        } else {
+            let e = crate::kernels::exp::exp_f64(2.0 * x);
+            if e.is_infinite() {
+                x.signum()
+            } else {
+                (e - 1.0) / (e + 1.0)
+            }
+        }
+    }
 );
 
 // RMS norm (f64).

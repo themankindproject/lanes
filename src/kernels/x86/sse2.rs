@@ -127,7 +127,14 @@ crate::simd_argminmax!(
     _mm_setr_epi32(0, 1, 2, 3),
     _mm_set1_epi32,
     _mm_add_epi32,
-    _mm_cmpgt_ps,
+    // NaN-aware dethrone: a candidate wins iff it is non-NaN and (the
+    // current seed is NaN or it compares strictly better). See scalar.
+    |a: __m128, b: __m128| unsafe {
+        let gt = _mm_cmpgt_ps(a, b);
+        let nan_b = _mm_cmpunord_ps(b, b);
+        let nan_a = _mm_cmpunord_ps(a, a);
+        _mm_andnot_ps(nan_a, _mm_or_ps(gt, nan_b))
+    },
     |mask: __m128, a: __m128, b: __m128| {
         // SAFETY: caller guarantees SSE2.
         unsafe { _mm_or_ps(_mm_and_ps(mask, a), _mm_andnot_ps(mask, b)) }
@@ -151,7 +158,13 @@ crate::simd_argminmax!(
     _mm_setr_epi32(0, 1, 2, 3),
     _mm_set1_epi32,
     _mm_add_epi32,
-    _mm_cmplt_ps,
+    // NaN-aware dethrone (see argmax above).
+    |a: __m128, b: __m128| unsafe {
+        let lt = _mm_cmplt_ps(a, b);
+        let nan_b = _mm_cmpunord_ps(b, b);
+        let nan_a = _mm_cmpunord_ps(a, a);
+        _mm_andnot_ps(nan_a, _mm_or_ps(lt, nan_b))
+    },
     |mask: __m128, a: __m128, b: __m128| {
         // SAFETY: caller guarantees SSE2.
         unsafe { _mm_or_ps(_mm_and_ps(mask, a), _mm_andnot_ps(mask, b)) }
@@ -277,7 +290,8 @@ crate::simd_map!(
     |x: f32| x.max(0.0)
 );
 
-// Tanh map: tanh(x) = 1 - 2/(exp(2x)+1) from the vector vexp kernel.
+// Tanh map: piecewise — Taylor series for |x| < 0.1 (the exp form cancels
+// to 0 there), 1 - 2/(exp(2x)+1) beyond.
 crate::simd_map!(
     tanh,
     f32,
@@ -286,13 +300,40 @@ crate::simd_map!(
     |p| unsafe { _mm_loadu_ps(p) },
     |p, v| unsafe { _mm_storeu_ps(p, v) },
     |v| unsafe {
+        let series = {
+            let x2 = _mm_mul_ps(v, v);
+            let x4 = _mm_mul_ps(x2, x2);
+            // x - x³/3 + 2x⁵/15
+            _mm_add_ps(
+                _mm_sub_ps(v, _mm_div_ps(_mm_mul_ps(v, x2), _mm_set1_ps(3.0))),
+                _mm_div_ps(_mm_mul_ps(v, x4), _mm_set1_ps(7.5)),
+            )
+        };
         let e = vexp_128(_mm_add_ps(v, v));
-        _mm_sub_ps(
-            _mm_set1_ps(1.0),
-            _mm_div_ps(_mm_set1_ps(2.0), _mm_add_ps(e, _mm_set1_ps(1.0))),
-        )
+        // clamp e to FLT_MAX: (max-1)/(max+1) rounds to 1.0, so the ratio
+        // saturates to ±1 on exp overflow; copysign restores the sign.
+        let em = _mm_min_ps(e, _mm_set1_ps(f32::MAX));
+        let ratio = _mm_div_ps(
+            _mm_sub_ps(em, _mm_set1_ps(1.0)),
+            _mm_add_ps(em, _mm_set1_ps(1.0)),
+        );
+        let big = _mm_or_ps(ratio, _mm_and_ps(_mm_set1_ps(-0.0), v));
+        let small = _mm_cmplt_ps(_mm_andnot_ps(_mm_set1_ps(-0.0), v), _mm_set1_ps(0.1));
+        _mm_or_ps(_mm_and_ps(small, series), _mm_andnot_ps(small, big))
     },
-    |x: f32| 1.0 - 2.0 / (crate::kernels::exp::exp(2.0 * x) + 1.0)
+    |x: f32| {
+        if x.abs() < 0.1 {
+            let x2 = x * x;
+            x * (1.0 - x2 / 3.0 + 2.0 * x2 * x2 / 15.0)
+        } else {
+            let e = crate::kernels::exp::exp(2.0 * x);
+            if e.is_infinite() {
+                x.signum()
+            } else {
+                (e - 1.0) / (e + 1.0)
+            }
+        }
+    }
 );
 
 // RMS norm: two-pass (sum of squares, then scale by rsqrt).
@@ -454,18 +495,38 @@ unsafe fn hmax_128(v: __m128) -> f32 {
 #[inline]
 #[target_feature(enable = "sse2")]
 unsafe fn argmax_pair_128(v: __m128, idx: __m128i) -> (f32, usize) {
-    let m = unsafe { hmax_128(v) };
+    // NaN lanes must never win: mask them to -inf before the reduction.
+    let nan = unsafe { _mm_cmpunord_ps(v, v) };
+    let clean = unsafe {
+        _mm_or_ps(
+            _mm_and_ps(nan, _mm_set1_ps(f32::NEG_INFINITY)),
+            _mm_andnot_ps(nan, v),
+        )
+    };
+    let m = unsafe { hmax_128(clean) };
     let eq = unsafe { _mm_cmpeq_ps(v, _mm_set1_ps(m)) };
-    let lane = unsafe { _mm_movemask_ps(eq) }.trailing_zeros() as usize;
+    let mask = unsafe { _mm_movemask_ps(eq) };
+    if mask == 0 {
+        // All-NaN chunk: match the scalar seed (NaN value, index 0).
+        return (f32::NAN, 0);
+    }
     let mut idxs = [0_i32; 4];
     unsafe { _mm_storeu_si128(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes (the chunk
+    // loop can hold a later chunk's tie in a lower lane).
+    let mut best = i32::MAX;
+    for (l, idxv) in idxs.iter().enumerate() {
+        if mask & (1 << l) != 0 {
+            best = best.min(*idxv);
+        }
+    }
+    (m, best as usize)
 }
 
 /// Horizontal argmin of the 4 lanes: `(min value, its index)`.
 ///
-/// Ties resolve to the lowest lane. The index is read from `idx` at the
-/// first lane equal to the min.
+/// Ties resolve to the first occurrence: the lowest global index among the
+/// lanes equal to the min.
 ///
 /// # Safety
 /// Caller must ensure the CPU supports SSE2.
@@ -473,12 +534,31 @@ unsafe fn argmax_pair_128(v: __m128, idx: __m128i) -> (f32, usize) {
 #[inline]
 #[target_feature(enable = "sse2")]
 unsafe fn argmin_pair_128(v: __m128, idx: __m128i) -> (f32, usize) {
-    let m = unsafe { hmin_128(v) };
+    // NaN lanes must never win: mask them to +inf before the reduction.
+    let nan = unsafe { _mm_cmpunord_ps(v, v) };
+    let clean = unsafe {
+        _mm_or_ps(
+            _mm_and_ps(nan, _mm_set1_ps(f32::INFINITY)),
+            _mm_andnot_ps(nan, v),
+        )
+    };
+    let m = unsafe { hmin_128(clean) };
     let eq = unsafe { _mm_cmpeq_ps(v, _mm_set1_ps(m)) };
-    let lane = unsafe { _mm_movemask_ps(eq) }.trailing_zeros() as usize;
+    let mask = unsafe { _mm_movemask_ps(eq) };
+    if mask == 0 {
+        // All-NaN chunk: match the scalar seed (NaN value, index 0).
+        return (f32::NAN, 0);
+    }
     let mut idxs = [0_i32; 4];
     unsafe { _mm_storeu_si128(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i32::MAX;
+    for (l, idxv) in idxs.iter().enumerate() {
+        if mask & (1 << l) != 0 {
+            best = best.min(*idxv);
+        }
+    }
+    (m, best as usize)
 }
 
 // ===========================================================================
@@ -549,14 +629,33 @@ unsafe fn hmax_128d(v: __m128d) -> f64 {
 #[inline]
 #[target_feature(enable = "sse2")]
 unsafe fn argmax_pair_128d(v: __m128d, idx: __m128i) -> (f64, usize) {
-    let m = unsafe { hmax_128d(v) };
+    // NaN lanes must never win: mask them to -inf before the reduction.
+    let nan = unsafe { _mm_cmpunord_pd(v, v) };
+    let clean = unsafe {
+        _mm_or_pd(
+            _mm_and_pd(nan, _mm_set1_pd(f64::NEG_INFINITY)),
+            _mm_andnot_pd(nan, v),
+        )
+    };
+    let m = unsafe { hmax_128d(clean) };
     let eq = unsafe { _mm_cmpeq_pd(v, _mm_set1_pd(m)) };
-    let lane = unsafe { _mm_movemask_pd(eq) }.trailing_zeros() as usize;
+    let mask = unsafe { _mm_movemask_pd(eq) };
+    if mask == 0 {
+        // All-NaN chunk: match the scalar seed (NaN value, index 0).
+        return (f64::NAN, 0);
+    }
     // 4 i32: the store is 16 bytes; each f64 lane's index occupies an i32
     // pair (see the invocation's `$vidx` = [0,0,1,1]).
     let mut idxs = [0_i32; 4];
     unsafe { _mm_storeu_si128(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[2 * lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i32::MAX;
+    for (l, idxv) in idxs.iter().step_by(2).enumerate() {
+        if mask & (1 << l) != 0 {
+            best = best.min(*idxv);
+        }
+    }
+    (m, best as usize)
 }
 
 /// Horizontal argmin of the 2 f64 lanes: `(min value, its index)`.
@@ -569,14 +668,33 @@ unsafe fn argmax_pair_128d(v: __m128d, idx: __m128i) -> (f64, usize) {
 #[inline]
 #[target_feature(enable = "sse2")]
 unsafe fn argmin_pair_128d(v: __m128d, idx: __m128i) -> (f64, usize) {
-    let m = unsafe { hmin_128d(v) };
+    // NaN lanes must never win: mask them to +inf before the reduction.
+    let nan = unsafe { _mm_cmpunord_pd(v, v) };
+    let clean = unsafe {
+        _mm_or_pd(
+            _mm_and_pd(nan, _mm_set1_pd(f64::INFINITY)),
+            _mm_andnot_pd(nan, v),
+        )
+    };
+    let m = unsafe { hmin_128d(clean) };
     let eq = unsafe { _mm_cmpeq_pd(v, _mm_set1_pd(m)) };
-    let lane = unsafe { _mm_movemask_pd(eq) }.trailing_zeros() as usize;
+    let mask = unsafe { _mm_movemask_pd(eq) };
+    if mask == 0 {
+        // All-NaN chunk: match the scalar seed (NaN value, index 0).
+        return (f64::NAN, 0);
+    }
     // 4 i32: the store is 16 bytes; each f64 lane's index occupies an i32
     // pair (see the invocation's `$vidx` = [0,0,1,1]).
     let mut idxs = [0_i32; 4];
     unsafe { _mm_storeu_si128(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[2 * lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i32::MAX;
+    for (l, idxv) in idxs.iter().step_by(2).enumerate() {
+        if mask & (1 << l) != 0 {
+            best = best.min(*idxv);
+        }
+    }
+    (m, best as usize)
 }
 
 // f64 reductions and maps for SSE2 (2 lanes).
@@ -686,7 +804,14 @@ crate::simd_argminmax!(
     _mm_setr_epi32(0, 0, 1, 1),
     _mm_set1_epi32,
     _mm_add_epi32,
-    _mm_cmpgt_pd,
+    // NaN-aware dethrone: non-NaN candidate wins over NaN seed or a
+    // strictly greater value (see scalar `argmax`).
+    |a: __m128d, b: __m128d| unsafe {
+        let gt = _mm_cmpgt_pd(a, b);
+        let nan_b = _mm_cmpunord_pd(b, b);
+        let nan_a = _mm_cmpunord_pd(a, a);
+        _mm_andnot_pd(nan_a, _mm_or_pd(gt, nan_b))
+    },
     |mask: __m128d, a: __m128d, b: __m128d| unsafe {
         _mm_or_pd(_mm_and_pd(mask, a), _mm_andnot_pd(mask, b))
     },
@@ -708,7 +833,13 @@ crate::simd_argminmax!(
     _mm_setr_epi32(0, 0, 1, 1),
     _mm_set1_epi32,
     _mm_add_epi32,
-    _mm_cmplt_pd,
+    // NaN-aware dethrone (see argmax_f64 above).
+    |a: __m128d, b: __m128d| unsafe {
+        let lt = _mm_cmplt_pd(a, b);
+        let nan_b = _mm_cmpunord_pd(b, b);
+        let nan_a = _mm_cmpunord_pd(a, a);
+        _mm_andnot_pd(nan_a, _mm_or_pd(lt, nan_b))
+    },
     |mask: __m128d, a: __m128d, b: __m128d| unsafe {
         _mm_or_pd(_mm_and_pd(mask, a), _mm_andnot_pd(mask, b))
     },
@@ -930,13 +1061,45 @@ crate::simd_map!(
     |p| unsafe { _mm_loadu_pd(p) },
     |p, v| unsafe { _mm_storeu_pd(p, v) },
     |v: __m128d| unsafe {
+        // Piecewise: Horner series through x¹³ for |x| < 0.1 (truncation
+        // < 0.1 ulp there; the exp form cancels to 0), exp form beyond.
+        let y = _mm_mul_pd(v, v);
+        let p = _mm_set1_pd(0.003_592_128_572_437_055);
+        let p = _mm_add_pd(_mm_mul_pd(p, y), _mm_set1_pd(-0.008_863_235_529_902_197));
+        let p = _mm_add_pd(_mm_mul_pd(p, y), _mm_set1_pd(0.021_869_488_536_155_2));
+        let p = _mm_add_pd(_mm_mul_pd(p, y), _mm_set1_pd(-0.053_968_253_968_253_97));
+        let p = _mm_add_pd(_mm_mul_pd(p, y), _mm_set1_pd(0.133_333_333_333_333_33));
+        let p = _mm_add_pd(_mm_mul_pd(p, y), _mm_set1_pd(-0.333_333_333_333_333_3));
+        let series = _mm_mul_pd(v, _mm_add_pd(_mm_mul_pd(p, y), _mm_set1_pd(1.0)));
         let e = vexp_128d(_mm_add_pd(v, v));
-        _mm_sub_pd(
-            _mm_set1_pd(1.0),
-            _mm_div_pd(_mm_set1_pd(2.0), _mm_add_pd(e, _mm_set1_pd(1.0))),
-        )
+        let em = _mm_min_pd(e, _mm_set1_pd(f64::MAX));
+        let ratio = _mm_div_pd(
+            _mm_sub_pd(em, _mm_set1_pd(1.0)),
+            _mm_add_pd(em, _mm_set1_pd(1.0)),
+        );
+        let big = _mm_or_pd(ratio, _mm_and_pd(_mm_set1_pd(-0.0), v));
+        let small = _mm_cmplt_pd(_mm_andnot_pd(_mm_set1_pd(-0.0), v), _mm_set1_pd(0.1));
+        _mm_or_pd(_mm_and_pd(small, series), _mm_andnot_pd(small, big))
     },
-    |x: f64| 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * x) + 1.0)
+    |x: f64| {
+        if x.abs() < 0.1 {
+            let y = x * x;
+            let p = 0.003_592_128_572_437_055_f64;
+            let p = p.mul_add(y, -0.008_863_235_529_902_197);
+            let p = p.mul_add(y, 0.021_869_488_536_155_2);
+            let p = p.mul_add(y, -0.053_968_253_968_253_97);
+            let p = p.mul_add(y, 0.133_333_333_333_333_33);
+            let p = p.mul_add(y, -0.333_333_333_333_333_3);
+            x * p.mul_add(y, 1.0)
+        } else {
+            let e = crate::kernels::exp::exp_f64(2.0 * x);
+            if e.is_infinite() {
+                x.signum()
+            } else {
+                (e - 1.0) / (e + 1.0)
+            }
+        }
+    }
 );
 
 // RMS norm (f64).

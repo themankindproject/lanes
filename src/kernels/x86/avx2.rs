@@ -126,7 +126,13 @@ crate::simd_argminmax!(
     _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7),
     _mm256_set1_epi32,
     _mm256_add_epi32,
-    |a, b| unsafe { _mm256_cmp_ps(a, b, _CMP_GT_OQ) },
+    // NaN-aware dethrone (see scalar `argmax`).
+    |a, b| unsafe {
+        let gt = _mm256_cmp_ps(a, b, _CMP_GT_OQ);
+        let nan_b = _mm256_cmp_ps(b, b, _CMP_UNORD_Q);
+        let nan_a = _mm256_cmp_ps(a, a, _CMP_UNORD_Q);
+        _mm256_andnot_ps(nan_a, _mm256_or_ps(gt, nan_b))
+    },
     |mask: __m256, a: __m256, b: __m256| unsafe { _mm256_blendv_ps(b, a, mask) },
     |mask: __m256, a: __m256i, b: __m256i| {
         let m = unsafe { _mm256_castps_si256(mask) };
@@ -148,7 +154,13 @@ crate::simd_argminmax!(
     _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7),
     _mm256_set1_epi32,
     _mm256_add_epi32,
-    |a, b| unsafe { _mm256_cmp_ps(a, b, _CMP_LT_OQ) },
+    // NaN-aware dethrone (see argmax above).
+    |a, b| unsafe {
+        let lt = _mm256_cmp_ps(a, b, _CMP_LT_OQ);
+        let nan_b = _mm256_cmp_ps(b, b, _CMP_UNORD_Q);
+        let nan_a = _mm256_cmp_ps(a, a, _CMP_UNORD_Q);
+        _mm256_andnot_ps(nan_a, _mm256_or_ps(lt, nan_b))
+    },
     |mask: __m256, a: __m256, b: __m256| unsafe { _mm256_blendv_ps(b, a, mask) },
     |mask: __m256, a: __m256i, b: __m256i| {
         let m = unsafe { _mm256_castps_si256(mask) };
@@ -286,13 +298,40 @@ crate::simd_map!(
     |p| unsafe { _mm256_loadu_ps(p) },
     |p, v| unsafe { _mm256_storeu_ps(p, v) },
     |v| unsafe {
+        // Piecewise: series for |x| < 0.1, exp form beyond (see scalar).
+        let x2 = _mm256_mul_ps(v, v);
+        let x4 = _mm256_mul_ps(x2, x2);
+        let series = _mm256_add_ps(
+            _mm256_sub_ps(v, _mm256_div_ps(_mm256_mul_ps(v, x2), _mm256_set1_ps(3.0))),
+            _mm256_div_ps(_mm256_mul_ps(v, x4), _mm256_set1_ps(7.5)),
+        );
         let e = vexp_256(_mm256_add_ps(v, v));
-        _mm256_sub_ps(
-            _mm256_set1_ps(1.0),
-            _mm256_div_ps(_mm256_set1_ps(2.0), _mm256_add_ps(e, _mm256_set1_ps(1.0))),
-        )
+        let em = _mm256_min_ps(e, _mm256_set1_ps(f32::MAX));
+        let ratio = _mm256_div_ps(
+            _mm256_sub_ps(em, _mm256_set1_ps(1.0)),
+            _mm256_add_ps(em, _mm256_set1_ps(1.0)),
+        );
+        let big = _mm256_or_ps(ratio, _mm256_and_ps(_mm256_set1_ps(-0.0), v));
+        let small = _mm256_cmp_ps(
+            _mm256_andnot_ps(_mm256_set1_ps(-0.0), v),
+            _mm256_set1_ps(0.1),
+            _CMP_LT_OQ,
+        );
+        _mm256_or_ps(_mm256_and_ps(small, series), _mm256_andnot_ps(small, big))
     },
-    |x: f32| 1.0 - 2.0 / (crate::kernels::exp::exp(2.0 * x) + 1.0)
+    |x: f32| {
+        if x.abs() < 0.1 {
+            let x2 = x * x;
+            x * (1.0 - x2 / 3.0 + 2.0 * x2 * x2 / 15.0)
+        } else {
+            let e = crate::kernels::exp::exp(2.0 * x);
+            if e.is_infinite() {
+                x.signum()
+            } else {
+                (e - 1.0) / (e + 1.0)
+            }
+        }
+    }
 );
 
 // RMS norm: two-pass (sum of squares, then scale by rsqrt).
@@ -470,12 +509,31 @@ unsafe fn hmax_256(v: __m256) -> f32 {
 #[inline]
 #[target_feature(enable = "avx2")]
 unsafe fn argmax_pair_256(v: __m256, idx: __m256i) -> (f32, usize) {
-    let m = unsafe { hmax_256(v) };
+    // NaN lanes must never win: mask them to -inf before the reduction.
+    let nan = unsafe { _mm256_cmp_ps(v, v, _CMP_UNORD_Q) };
+    let clean = unsafe {
+        _mm256_or_ps(
+            _mm256_and_ps(nan, _mm256_set1_ps(f32::NEG_INFINITY)),
+            _mm256_andnot_ps(nan, v),
+        )
+    };
+    let m = unsafe { hmax_256(clean) };
     let eq = unsafe { _mm256_cmp_ps(v, _mm256_set1_ps(m), _CMP_EQ_OQ) };
-    let lane = unsafe { _mm256_movemask_ps(eq) }.trailing_zeros() as usize;
+    let mask = unsafe { _mm256_movemask_ps(eq) };
+    if mask == 0 {
+        // All-NaN chunk: match the scalar seed (NaN value, index 0).
+        return (f32::NAN, 0);
+    }
     let mut idxs = [0_i32; 8];
     unsafe { _mm256_storeu_si256(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i32::MAX;
+    for (l, idxv) in idxs.iter().enumerate() {
+        if mask & (1 << l) != 0 {
+            best = best.min(*idxv);
+        }
+    }
+    (m, best as usize)
 }
 
 /// Horizontal argmin of the 8 lanes: `(min value, its index)`.
@@ -489,12 +547,31 @@ unsafe fn argmax_pair_256(v: __m256, idx: __m256i) -> (f32, usize) {
 #[inline]
 #[target_feature(enable = "avx2")]
 unsafe fn argmin_pair_256(v: __m256, idx: __m256i) -> (f32, usize) {
-    let m = unsafe { hmin_256(v) };
+    // NaN lanes must never win: mask them to +inf before the reduction.
+    let nan = unsafe { _mm256_cmp_ps(v, v, _CMP_UNORD_Q) };
+    let clean = unsafe {
+        _mm256_or_ps(
+            _mm256_and_ps(nan, _mm256_set1_ps(f32::INFINITY)),
+            _mm256_andnot_ps(nan, v),
+        )
+    };
+    let m = unsafe { hmin_256(clean) };
     let eq = unsafe { _mm256_cmp_ps(v, _mm256_set1_ps(m), _CMP_EQ_OQ) };
-    let lane = unsafe { _mm256_movemask_ps(eq) }.trailing_zeros() as usize;
+    let mask = unsafe { _mm256_movemask_ps(eq) };
+    if mask == 0 {
+        // All-NaN chunk: match the scalar seed (NaN value, index 0).
+        return (f32::NAN, 0);
+    }
     let mut idxs = [0_i32; 8];
     unsafe { _mm256_storeu_si256(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i32::MAX;
+    for (l, idxv) in idxs.iter().enumerate() {
+        if mask & (1 << l) != 0 {
+            best = best.min(*idxv);
+        }
+    }
+    (m, best as usize)
 }
 
 // ===========================================================================
@@ -576,14 +653,33 @@ unsafe fn hmax_256d(v: __m256d) -> f64 {
 #[inline]
 #[target_feature(enable = "avx2")]
 unsafe fn argmax_pair_256d(v: __m256d, idx: __m256i) -> (f64, usize) {
-    let m = unsafe { hmax_256d(v) };
+    // NaN lanes must never win: mask them to -inf before the reduction.
+    let nan = unsafe { _mm256_cmp_pd(v, v, _CMP_UNORD_Q) };
+    let clean = unsafe {
+        _mm256_or_pd(
+            _mm256_and_pd(nan, _mm256_set1_pd(f64::NEG_INFINITY)),
+            _mm256_andnot_pd(nan, v),
+        )
+    };
+    let m = unsafe { hmax_256d(clean) };
     let eq = unsafe { _mm256_cmp_pd(v, _mm256_set1_pd(m), _CMP_EQ_OQ) };
-    let lane = unsafe { _mm256_movemask_pd(eq) }.trailing_zeros() as usize;
+    let mask = unsafe { _mm256_movemask_pd(eq) };
+    if mask == 0 {
+        // All-NaN chunk: match the scalar seed (NaN value, index 0).
+        return (f64::NAN, 0);
+    }
     // 8 i32: the 256-bit store covers 8 lanes; each f64 lane's index
     // occupies an i32 pair (see the invocation's duplicated `$vidx`).
     let mut idxs = [0_i32; 8];
     unsafe { _mm256_storeu_si256(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[2 * lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i32::MAX;
+    for (l, idxv) in idxs.iter().step_by(2).enumerate() {
+        if mask & (1 << l) != 0 {
+            best = best.min(*idxv);
+        }
+    }
+    (m, best as usize)
 }
 
 /// Horizontal argmin of the 4 f64 lanes: `(min value, its index)`.
@@ -596,14 +692,33 @@ unsafe fn argmax_pair_256d(v: __m256d, idx: __m256i) -> (f64, usize) {
 #[inline]
 #[target_feature(enable = "avx2")]
 unsafe fn argmin_pair_256d(v: __m256d, idx: __m256i) -> (f64, usize) {
-    let m = unsafe { hmin_256d(v) };
+    // NaN lanes must never win: mask them to +inf before the reduction.
+    let nan = unsafe { _mm256_cmp_pd(v, v, _CMP_UNORD_Q) };
+    let clean = unsafe {
+        _mm256_or_pd(
+            _mm256_and_pd(nan, _mm256_set1_pd(f64::INFINITY)),
+            _mm256_andnot_pd(nan, v),
+        )
+    };
+    let m = unsafe { hmin_256d(clean) };
     let eq = unsafe { _mm256_cmp_pd(v, _mm256_set1_pd(m), _CMP_EQ_OQ) };
-    let lane = unsafe { _mm256_movemask_pd(eq) }.trailing_zeros() as usize;
+    let mask = unsafe { _mm256_movemask_pd(eq) };
+    if mask == 0 {
+        // All-NaN chunk: match the scalar seed (NaN value, index 0).
+        return (f64::NAN, 0);
+    }
     // 8 i32: the 256-bit store covers 8 lanes; each f64 lane's index
     // occupies an i32 pair (see the invocation's duplicated `$vidx`).
     let mut idxs = [0_i32; 8];
     unsafe { _mm256_storeu_si256(idxs.as_mut_ptr().cast(), idx) };
-    (m, idxs[2 * lane] as usize)
+    // First occurrence = smallest GLOBAL index among tied lanes.
+    let mut best = i32::MAX;
+    for (l, idxv) in idxs.iter().step_by(2).enumerate() {
+        if mask & (1 << l) != 0 {
+            best = best.min(*idxv);
+        }
+    }
+    (m, best as usize)
 }
 
 // f64 reductions for AVX2 (4 lanes).
@@ -713,7 +828,13 @@ crate::simd_argminmax!(
     _mm256_setr_epi32(0, 0, 1, 1, 2, 2, 3, 3),
     _mm256_set1_epi32,
     _mm256_add_epi32,
-    |a: __m256d, b: __m256d| _mm256_cmp_pd(a, b, _CMP_GT_OQ),
+    // NaN-aware dethrone (see scalar `argmax`).
+    |a: __m256d, b: __m256d| unsafe {
+        let gt = _mm256_cmp_pd(a, b, _CMP_GT_OQ);
+        let nan_b = _mm256_cmp_pd(b, b, _CMP_UNORD_Q);
+        let nan_a = _mm256_cmp_pd(a, a, _CMP_UNORD_Q);
+        _mm256_andnot_pd(nan_a, _mm256_or_pd(gt, nan_b))
+    },
     |mask: __m256d, a: __m256d, b: __m256d| unsafe { _mm256_blendv_pd(b, a, mask) },
     |mask: __m256d, a: __m256i, b: __m256i| unsafe {
         let m = _mm256_castpd_si256(mask);
@@ -733,7 +854,13 @@ crate::simd_argminmax!(
     _mm256_setr_epi32(0, 0, 1, 1, 2, 2, 3, 3),
     _mm256_set1_epi32,
     _mm256_add_epi32,
-    |a: __m256d, b: __m256d| _mm256_cmp_pd(a, b, _CMP_LT_OQ),
+    // NaN-aware dethrone (see argmax_f64 above).
+    |a: __m256d, b: __m256d| unsafe {
+        let lt = _mm256_cmp_pd(a, b, _CMP_LT_OQ);
+        let nan_b = _mm256_cmp_pd(b, b, _CMP_UNORD_Q);
+        let nan_a = _mm256_cmp_pd(a, a, _CMP_UNORD_Q);
+        _mm256_andnot_pd(nan_a, _mm256_or_pd(lt, nan_b))
+    },
     |mask: __m256d, a: __m256d, b: __m256d| unsafe { _mm256_blendv_pd(b, a, mask) },
     |mask: __m256d, a: __m256i, b: __m256i| unsafe {
         let m = _mm256_castpd_si256(mask);
@@ -951,13 +1078,61 @@ crate::simd_map!(
     |p| unsafe { _mm256_loadu_pd(p) },
     |p, v| unsafe { _mm256_storeu_pd(p, v) },
     |v: __m256d| unsafe {
+        // Piecewise: Horner series through x¹³ for |x| < 0.1 (truncation
+        // < 0.1 ulp there; the exp form cancels to 0), exp form beyond.
+        let y = _mm256_mul_pd(v, v);
+        let p = _mm256_set1_pd(0.003_592_128_572_437_055);
+        let p = _mm256_add_pd(
+            _mm256_mul_pd(p, y),
+            _mm256_set1_pd(-0.008_863_235_529_902_197),
+        );
+        let p = _mm256_add_pd(_mm256_mul_pd(p, y), _mm256_set1_pd(0.021_869_488_536_155_2));
+        let p = _mm256_add_pd(
+            _mm256_mul_pd(p, y),
+            _mm256_set1_pd(-0.053_968_253_968_253_97),
+        );
+        let p = _mm256_add_pd(
+            _mm256_mul_pd(p, y),
+            _mm256_set1_pd(0.133_333_333_333_333_33),
+        );
+        let p = _mm256_add_pd(
+            _mm256_mul_pd(p, y),
+            _mm256_set1_pd(-0.333_333_333_333_333_3),
+        );
+        let series = _mm256_mul_pd(v, _mm256_add_pd(_mm256_mul_pd(p, y), _mm256_set1_pd(1.0)));
         let e = vexp_256d(_mm256_add_pd(v, v));
-        _mm256_sub_pd(
-            _mm256_set1_pd(1.0),
-            _mm256_div_pd(_mm256_set1_pd(2.0), _mm256_add_pd(e, _mm256_set1_pd(1.0))),
-        )
+        let em = _mm256_min_pd(e, _mm256_set1_pd(f64::MAX));
+        let ratio = _mm256_div_pd(
+            _mm256_sub_pd(em, _mm256_set1_pd(1.0)),
+            _mm256_add_pd(em, _mm256_set1_pd(1.0)),
+        );
+        let big = _mm256_or_pd(ratio, _mm256_and_pd(_mm256_set1_pd(-0.0), v));
+        let small = _mm256_cmp_pd(
+            _mm256_andnot_pd(_mm256_set1_pd(-0.0), v),
+            _mm256_set1_pd(0.1),
+            _CMP_LT_OQ,
+        );
+        _mm256_or_pd(_mm256_and_pd(small, series), _mm256_andnot_pd(small, big))
     },
-    |x: f64| 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * x) + 1.0)
+    |x: f64| {
+        if x.abs() < 0.1 {
+            let y = x * x;
+            let p = 0.003_592_128_572_437_055_f64;
+            let p = p.mul_add(y, -0.008_863_235_529_902_197);
+            let p = p.mul_add(y, 0.021_869_488_536_155_2);
+            let p = p.mul_add(y, -0.053_968_253_968_253_97);
+            let p = p.mul_add(y, 0.133_333_333_333_333_33);
+            let p = p.mul_add(y, -0.333_333_333_333_333_3);
+            x * p.mul_add(y, 1.0)
+        } else {
+            let e = crate::kernels::exp::exp_f64(2.0 * x);
+            if e.is_infinite() {
+                x.signum()
+            } else {
+                (e - 1.0) / (e + 1.0)
+            }
+        }
+    }
 );
 
 // RMS norm (f64).

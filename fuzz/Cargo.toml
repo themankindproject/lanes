@@ -36,3 +36,18 @@ doc = false
 name = "fuzz_ml"
 path = "fuzz_targets/fuzz_ml.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_exp"
+path = "fuzz_targets/fuzz_exp.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_f64"
+path = "fuzz_targets/fuzz_f64.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_norms"
+path = "fuzz_targets/fuzz_norms.rs"
+doc = false
