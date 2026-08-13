@@ -56,15 +56,39 @@ fuzz_target!(|input: ContractsInput| {
     let sl = lanes::ml::f32::silu(a);
     let gl = lanes::ml::f32::gelu(a);
     let rl = lanes::ml::f32::relu(a);
+    let sp = lanes::ml::f32::softplus(a);
+    let ls = lanes::ml::f32::log_softmax(a);
     assert_eq!(sm.len(), a.len());
     assert_eq!(sg.len(), a.len());
     assert_eq!(sl.len(), a.len());
     assert_eq!(gl.len(), a.len());
     assert_eq!(rl.len(), a.len());
+    assert_eq!(sp.len(), a.len());
+    assert_eq!(ls.len(), a.len());
 
     // relu: exactly max(x, 0) (bit-exact for the clamp).
     for (x, r) in a.iter().zip(&rl) {
         assert_eq!(*r, x.max(0.0), "relu({x}) = {r}");
+    }
+
+    // softplus: ≥ max(x, 0) always; approaches x for large |x|; finite
+    // inputs never overflow to +inf (the stable form's whole point).
+    for (x, s) in a.iter().zip(&sp) {
+        if x.is_finite() && s.is_finite() {
+            assert!(*s >= x.max(0.0) - 1e-4, "softplus({x}) = {s}");
+        }
+    }
+
+    // log_softmax: exp() of the output must sum to ~1 whenever no exp
+    // overflows in the underlying softmax (same guard as softmax below).
+    if !a.is_empty() {
+        let max = a.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let exp_ok = a.iter().all(|x| (x - max).abs() < 80.0);
+        if exp_ok && a.iter().all(|x| x.is_finite()) {
+            let sum: f64 = ls.iter().map(|&x| (x as f64).exp()).sum();
+            assert!((sum - 1.0).abs() < 1e-3, "log_softmax exp-sum {sum}, a={a:?}");
+            assert!(ls.iter().all(|x| x.is_finite() && *x <= 0.0 + 1e-4));
+        }
     }
 
     // sigmoid: in [0, 1] when finite.

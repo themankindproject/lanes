@@ -627,6 +627,40 @@ crate::simd_map!(
     |v: float32x4_t| unsafe { vln_neon(v) },
     |x: f32| crate::kernels::ln::ln(x)
 );
+// Softplus: overflow-free `max(x,0) + ln1p(e^-|x|)`. Reference: the identity
+// ln1p(z) = z·ln(1+z)/((1+z)-1) from musl s_log1pf.c / fdlibm s_log1p.c
+// (https://musl.libc.org, https://www.netlib.org/fdlibm).
+crate::simd_map!(
+    softplus,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    |v| unsafe {
+        let zero = vdupq_n_f32(0.0);
+        let a = vabsq_f32(v);
+        let z = vexp_neon(vsubq_f32(zero, a));
+        let u = vaddq_f32(vdupq_n_f32(1.0), z);
+        let ln_u = vln_neon(u);
+        let lp = vdivq_f32(vmulq_f32(ln_u, z), vsubq_f32(u, vdupq_n_f32(1.0)));
+        let one = vceqq_f32(u, vdupq_n_f32(1.0));
+        let lp = vbslq_f32(one, z, lp);
+        vaddq_f32(vmaxq_f32(v, zero), lp)
+    },
+    |x: f32| {
+        let a = x.abs();
+        let z = crate::kernels::exp::exp(-a);
+        let u = 1.0 + z;
+        #[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
+        let lp = if u == 1.0 {
+            z
+        } else {
+            crate::kernels::ln::ln(u) * z / (u - 1.0)
+        };
+        x.max(0.0) + lp
+    }
+);
 
 // ===========================================================================
 // f64 (double-precision) kernels. NEON `float64x2_t` = 2 lanes. Horizontal
@@ -1015,6 +1049,38 @@ crate::simd_map!(
     |p, v| unsafe { vst1q_f64(p, v) },
     |v: float64x2_t| unsafe { vln_128d(v) },
     |x: f64| crate::kernels::ln::ln_f64(x)
+);
+// Softplus (f64): overflow-free `max(x,0) + ln1p(e^-|x|)`.
+crate::simd_map!(
+    softplus_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    |v| unsafe {
+        let zero = vdupq_n_f64(0.0);
+        let a = vabsq_f64(v);
+        let z = vexp_128d(vsubq_f64(zero, a));
+        let u = vaddq_f64(vdupq_n_f64(1.0), z);
+        let ln_u = vln_128d(u);
+        let lp = vdivq_f64(vmulq_f64(ln_u, z), vsubq_f64(u, vdupq_n_f64(1.0)));
+        let one = vceqq_f64(u, vdupq_n_f64(1.0));
+        let lp = vbslq_f64(one, z, lp);
+        vaddq_f64(vmaxq_f64(v, zero), lp)
+    },
+    |x: f64| {
+        let a = x.abs();
+        let z = crate::kernels::exp::exp_f64(-a);
+        let u = 1.0 + z;
+        #[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
+        let lp = if u == 1.0 {
+            z
+        } else {
+            crate::kernels::ln::ln_f64(u) * z / (u - 1.0)
+        };
+        x.max(0.0) + lp
+    }
 );
 
 crate::simd_map!(

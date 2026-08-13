@@ -113,6 +113,36 @@ pub(crate) fn rms_norm(values: &[f32], eps: f32, out: &mut [f32]) {
     }
 }
 
+/// Scalar softplus reference: `ln(1 + e^x)` via the overflow-free form
+/// `max(x, 0) + ln1p(e^-|x|)` — no exp overflow, no precision loss for
+/// large |x|. Writes into `out` (same length as `values`).
+///
+/// The `ln1p` here uses the identity `ln(1+z) = ln(u)·z/(u-1)` with
+/// `u = 1+z` (musl/fdlibm `s_log1pf` form) so the result stays accurate
+/// when `e^-|x|` underflows toward 0.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn softplus(values: &[f32], out: &mut [f32]) {
+    map(values, out, |x| {
+        let a = x.abs();
+        let z = crate::kernels::exp::exp(-a);
+        x.max(0.0) + log1p(z)
+    });
+}
+
+/// `ln(1+z)` for `z ≥ 0` via the musl/fdlibm `s_log1pf` identity:
+/// `z·ln(1+z)/((1+z)-1)` — accurate even when `z` underflows toward 0.
+#[inline]
+#[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
+fn log1p(z: f32) -> f32 {
+    let u = 1.0 + z;
+    if u == 1.0 {
+        z
+    } else {
+        crate::kernels::ln::ln(u) * z / (u - 1.0)
+    }
+}
+
 /// Compute the sum of all elements in a slice.
 ///
 /// Returns `0.0` for an empty slice.
@@ -518,6 +548,30 @@ pub(crate) fn rms_norm_f64(values: &[f64], eps: f64, out: &mut [f64]) {
     let inv = 1.0 / crate::kernels::sqrt::sqrt_f64(mean_sq + eps);
     for (i, &v) in values.iter().enumerate() {
         out[i] = v * inv;
+    }
+}
+
+/// Scalar softplus (f64): `ln(1 + e^x)` via the overflow-free form
+/// `max(x, 0) + ln1p(e^-|x|)`. See [`softplus`] for the formula rationale.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn softplus_f64(values: &[f64], out: &mut [f64]) {
+    for (i, &v) in values.iter().enumerate() {
+        let a = v.abs();
+        let z = crate::kernels::exp::exp_f64(-a);
+        out[i] = v.max(0.0) + log1p_f64(z);
+    }
+}
+
+/// `ln(1+z)` for `z ≥ 0` via the musl/fdlibm `s_log1p` identity.
+#[inline]
+#[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
+fn log1p_f64(z: f64) -> f64 {
+    let u = 1.0 + z;
+    if u == 1.0 {
+        z
+    } else {
+        crate::kernels::ln::ln_f64(u) * z / (u - 1.0)
     }
 }
 

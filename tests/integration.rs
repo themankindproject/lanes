@@ -969,3 +969,46 @@ fn geometric_mean_matches_product() {
     assert!(lanes::stats::f32::geometric_mean(&[1.0_f32, 0.0]).is_none());
     assert!(lanes::stats::f64::geometric_mean(&[1.0_f64, f64::NAN]).is_none());
 }
+
+#[test]
+fn softplus_matches_canonical() {
+    // Canonical: max(x,0) + ln_1p(e^-|x|) computed in f64.
+    for &x in &[0.0_f32, 1.0, -1.0, 10.0, -10.0, 100.0, -100.0, 1e-7, -1e-7] {
+        let got = lanes::ml::f32::softplus(&[x])[0];
+        let want = (x as f64).max(0.0) + (-(x as f64).abs()).exp().ln_1p();
+        assert!(
+            (got as f64 - want).abs() < 1e-6 * want.max(1.0),
+            "softplus({x}) = {got} want {want}"
+        );
+    }
+    for &x in &[0.0_f64, 1.0, -1.0, 1000.0, -1000.0, 1e-13, -1e-13] {
+        let got = lanes::ml::f64::softplus(&[x])[0];
+        let want = x.max(0.0) + (-x.abs()).exp().ln_1p();
+        assert!(
+            (got - want).abs() < 1e-12 * want.max(1.0),
+            "softplus_f64({x}) = {got} want {want}"
+        );
+    }
+    assert_eq!(lanes::ml::f32::softplus(&[f32::INFINITY])[0], f32::INFINITY);
+    assert_eq!(lanes::ml::f32::softplus(&[f32::NEG_INFINITY])[0], 0.0);
+    assert!(lanes::ml::f32::softplus(&[f32::NAN])[0].is_nan());
+}
+
+#[test]
+fn log_softmax_exp_sums_to_one() {
+    // exp(log_softmax(x)) IS softmax(x): sums to 1, monotone order.
+    for v in [
+        vec![1.0_f32, 2.0, 3.0],
+        vec![-5.0_f32, 0.0, 5.0, 100.0],
+        vec![3.478e9_f32; 8], // large-common-offset precision case
+    ] {
+        let ls = lanes::ml::f32::log_softmax(&v);
+        let s: f64 = ls.iter().map(|&x| (x as f64).exp()).sum();
+        assert!((s - 1.0).abs() < 1e-4, "exp-sum {s} for {v:?}");
+        assert!(ls.iter().all(|x| x.is_finite()));
+    }
+    let ls = lanes::ml::f64::log_softmax(&[1.0_f64, 2.0, 3.0]);
+    let s: f64 = ls.iter().map(|x| x.exp()).sum();
+    assert!((s - 1.0).abs() < 1e-12);
+    assert_eq!(lanes::ml::f32::log_softmax(&[]), Vec::<f32>::new());
+}

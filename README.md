@@ -41,8 +41,8 @@ let s64 = f64::sum(&[1.0, 2.0, 3.0]);  // 6.0
   `mean`, `variance`, `std_dev`, `geometric_mean`, `dot`
 - **`distance`** — `l1_norm`, `l2_norm`, `max_norm`
 - **`math`** — `sqrt`, `clip`, `rsqrt`, `exp`, `ln`, `tanh`
-- **`ml`** — `softmax`, `sigmoid`, `silu`, `gelu`, `relu`, `rms_norm`,
-  `layer_norm`, `cosine_similarity`, `logsumexp`
+- **`ml`** — `softmax`, `log_softmax`, `sigmoid`, `silu`, `gelu`, `relu`,
+  `softplus`, `rms_norm`, `layer_norm`, `cosine_similarity`, `logsumexp`
 
 All reduce to `f32`/`f64` via the `lanes::stats::f32::*`-style paths;
 `math`/`ml` return `Vec`s and need the `alloc` feature.

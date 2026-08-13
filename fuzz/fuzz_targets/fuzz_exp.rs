@@ -79,5 +79,19 @@ fuzz_target!(|input: ExpInput| {
                 ulps(l, lwant)
             );
         }
+
+        // softplus: `ln(1+e^x)` via the stable `max(x,0) + ln1p(e^-|x|)`.
+        // Compare against the canonical ln_1p oracle (not naive ln(1+exp),
+        // which loses the same precision the stable form exists to avoid).
+        let sp = lanes::ml::f32::softplus(std::slice::from_ref(&x))[0];
+        let want = (x as f64).max(0.0) + (-(x as f64).abs()).exp().ln_1p();
+        if sp.is_finite() {
+            let want32 = want as f32;
+            assert!(
+                ulps(sp, want32) <= 2,
+                "softplus({x:e}) = {sp:e}, canonical = {want32:e}, ulps = {}",
+                ulps(sp, want32)
+            );
+        }
     }
 });

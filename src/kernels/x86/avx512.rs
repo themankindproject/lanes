@@ -446,6 +446,46 @@ crate::simd_map!(
     |v: __m512| unsafe { vln_512(v) },
     |x: f32| crate::kernels::ln::ln(x)
 );
+// Softplus: overflow-free `max(x,0) + ln1p(e^-|x|)`. Reference: the identity
+// ln1p(z) = z·ln(1+z)/((1+z)-1) from musl s_log1pf.c / fdlibm s_log1p.c
+// (https://musl.libc.org, https://www.netlib.org/fdlibm).
+crate::simd_map!(
+    softplus,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    |p, v| unsafe { _mm512_storeu_ps(p, v) },
+    |v| unsafe {
+        let zero = _mm512_setzero_ps();
+        let a = _mm512_andnot_ps(_mm512_castsi512_ps(_mm512_set1_epi32(i32::MIN)), v);
+        let z = vexp_512(_mm512_sub_ps(zero, a));
+        let u = _mm512_add_ps(_mm512_set1_ps(1.0), z);
+        let ln_u = vln_512(u);
+        let lp = _mm512_div_ps(
+            _mm512_mul_ps(ln_u, z),
+            _mm512_sub_ps(u, _mm512_set1_ps(1.0)),
+        );
+        let one = _mm512_castsi512_ps(_mm512_maskz_mov_epi32(
+            _mm512_cmp_ps_mask(u, _mm512_set1_ps(1.0), _CMP_EQ_OQ),
+            _mm512_set1_epi32(-1),
+        ));
+        let lp = _mm512_or_ps(_mm512_and_ps(one, z), _mm512_andnot_ps(one, lp));
+        _mm512_add_ps(_mm512_max_ps(v, zero), lp)
+    },
+    |x: f32| {
+        let a = x.abs();
+        let z = crate::kernels::exp::exp(-a);
+        let u = 1.0 + z;
+        #[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
+        let lp = if u == 1.0 {
+            z
+        } else {
+            crate::kernels::ln::ln(u) * z / (u - 1.0)
+        };
+        x.max(0.0) + lp
+    }
+);
 
 // Rsqrt: one-pass map, 1/sqrt(v) (exact via div+sqrt, not the ~12-bit
 // hardware approximation — correctness-first).
@@ -938,6 +978,44 @@ crate::simd_map!(
     |p, v| unsafe { _mm512_storeu_pd(p, v) },
     |v: __m512d| unsafe { vln_512d(v) },
     |x: f64| crate::kernels::ln::ln_f64(x)
+);
+// Softplus (f64): overflow-free `max(x,0) + ln1p(e^-|x|)`.
+crate::simd_map!(
+    softplus_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |v| unsafe {
+        let zero = _mm512_setzero_pd();
+        let a = _mm512_andnot_pd(_mm512_castsi512_pd(_mm512_set1_epi64(i64::MIN)), v);
+        let z = vexp_512d(_mm512_sub_pd(zero, a));
+        let u = _mm512_add_pd(_mm512_set1_pd(1.0), z);
+        let ln_u = vln_512d(u);
+        let lp = _mm512_div_pd(
+            _mm512_mul_pd(ln_u, z),
+            _mm512_sub_pd(u, _mm512_set1_pd(1.0)),
+        );
+        let one = _mm512_castsi512_pd(_mm512_maskz_mov_epi64(
+            _mm512_cmp_pd_mask(u, _mm512_set1_pd(1.0), _CMP_EQ_OQ),
+            _mm512_set1_epi64(-1),
+        ));
+        let lp = _mm512_or_pd(_mm512_and_pd(one, z), _mm512_andnot_pd(one, lp));
+        _mm512_add_pd(_mm512_max_pd(v, zero), lp)
+    },
+    |x: f64| {
+        let a = x.abs();
+        let z = crate::kernels::exp::exp_f64(-a);
+        let u = 1.0 + z;
+        #[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
+        let lp = if u == 1.0 {
+            z
+        } else {
+            crate::kernels::ln::ln_f64(u) * z / (u - 1.0)
+        };
+        x.max(0.0) + lp
+    }
 );
 
 crate::simd_map!(

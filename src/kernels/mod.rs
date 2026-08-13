@@ -245,6 +245,19 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_softplus,
+    [values: &[f32], out: &mut [f32]],
+    (),
+    scalar::softplus,
+    x86::sse2::softplus,
+    x86::avx2::softplus,
+    x86::avx512::softplus,
+    aarch64::neon::softplus,
+    id,
+    alloc
+);
+
+dispatch!(
     dispatch_sigmoid,
     [values: &[f32], out: &mut [f32]],
     (),
@@ -602,6 +615,19 @@ dispatch!(
     x86::avx2::softmax_f64,
     x86::avx512::softmax_f64,
     aarch64::neon::softmax_f64,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_softplus_f64,
+    [values: &[f64], out: &mut [f64]],
+    (),
+    scalar::softplus_f64,
+    x86::sse2::softplus_f64,
+    x86::avx2::softplus_f64,
+    x86::avx512::softplus_f64,
+    aarch64::neon::softplus_f64,
     id,
     alloc
 );

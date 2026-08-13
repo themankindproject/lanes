@@ -139,9 +139,9 @@ pub mod math {
     pub use crate::algorithms::math::{f32, f64};
 }
 
-/// ML kernels built on the `lanes` core (softmax, sigmoid, silu, gelu,
-/// relu, tanh, `rms_norm`, `layer_norm`, `cosine_similarity`,
-/// `logsumexp`). Available
+/// ML kernels built on the `lanes` core (`softmax`, `log_softmax`,
+/// `sigmoid`, `silu`, `gelu`, `relu`, `softplus`, `rms_norm`,
+/// `layer_norm`, `cosine_similarity`, `logsumexp`). Available
 /// on any target with an allocator: built with `std`, or with `no_std` +
 /// the `alloc` feature. Precision is selected via the [`f32`] or [`f64`]
 /// submodule.

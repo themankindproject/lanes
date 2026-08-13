@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `softplus` and `log_softmax` (`ml`) in both `f32` and `f64`.
+  `softplus` gets SIMD kernels on every backend using the overflow-free
+  `max(x, 0) + ln1p(e^-|x|)` form (references: musl `s_log1pf.c` /
+  fdlibm `s_log1p.c`); `log_softmax` composes the existing kernels with
+  the PyTorch `nn.LogSoftmax` max-shift form.
 - `ln` (`math`), `logsumexp`/`layer_norm` (`ml`), and
   `geometric_mean` (`stats`) in both `f32` and `f64`. `ln` gets a
   full SIMD kernel on every backend (scalar, SSE2, AVX2, AVX-512F,

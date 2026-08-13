@@ -60,6 +60,75 @@ pub mod f32 {
         out
     }
 
+    /// Softplus activation over a slice: `ln(1 + e^x)` elementwise.
+    ///
+    /// Computed with the overflow-free form `max(x, 0) + ln1p(e^-|x|)` so
+    /// large `x` cannot overflow `exp` and the result is exact to ~1 ulp
+    /// across the full range (as `x → ∞` it approaches `x`, as `x → −∞` it
+    /// approaches 0). Returns a new `Vec` of the same length; an empty
+    /// slice yields an empty `Vec`.
+    ///
+    /// Reference: the `log1pexp` formulation and the `ln1p` identity
+    /// `ln(1+z) = z·ln(1+z)/((1+z)−1)` from musl libc's `s_log1pf.c`
+    /// (<https://musl.libc.org>) and fdlibm's `s_log1p.c`
+    /// (<https://www.netlib.org/fdlibm>); see also the CUDA softplus
+    /// optimization guide (<https://www.rightnowai.co/guides/cuda-operations/softplus>).
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::ml::f32::softplus(&[0.0_f32, 1.0, -1.0, 100.0]);
+    /// assert!((v[0] - std::f32::consts::LN_2).abs() < 1e-6);
+    /// assert!((v[1] - 1.313_261_7).abs() < 1e-6);
+    /// assert!((v[2] - 0.313_261_7).abs() < 1e-6);
+    /// assert!((v[3] - 100.0).abs() < 1e-4);
+    /// ```
+    #[must_use]
+    pub fn softplus(values: &[f32]) -> Vec<f32> {
+        let mut out = alloc::vec![0.0_f32; values.len()];
+        let backend = Backend::detect();
+        kernels::dispatch_softplus(backend, values, &mut out);
+        out
+    }
+
+    /// Log-softmax over a slice: `x_i − logsumexp(x)` elementwise.
+    ///
+    /// Numerically stable via the max-shift: `x_i − max(x) − ln(Σ_j exp(x_j −
+    /// max(x)))`. This is the primitive `PyTorch`'s [`nn.LogSoftmax`] computes
+    /// (paired with [`nn.NLLLoss`] it forms [`nn.CrossEntropyLoss`]). Returns a
+    /// new `Vec` of the same length; an empty slice yields an empty `Vec`.
+    ///
+    /// Reference: the max-subtraction trick and the fused
+    /// log-softmax/NLL/cross-entropy decomposition as documented in
+    /// `PyTorch`'s [`nn.LogSoftmax`]
+    /// (<https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html>).
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::ml::f32::log_softmax(&[1.0_f32, 2.0, 3.0]);
+    /// // exp(log_softmax) sums to 1 — it IS softmax, logged.
+    /// let s: f32 = v.iter().map(|x| x.exp()).sum();
+    /// assert!((s - 1.0).abs() < 1e-6);
+    /// assert!(v[2] > v[1] && v[1] > v[0]);
+    /// ```
+    #[must_use]
+    pub fn log_softmax(values: &[f32]) -> Vec<f32> {
+        let mut out = alloc::vec![0.0_f32; values.len()];
+        if values.is_empty() {
+            return out;
+        }
+        let backend = Backend::detect();
+        let m = kernels::dispatch_max(backend, values).unwrap_or(f32::NAN);
+        kernels::dispatch_sub_scalar(backend, values, m, m, &mut out);
+        let shifted = out.clone();
+        kernels::dispatch_exp(backend, &shifted, &mut out);
+        // Subtract separately: (x_i - m) - ln(s). Adding ln(s) to m first
+        // loses it when |m| ≫ ln(s) (the f32 ulp of a large m exceeds
+        // ln(s)), which would make every output round to 0.
+        let log_sum = kernels::ln::ln(kernels::dispatch_sum(backend, &out));
+        kernels::dispatch_sub_scalar(backend, &shifted, log_sum, log_sum, &mut out);
+        out
+    }
+
     /// `SiLU` (`Swish`) activation over a slice.
     ///
     /// Computes `silu(x)_i = x_i / (1 + exp(-x_i))` elementwise — the smooth
@@ -287,6 +356,73 @@ pub mod f64 {
         let mut out = alloc::vec![0.0_f64; values.len()];
         let backend = Backend::detect();
         kernels::dispatch_sigmoid_f64(backend, values, &mut out);
+        out
+    }
+
+    /// Softplus activation over a slice: `ln(1 + e^x)` elementwise.
+    ///
+    /// Computed with the overflow-free form `max(x, 0) + ln1p(e^-|x|)` so
+    /// large `x` cannot overflow `exp` and the result is exact to ~1 ulp
+    /// across the full range. Returns a new `Vec` of the same length; an
+    /// empty slice yields an empty `Vec`.
+    ///
+    /// Reference: the `log1pexp` formulation and the `ln1p` identity from
+    /// musl libc's `s_log1p.c` (<https://musl.libc.org>) and fdlibm's
+    /// `s_log1p.c` (<https://www.netlib.org/fdlibm>); see also the CUDA
+    /// softplus optimization guide
+    /// (<https://www.rightnowai.co/guides/cuda-operations/softplus>).
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::ml::f64::softplus(&[0.0_f64, 1.0, -1.0, 1000.0]);
+    /// assert!((v[0] - std::f64::consts::LN_2).abs() < 1e-12);
+    /// assert!((v[1] - 1.313_261_687_518_222_8).abs() < 1e-12);
+    /// assert!((v[2] - 0.313_261_687_518_222_8).abs() < 1e-12);
+    /// assert!((v[3] - 1000.0).abs() < 1e-10);
+    /// ```
+    #[must_use]
+    pub fn softplus(values: &[f64]) -> Vec<f64> {
+        let mut out = alloc::vec![0.0_f64; values.len()];
+        let backend = Backend::detect();
+        kernels::dispatch_softplus_f64(backend, values, &mut out);
+        out
+    }
+
+    /// Log-softmax over a slice: `x_i − logsumexp(x)` elementwise.
+    ///
+    /// Numerically stable via the max-shift: `x_i − max(x) − ln(Σ_j exp(x_j −
+    /// max(x)))`. This is the primitive `PyTorch`'s [`nn.LogSoftmax`] computes
+    /// (paired with [`nn.NLLLoss`] it forms [`nn.CrossEntropyLoss`]). Returns a
+    /// new `Vec` of the same length; an empty slice yields an empty `Vec`.
+    ///
+    /// Reference: the max-subtraction trick and the fused
+    /// log-softmax/NLL/cross-entropy decomposition as documented in
+    /// `PyTorch`'s [`nn.LogSoftmax`]
+    /// (<https://pytorch.org/docs/stable/generated/torch.nn.LogSoftmax.html>).
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::ml::f64::log_softmax(&[1.0_f64, 2.0, 3.0]);
+    /// let s: f64 = v.iter().map(|x| x.exp()).sum();
+    /// assert!((s - 1.0).abs() < 1e-12);
+    /// assert!(v[2] > v[1] && v[1] > v[0]);
+    /// ```
+    #[must_use]
+    pub fn log_softmax(values: &[f64]) -> Vec<f64> {
+        let mut out = alloc::vec![0.0_f64; values.len()];
+        if values.is_empty() {
+            return out;
+        }
+        let backend = Backend::detect();
+        let m = kernels::dispatch_max_f64(backend, values).unwrap_or(f64::NAN);
+        kernels::dispatch_sub_scalar_f64(backend, values, m, m, &mut out);
+        let shifted = out.clone();
+        kernels::dispatch_exp_f64(backend, &shifted, &mut out);
+        // Subtract separately: (x_i - m) - ln(s). Adding ln(s) to m first
+        // loses it when |m| ≫ ln(s) (the f64 ulp of a large m exceeds
+        // ln(s)), which would make every output round to 0.
+        let log_sum = kernels::ln::ln_f64(kernels::dispatch_sum_f64(backend, &out));
+        kernels::dispatch_sub_scalar_f64(backend, &shifted, log_sum, log_sum, &mut out);
         out
     }
 

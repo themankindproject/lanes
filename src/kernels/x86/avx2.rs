@@ -530,6 +530,43 @@ crate::simd_map!(
     |v: __m256| unsafe { vln_256(v) },
     |x: f32| crate::kernels::ln::ln(x)
 );
+// Softplus: overflow-free `max(x,0) + ln1p(e^-|x|)`. Reference: the identity
+// ln1p(z) = z·ln(1+z)/((1+z)-1) from musl s_log1pf.c / fdlibm s_log1p.c
+// (https://musl.libc.org, https://www.netlib.org/fdlibm).
+crate::simd_map!(
+    softplus,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    |p, v| unsafe { _mm256_storeu_ps(p, v) },
+    |v| unsafe {
+        let zero = _mm256_setzero_ps();
+        let a = _mm256_andnot_ps(_mm256_castsi256_ps(_mm256_set1_epi32(i32::MIN)), v);
+        let z = vexp_256(_mm256_sub_ps(zero, a));
+        let u = _mm256_add_ps(_mm256_set1_ps(1.0), z);
+        let ln_u = vln_256(u);
+        let lp = _mm256_div_ps(
+            _mm256_mul_ps(ln_u, z),
+            _mm256_sub_ps(u, _mm256_set1_ps(1.0)),
+        );
+        let one = _mm256_cmp_ps(u, _mm256_set1_ps(1.0), _CMP_EQ_OQ);
+        let lp = _mm256_or_ps(_mm256_and_ps(one, z), _mm256_andnot_ps(one, lp));
+        _mm256_add_ps(_mm256_max_ps(v, zero), lp)
+    },
+    |x: f32| {
+        let a = x.abs();
+        let z = crate::kernels::exp::exp(-a);
+        let u = 1.0 + z;
+        #[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
+        let lp = if u == 1.0 {
+            z
+        } else {
+            crate::kernels::ln::ln(u) * z / (u - 1.0)
+        };
+        x.max(0.0) + lp
+    }
+);
 
 /// Horizontal sum of all 8 lanes in a `__m256` register.
 ///
@@ -1085,6 +1122,41 @@ crate::simd_map!(
     |p, v| unsafe { _mm256_storeu_pd(p, v) },
     |v: __m256d| unsafe { vln_256d(v) },
     |x: f64| crate::kernels::ln::ln_f64(x)
+);
+// Softplus (f64): overflow-free `max(x,0) + ln1p(e^-|x|)`.
+crate::simd_map!(
+    softplus_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |v| unsafe {
+        let zero = _mm256_setzero_pd();
+        let a = _mm256_andnot_pd(_mm256_castsi256_pd(_mm256_set1_epi64x(i64::MIN)), v);
+        let z = vexp_256d(_mm256_sub_pd(zero, a));
+        let u = _mm256_add_pd(_mm256_set1_pd(1.0), z);
+        let ln_u = vln_256d(u);
+        let lp = _mm256_div_pd(
+            _mm256_mul_pd(ln_u, z),
+            _mm256_sub_pd(u, _mm256_set1_pd(1.0)),
+        );
+        let one = _mm256_cmp_pd(u, _mm256_set1_pd(1.0), _CMP_EQ_OQ);
+        let lp = _mm256_or_pd(_mm256_and_pd(one, z), _mm256_andnot_pd(one, lp));
+        _mm256_add_pd(_mm256_max_pd(v, zero), lp)
+    },
+    |x: f64| {
+        let a = x.abs();
+        let z = crate::kernels::exp::exp_f64(-a);
+        let u = 1.0 + z;
+        #[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
+        let lp = if u == 1.0 {
+            z
+        } else {
+            crate::kernels::ln::ln_f64(u) * z / (u - 1.0)
+        };
+        x.max(0.0) + lp
+    }
 );
 
 crate::simd_map!(
