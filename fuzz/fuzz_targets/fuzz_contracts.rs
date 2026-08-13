@@ -1,0 +1,87 @@
+//! Fuzz target for the elementwise/contract functions: `dot`, `sqrt`, and
+//! the ML activations (`softmax`, `sigmoid`, `silu`, `gelu`, `relu`).
+//!
+//! Verifies none panic on arbitrary input plus the per-function invariants:
+//! `dot` errors exactly on length mismatch, `sqrt` follows the IEEE contract,
+//! `relu` is bit-exact `max(x, 0)`, sigmoid stays in [0, 1], and softmax
+//! outputs sum to ~1 when no exp overflows.
+//!
+//! Run with: `cargo +nightly fuzz run fuzz_contracts`
+
+#![no_main]
+
+use arbitrary::Arbitrary;
+use libfuzzer_sys::fuzz_target;
+
+#[derive(Debug, Arbitrary)]
+struct ContractsInput {
+    a: Vec<f32>,
+    b: Vec<f32>,
+}
+
+fuzz_target!(|input: ContractsInput| {
+    let a = &input.a;
+    let b = &input.b;
+
+    // dot: Ok iff lengths match; Err(LengthMismatch) with exact lengths.
+    match lanes::stats::f32::dot(a, b) {
+        Ok(_) => assert_eq!(a.len(), b.len(), "dot succeeded on mismatched lengths"),
+        Err(lanes::Error::LengthMismatch { expected, actual }) => {
+            assert_eq!(expected, a.len());
+            assert_eq!(actual, b.len());
+            assert_ne!(a.len(), b.len());
+        }
+    }
+
+    // sqrt: IEEE contract per element.
+    let sq = lanes::math::f32::sqrt(a);
+    assert_eq!(sq.len(), a.len());
+    for (x, r) in a.iter().zip(&sq) {
+        if *x < 0.0 || x.is_nan() {
+            assert!(r.is_nan(), "sqrt({x}) = {r} should be NaN");
+        } else if x.is_infinite() {
+            assert_eq!(*r, f32::INFINITY, "sqrt(inf) = {r}");
+        } else if *x == 0.0 {
+            assert_eq!(*r, 0.0);
+        } else {
+            let back = r * r;
+            let rel = (back - x).abs() / x.abs().max(f32::MIN_POSITIVE);
+            assert!(rel < 1e-4, "sqrt({x}) = {r}, round-trip rel err {rel}");
+        }
+    }
+
+    // Activations: same-length outputs, then per-function invariants.
+    let sm = lanes::ml::f32::softmax(a);
+    let sg = lanes::ml::f32::sigmoid(a);
+    let sl = lanes::ml::f32::silu(a);
+    let gl = lanes::ml::f32::gelu(a);
+    let rl = lanes::ml::f32::relu(a);
+    assert_eq!(sm.len(), a.len());
+    assert_eq!(sg.len(), a.len());
+    assert_eq!(sl.len(), a.len());
+    assert_eq!(gl.len(), a.len());
+    assert_eq!(rl.len(), a.len());
+
+    // relu: exactly max(x, 0) (bit-exact for the clamp).
+    for (x, r) in a.iter().zip(&rl) {
+        assert_eq!(*r, x.max(0.0), "relu({x}) = {r}");
+    }
+
+    // sigmoid: in [0, 1] when finite.
+    for (x, s) in a.iter().zip(&sg) {
+        if s.is_finite() {
+            assert!(*s >= 0.0 && *s <= 1.0, "sigmoid({x}) = {s}");
+        }
+    }
+
+    // softmax: finite + sums to ~1 when no exp overflows (|x - max| < 80).
+    if !a.is_empty() {
+        let max = a.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let exp_ok = a.iter().all(|x| (x - max).abs() < 80.0);
+        if exp_ok {
+            let sum: f64 = sm.iter().map(|&x| x as f64).sum();
+            assert!((sum - 1.0).abs() < 1e-3, "softmax sum={sum}");
+            assert!(sm.iter().all(|x| x.is_finite()));
+        }
+    }
+});

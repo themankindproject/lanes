@@ -98,6 +98,7 @@ macro_rules! simd_softmax {
         /// # Safety
         /// Caller must guarantee the CPU feature is available and that
         /// `values` and `out` have equal lengths.
+        #[cfg(feature = "alloc")]
         #[target_feature(enable = $feat)]
         pub(crate) unsafe fn $name(values: &[$t], out: &mut [$t]) {
             let len = values.len();

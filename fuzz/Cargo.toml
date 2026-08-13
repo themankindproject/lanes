@@ -18,23 +18,13 @@ path = ".."
 [workspace]
 
 [[bin]]
-name = "fuzz_dot"
-path = "fuzz_targets/fuzz_dot.rs"
-doc = false
-
-[[bin]]
 name = "fuzz_reductions"
 path = "fuzz_targets/fuzz_reductions.rs"
 doc = false
 
 [[bin]]
-name = "fuzz_sqrt"
-path = "fuzz_targets/fuzz_sqrt.rs"
-doc = false
-
-[[bin]]
-name = "fuzz_ml"
-path = "fuzz_targets/fuzz_ml.rs"
+name = "fuzz_contracts"
+path = "fuzz_targets/fuzz_contracts.rs"
 doc = false
 
 [[bin]]

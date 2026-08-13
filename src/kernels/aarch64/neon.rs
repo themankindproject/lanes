@@ -270,7 +270,6 @@ crate::simd_reduce2!(
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
 // Uses the crate's `no_std` `exp`, so available in all builds.
-#[cfg(feature = "alloc")]
 crate::simd_softmax!(
     softmax,
     f32,
@@ -833,7 +832,6 @@ crate::simd_argminmax!(
 );
 
 // f64 elementwise maps for NEON (2 lanes).
-#[cfg(feature = "alloc")]
 crate::simd_map!(
     sqrt_f64,
     f64,
@@ -845,7 +843,6 @@ crate::simd_map!(
     |x: f64| crate::kernels::sqrt::sqrt_f64(x)
 );
 
-#[cfg(feature = "alloc")]
 crate::simd_map!(
     rsqrt_f64,
     f64,
@@ -857,7 +854,6 @@ crate::simd_map!(
     |x: f64| 1.0 / crate::kernels::sqrt::sqrt_f64(x)
 );
 
-#[cfg(feature = "alloc")]
 crate::simd_map_param!(
     clip_f64,
     f64,
@@ -872,7 +868,6 @@ crate::simd_map_param!(
 );
 
 // f64 vector exp for NEON (2 lanes).
-#[cfg(feature = "alloc")]
 crate::simd_exp_f64!(
     vexp_128d,
     "neon",
@@ -902,7 +897,6 @@ crate::simd_exp_f64!(
     |a, b| unsafe { vorrq_s64(a, b) }
 );
 
-#[cfg(feature = "alloc")]
 crate::simd_map!(
     exp_f64,
     f64,
@@ -914,7 +908,6 @@ crate::simd_map!(
     |x: f64| crate::kernels::exp::exp_f64(x)
 );
 
-#[cfg(feature = "alloc")]
 crate::simd_softmax!(
     softmax_f64,
     f64,
@@ -933,7 +926,6 @@ crate::simd_softmax!(
     |x: f64| crate::kernels::exp::exp_f64(x)
 );
 
-#[cfg(feature = "alloc")]
 crate::simd_map!(
     sigmoid_f64,
     f64,
@@ -966,7 +958,6 @@ crate::simd_map!(
     }
 );
 
-#[cfg(feature = "alloc")]
 crate::simd_map!(
     silu_f64,
     f64,
@@ -996,7 +987,6 @@ crate::simd_map!(
     }
 );
 
-#[cfg(feature = "alloc")]
 crate::simd_map!(
     gelu_f64,
     f64,
@@ -1042,7 +1032,6 @@ crate::simd_map!(
     }
 );
 
-#[cfg(feature = "alloc")]
 crate::simd_map!(
     relu_f64,
     f64,
@@ -1055,7 +1044,6 @@ crate::simd_map!(
 );
 
 // Tanh map (f64): tanh(x) = 1 - 2/(exp(2x)+1).
-#[cfg(feature = "alloc")]
 crate::simd_map!(
     tanh_f64,
     f64,
@@ -1118,7 +1106,6 @@ crate::simd_map!(
 );
 
 // RMS norm (f64).
-#[cfg(feature = "alloc")]
 crate::simd_rms_norm!(
     rms_norm_f64,
     f64,

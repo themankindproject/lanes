@@ -235,3 +235,164 @@ fn cross_backend_odd_sizes() {
         );
     }
 }
+
+// ===========================================================================
+// f64 cross-backend coverage: dispatched SIMD vs the scalar reference on
+// exact-value inputs, including the NaN and tie-breaking contracts that
+// have historically been backend-specific bugs (argmax/argmin).
+// ===========================================================================
+
+/// Naive f64 scalar references (exact-value inputs only).
+fn naive_sum_f64(values: &[f64]) -> f64 {
+    values.iter().sum()
+}
+fn naive_min_f64(values: &[f64]) -> Option<f64> {
+    values.iter().copied().reduce(f64::min)
+}
+fn naive_max_f64(values: &[f64]) -> Option<f64> {
+    values.iter().copied().reduce(f64::max)
+}
+fn naive_dot_f64(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
+}
+fn naive_argmax_f64(values: &[f64]) -> Option<usize> {
+    if values.is_empty() {
+        return None;
+    }
+    let all_nan = values.iter().all(|x| x.is_nan());
+    if all_nan {
+        return Some(0);
+    }
+    Some(
+        values
+            .iter()
+            .enumerate()
+            .filter(|(_, x)| !x.is_nan())
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .map(|(i, _)| i)
+            .unwrap(),
+    )
+}
+fn naive_argmin_f64(values: &[f64]) -> Option<usize> {
+    if values.is_empty() {
+        return None;
+    }
+    let all_nan = values.iter().all(|x| x.is_nan());
+    if all_nan {
+        return Some(0);
+    }
+    Some(
+        values
+            .iter()
+            .enumerate()
+            .filter(|(_, x)| !x.is_nan())
+            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .map(|(i, _)| i)
+            .unwrap(),
+    )
+}
+
+#[test]
+fn cross_f64_reductions_exact_values() {
+    for n in [1, 3, 7, 9, 15, 17, 31, 33, 63, 65, 127, 129] {
+        let data: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        assert_eq!(
+            lanes::stats::f64::sum(&data),
+            naive_sum_f64(&data),
+            "sum mismatch for size {n}"
+        );
+        assert_eq!(
+            lanes::stats::f64::min(&data),
+            naive_min_f64(&data),
+            "min mismatch for size {n}"
+        );
+        assert_eq!(
+            lanes::stats::f64::max(&data),
+            naive_max_f64(&data),
+            "max mismatch for size {n}"
+        );
+        assert_eq!(
+            lanes::stats::f64::argmax(&data),
+            naive_argmax_f64(&data),
+            "argmax mismatch for size {n}"
+        );
+        assert_eq!(
+            lanes::stats::f64::argmin(&data),
+            naive_argmin_f64(&data),
+            "argmin mismatch for size {n}"
+        );
+        let ones = vec![1.0_f64; n];
+        assert_eq!(
+            lanes::stats::f64::dot(&data, &ones).unwrap(),
+            naive_dot_f64(&data, &ones),
+            "dot mismatch for size {n}"
+        );
+    }
+}
+
+#[test]
+fn cross_f64_argmax_argmin_nan_and_ties() {
+    // NaN-dethrone: a NaN seed must never win (the historical NEON bug).
+    assert_eq!(
+        lanes::stats::f64::argmax(&[f64::NAN, 1.0, f64::NAN]),
+        Some(1)
+    );
+    assert_eq!(
+        lanes::stats::f64::argmax(&[
+            5.0,
+            f64::NAN,
+            3.0,
+            f64::NAN,
+            8.0,
+            f64::NAN,
+            1.0,
+            f64::NAN,
+            4.0
+        ]),
+        Some(4)
+    );
+    assert_eq!(
+        lanes::stats::f64::argmin(&[f64::NAN, 3.0, 2.0, f64::NAN, 9.0]),
+        Some(2)
+    );
+    // All-NaN falls back to index 0.
+    assert_eq!(lanes::stats::f64::argmax(&[f64::NAN, f64::NAN]), Some(0));
+    assert_eq!(lanes::stats::f64::argmin(&[f64::NAN, f64::NAN]), Some(0));
+    // Tie spanning chunk boundaries: first global occurrence wins.
+    let tied = [
+        -1.456_816_089_375_683e144_f64,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+        5.853_637_718_687_906e170,
+    ];
+    assert_eq!(lanes::stats::f64::argmax(&tied), Some(1));
+}
+
+#[test]
+fn cross_f64_distance_exact_values() {
+    for n in [1, 3, 7, 9, 15, 17, 31, 33, 63, 65, 127, 129] {
+        let data: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let l1: f64 = data.iter().map(|x| x.abs()).sum();
+        let l2: f64 = data.iter().map(|x| x * x).sum::<f64>().sqrt();
+        assert_eq!(
+            lanes::distance::f64::l1_norm(&data),
+            l1,
+            "l1 mismatch for size {n}"
+        );
+        assert!(
+            (lanes::distance::f64::l2_norm(&data) - l2).abs() < 1e-9,
+            "l2 mismatch for size {n}"
+        );
+        assert_eq!(
+            lanes::distance::f64::max_norm(&data),
+            Some(n as f64 - 1.0),
+            "max_norm mismatch for size {n}"
+        );
+    }
+}
