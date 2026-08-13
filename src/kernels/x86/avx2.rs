@@ -214,6 +214,12 @@ crate::simd_map!(
     |p| unsafe { _mm256_loadu_ps(p) },
     |p, v| unsafe { _mm256_storeu_ps(p, v) },
     |v| unsafe {
+        // Saturated fast path: all lanes already at 0/1 (skip the exp).
+        let pos = _mm256_cmp_ps(v, _mm256_set1_ps(16.64), _CMP_GT_OQ);
+        let neg = _mm256_cmp_ps(v, _mm256_set1_ps(-88.73), _CMP_LT_OQ);
+        if _mm256_movemask_ps(_mm256_or_ps(pos, neg)) == 0xFF {
+            return _mm256_and_ps(pos, _mm256_set1_ps(1.0));
+        }
         _mm256_div_ps(
             _mm256_set1_ps(1.0),
             _mm256_add_ps(
@@ -225,7 +231,15 @@ crate::simd_map!(
             ),
         )
     },
-    |x: f32| 1.0 / (1.0 + crate::kernels::exp::exp(-x))
+    |x: f32| {
+        if x > 16.64 {
+            1.0
+        } else if x < -88.73 {
+            0.0
+        } else {
+            1.0 / (1.0 + crate::kernels::exp::exp(-x))
+        }
+    }
 );
 crate::simd_map!(
     silu,
@@ -235,6 +249,12 @@ crate::simd_map!(
     |p| unsafe { _mm256_loadu_ps(p) },
     |p, v| unsafe { _mm256_storeu_ps(p, v) },
     |v| unsafe {
+        // Saturated fast path: silu(x) = x for x > 16.64, 0 for x < -88.
+        let pos = _mm256_cmp_ps(v, _mm256_set1_ps(16.64), _CMP_GT_OQ);
+        let neg = _mm256_cmp_ps(v, _mm256_set1_ps(-88.73), _CMP_LT_OQ);
+        if _mm256_movemask_ps(_mm256_or_ps(pos, neg)) == 0xFF {
+            return _mm256_and_ps(pos, v);
+        }
         _mm256_div_ps(
             v,
             _mm256_add_ps(
@@ -246,7 +266,15 @@ crate::simd_map!(
             ),
         )
     },
-    |x: f32| x / (1.0 + crate::kernels::exp::exp(-x))
+    |x: f32| {
+        if x > 16.64 {
+            x
+        } else if x < -88.73 {
+            0.0
+        } else {
+            x / (1.0 + crate::kernels::exp::exp(-x))
+        }
+    }
 );
 crate::simd_map!(
     gelu,
@@ -256,6 +284,12 @@ crate::simd_map!(
     |p| unsafe { _mm256_loadu_ps(p) },
     |p, v| unsafe { _mm256_storeu_ps(p, v) },
     |v| unsafe {
+        // Saturated fast path: gelu(x) = x for x > 7.0, 0 for x < -7.0.
+        let pos = _mm256_cmp_ps(v, _mm256_set1_ps(7.0), _CMP_GT_OQ);
+        let neg = _mm256_cmp_ps(v, _mm256_set1_ps(-7.0), _CMP_LT_OQ);
+        if _mm256_movemask_ps(_mm256_or_ps(pos, neg)) == 0xFF {
+            return _mm256_and_ps(pos, v);
+        }
         let x2 = _mm256_mul_ps(v, v);
         let x3 = _mm256_mul_ps(x2, v);
         let z = _mm256_mul_ps(
@@ -273,9 +307,15 @@ crate::simd_map!(
         )
     },
     |x: f32| {
-        let z = 0.797_884_6 * (x + 0.044_715 * x * x * x);
-        let tanh_z = 1.0 - 2.0 / (crate::kernels::exp::exp(2.0 * z) + 1.0);
-        0.5 * x * (1.0 + tanh_z)
+        if x > 7.0 {
+            x
+        } else if x < -7.0 {
+            0.0
+        } else {
+            let z = 0.797_884_6 * (x + 0.044_715 * x * x * x);
+            let tanh_z = 1.0 - 2.0 / (crate::kernels::exp::exp(2.0 * z) + 1.0);
+            0.5 * x * (1.0 + tanh_z)
+        }
     }
 );
 crate::simd_map!(
@@ -1002,6 +1042,12 @@ crate::simd_map!(
     |p| unsafe { _mm256_loadu_pd(p) },
     |p, v| unsafe { _mm256_storeu_pd(p, v) },
     |v: __m256d| unsafe {
+        // Saturated fast path: all lanes already at 0/1 (skip the exp).
+        let pos = _mm256_cmp_pd(v, _mm256_set1_pd(36.74), _CMP_GT_OQ);
+        let neg = _mm256_cmp_pd(v, _mm256_set1_pd(-744.0), _CMP_LT_OQ);
+        if _mm256_movemask_pd(_mm256_or_pd(pos, neg)) == 0xF {
+            return _mm256_and_pd(pos, _mm256_set1_pd(1.0));
+        }
         _mm256_div_pd(
             _mm256_set1_pd(1.0),
             _mm256_add_pd(
@@ -1013,7 +1059,15 @@ crate::simd_map!(
             ),
         )
     },
-    |x: f64| 1.0 / (1.0 + crate::kernels::exp::exp_f64(-x))
+    |x: f64| {
+        if x > 36.74 {
+            1.0
+        } else if x < -744.0 {
+            0.0
+        } else {
+            1.0 / (1.0 + crate::kernels::exp::exp_f64(-x))
+        }
+    }
 );
 
 #[cfg(feature = "alloc")]
@@ -1025,6 +1079,12 @@ crate::simd_map!(
     |p| unsafe { _mm256_loadu_pd(p) },
     |p, v| unsafe { _mm256_storeu_pd(p, v) },
     |v: __m256d| unsafe {
+        // Saturated fast path: silu(x) = x for x > 36.74, 0 for x < -745.
+        let pos = _mm256_cmp_pd(v, _mm256_set1_pd(36.74), _CMP_GT_OQ);
+        let neg = _mm256_cmp_pd(v, _mm256_set1_pd(-744.0), _CMP_LT_OQ);
+        if _mm256_movemask_pd(_mm256_or_pd(pos, neg)) == 0xF {
+            return _mm256_and_pd(pos, v);
+        }
         _mm256_div_pd(
             v,
             _mm256_add_pd(
@@ -1036,7 +1096,15 @@ crate::simd_map!(
             ),
         )
     },
-    |x: f64| x / (1.0 + crate::kernels::exp::exp_f64(-x))
+    |x: f64| {
+        if x > 36.74 {
+            x
+        } else if x < -744.0 {
+            0.0
+        } else {
+            x / (1.0 + crate::kernels::exp::exp_f64(-x))
+        }
+    }
 );
 
 #[cfg(feature = "alloc")]
@@ -1048,6 +1116,12 @@ crate::simd_map!(
     |p| unsafe { _mm256_loadu_pd(p) },
     |p, v| unsafe { _mm256_storeu_pd(p, v) },
     |v: __m256d| unsafe {
+        // Saturated fast path: gelu(x) = x for x > 7.21, 0 for x < -7.21.
+        let pos = _mm256_cmp_pd(v, _mm256_set1_pd(7.21), _CMP_GT_OQ);
+        let neg = _mm256_cmp_pd(v, _mm256_set1_pd(-7.21), _CMP_LT_OQ);
+        if _mm256_movemask_pd(_mm256_or_pd(pos, neg)) == 0xF {
+            return _mm256_and_pd(pos, v);
+        }
         let x2 = _mm256_mul_pd(v, v);
         let x3 = _mm256_mul_pd(x2, v);
         let z = _mm256_mul_pd(
@@ -1065,9 +1139,15 @@ crate::simd_map!(
         )
     },
     |x: f64| {
-        let z = 0.797_884_560_802_865_4 * (x + 0.044_715 * x * x * x);
-        let tanh_z = 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * z) + 1.0);
-        0.5 * x * (1.0 + tanh_z)
+        if x > 7.21 {
+            x
+        } else if x < -7.21 {
+            0.0
+        } else {
+            let z = 0.797_884_560_802_865_4 * (x + 0.044_715 * x * x * x);
+            let tanh_z = 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * z) + 1.0);
+            0.5 * x * (1.0 + tanh_z)
+        }
     }
 );
 

@@ -297,12 +297,26 @@ crate::simd_map!(
     |p| unsafe { vld1q_f32(p) },
     |p, v| unsafe { vst1q_f32(p, v) },
     |v| unsafe {
+        // Saturated fast path: all lanes already at 0/1 (skip the exp).
+        let pos = vcgtq_f32(v, vdupq_n_f32(16.64));
+        let neg = vcltq_f32(v, vdupq_n_f32(-88.73));
+        if vminvq_u32(vorrq_u32(pos, neg)) != 0 {
+            return vreinterpretq_f32_u32(vandq_u32(pos, vreinterpretq_u32_f32(vdupq_n_f32(1.0))));
+        }
         vdivq_f32(
             vdupq_n_f32(1.0),
             vaddq_f32(vdupq_n_f32(1.0), vexp_neon(vnegq_f32(v))),
         )
     },
-    |x: f32| 1.0 / (1.0 + crate::kernels::exp::exp(-x))
+    |x: f32| {
+        if x > 16.64 {
+            1.0
+        } else if x < -88.73 {
+            0.0
+        } else {
+            1.0 / (1.0 + crate::kernels::exp::exp(-x))
+        }
+    }
 );
 crate::simd_map!(
     silu,
@@ -311,8 +325,24 @@ crate::simd_map!(
     4,
     |p| unsafe { vld1q_f32(p) },
     |p, v| unsafe { vst1q_f32(p, v) },
-    |v| unsafe { vdivq_f32(v, vaddq_f32(vdupq_n_f32(1.0), vexp_neon(vnegq_f32(v)))) },
-    |x: f32| x / (1.0 + crate::kernels::exp::exp(-x))
+    |v| unsafe {
+        // Saturated fast path: silu(x) = x for x > 16.64, 0 for x < -88.
+        let pos = vcgtq_f32(v, vdupq_n_f32(16.64));
+        let neg = vcltq_f32(v, vdupq_n_f32(-88.73));
+        if vminvq_u32(vorrq_u32(pos, neg)) != 0 {
+            return vreinterpretq_f32_u32(vandq_u32(pos, vreinterpretq_u32_f32(v)));
+        }
+        vdivq_f32(v, vaddq_f32(vdupq_n_f32(1.0), vexp_neon(vnegq_f32(v))))
+    },
+    |x: f32| {
+        if x > 16.64 {
+            x
+        } else if x < -88.73 {
+            0.0
+        } else {
+            x / (1.0 + crate::kernels::exp::exp(-x))
+        }
+    }
 );
 crate::simd_map!(
     gelu,
@@ -322,6 +352,12 @@ crate::simd_map!(
     |p| unsafe { vld1q_f32(p) },
     |p, v| unsafe { vst1q_f32(p, v) },
     |v| unsafe {
+        // Saturated fast path: gelu(x) = x for x > 7.0, 0 for x < -7.0.
+        let pos = vcgtq_f32(v, vdupq_n_f32(7.0));
+        let neg = vcltq_f32(v, vdupq_n_f32(-7.0));
+        if vminvq_u32(vorrq_u32(pos, neg)) != 0 {
+            return vreinterpretq_f32_u32(vandq_u32(pos, vreinterpretq_u32_f32(v)));
+        }
         let x2 = vmulq_f32(v, v);
         let x3 = vmulq_f32(x2, v);
         let z = vmulq_f32(
@@ -339,9 +375,15 @@ crate::simd_map!(
         )
     },
     |x: f32| {
-        let z = 0.797_884_6 * (x + 0.044_715 * x * x * x);
-        let tanh_z = 1.0 - 2.0 / (crate::kernels::exp::exp(2.0 * z) + 1.0);
-        0.5 * x * (1.0 + tanh_z)
+        if x > 7.0 {
+            x
+        } else if x < -7.0 {
+            0.0
+        } else {
+            let z = 0.797_884_6 * (x + 0.044_715 * x * x * x);
+            let tanh_z = 1.0 - 2.0 / (crate::kernels::exp::exp(2.0 * z) + 1.0);
+            0.5 * x * (1.0 + tanh_z)
+        }
     }
 );
 crate::simd_map!(
@@ -900,12 +942,28 @@ crate::simd_map!(
     |p| unsafe { vld1q_f64(p) },
     |p, v| unsafe { vst1q_f64(p, v) },
     |v: float64x2_t| unsafe {
+        // Saturated fast path: all lanes already at 0/1 (skip the exp).
+        let pos = vcgtq_f64(v, vdupq_n_f64(36.74));
+        let neg = vcltq_f64(v, vdupq_n_f64(-744.0));
+        if vgetq_lane_u64(vorrq_u64(pos, neg), 0) != 0
+            && vgetq_lane_u64(vorrq_u64(pos, neg), 1) != 0
+        {
+            return vreinterpretq_f64_u64(vandq_u64(pos, vreinterpretq_u64_f64(vdupq_n_f64(1.0))));
+        }
         vdivq_f64(
             vdupq_n_f64(1.0),
             vaddq_f64(vdupq_n_f64(1.0), vexp_128d(vnegq_f64(v))),
         )
     },
-    |x: f64| 1.0 / (1.0 + crate::kernels::exp::exp_f64(-x))
+    |x: f64| {
+        if x > 36.74 {
+            1.0
+        } else if x < -744.0 {
+            0.0
+        } else {
+            1.0 / (1.0 + crate::kernels::exp::exp_f64(-x))
+        }
+    }
 );
 
 #[cfg(feature = "alloc")]
@@ -916,8 +974,26 @@ crate::simd_map!(
     2,
     |p| unsafe { vld1q_f64(p) },
     |p, v| unsafe { vst1q_f64(p, v) },
-    |v: float64x2_t| unsafe { vdivq_f64(v, vaddq_f64(vdupq_n_f64(1.0), vexp_128d(vnegq_f64(v))),) },
-    |x: f64| x / (1.0 + crate::kernels::exp::exp_f64(-x))
+    |v: float64x2_t| unsafe {
+        // Saturated fast path: silu(x) = x for x > 36.74, 0 for x < -745.
+        let pos = vcgtq_f64(v, vdupq_n_f64(36.74));
+        let neg = vcltq_f64(v, vdupq_n_f64(-744.0));
+        if vgetq_lane_u64(vorrq_u64(pos, neg), 0) != 0
+            && vgetq_lane_u64(vorrq_u64(pos, neg), 1) != 0
+        {
+            return vreinterpretq_f64_u64(vandq_u64(pos, vreinterpretq_u64_f64(v)));
+        }
+        vdivq_f64(v, vaddq_f64(vdupq_n_f64(1.0), vexp_128d(vnegq_f64(v))))
+    },
+    |x: f64| {
+        if x > 36.74 {
+            x
+        } else if x < -744.0 {
+            0.0
+        } else {
+            x / (1.0 + crate::kernels::exp::exp_f64(-x))
+        }
+    }
 );
 
 #[cfg(feature = "alloc")]
@@ -929,6 +1005,14 @@ crate::simd_map!(
     |p| unsafe { vld1q_f64(p) },
     |p, v| unsafe { vst1q_f64(p, v) },
     |v: float64x2_t| unsafe {
+        // Saturated fast path: gelu(x) = x for x > 7.21, 0 for x < -7.21.
+        let pos = vcgtq_f64(v, vdupq_n_f64(7.21));
+        let neg = vcltq_f64(v, vdupq_n_f64(-7.21));
+        if vgetq_lane_u64(vorrq_u64(pos, neg), 0) != 0
+            && vgetq_lane_u64(vorrq_u64(pos, neg), 1) != 0
+        {
+            return vreinterpretq_f64_u64(vandq_u64(pos, vreinterpretq_u64_f64(v)));
+        }
         let x2 = vmulq_f64(v, v);
         let x3 = vmulq_f64(x2, v);
         let z = vmulq_f64(
@@ -946,9 +1030,15 @@ crate::simd_map!(
         )
     },
     |x: f64| {
-        let z = 0.797_884_560_802_865_4 * (x + 0.044_715 * x * x * x);
-        let tanh_z = 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * z) + 1.0);
-        0.5 * x * (1.0 + tanh_z)
+        if x > 7.21 {
+            x
+        } else if x < -7.21 {
+            0.0
+        } else {
+            let z = 0.797_884_560_802_865_4 * (x + 0.044_715 * x * x * x);
+            let tanh_z = 1.0 - 2.0 / (crate::kernels::exp::exp_f64(2.0 * z) + 1.0);
+            0.5 * x * (1.0 + tanh_z)
+        }
     }
 );
 
