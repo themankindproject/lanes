@@ -144,13 +144,20 @@ crate::simd_reduce!(
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn argmax_pair_neon(v: float32x4_t, idx: int32x4_t) -> (f32, usize) {
-    let m = unsafe { vmaxvq_f32(v) };
+    // FMAXV propagates NaN on AArch64; mask NaN lanes to -inf first so
+    // they can never win (matches the x86 pair reducers).
+    let not_nan = unsafe { vceqq_f32(v, v) };
+    let clean = unsafe { vbslq_f32(not_nan, v, vdupq_n_f32(f32::NEG_INFINITY)) };
+    let m = unsafe { vmaxvq_f32(clean) };
     let eq = unsafe { vceqq_f32(v, vdupq_n_f32(m)) };
-    // First occurrence = smallest GLOBAL index among tied lanes.
+    // All-NaN chunk: no lane matches; fall back to lane 0 (index 0).
     let mut mask = [0_u32; 4];
     unsafe { vst1q_u32(mask.as_mut_ptr(), eq) };
     let mut idxs = [0_i32; 4];
     unsafe { vst1q_s32(idxs.as_mut_ptr(), idx) };
+    if mask.iter().all(|&l| l == 0) {
+        return (f32::NAN, 0);
+    }
     let best = mask
         .iter()
         .zip(idxs)
@@ -172,13 +179,19 @@ unsafe fn argmax_pair_neon(v: float32x4_t, idx: int32x4_t) -> (f32, usize) {
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn argmin_pair_neon(v: float32x4_t, idx: int32x4_t) -> (f32, usize) {
-    let m = unsafe { vminvq_f32(v) };
+    // FMINV propagates NaN on AArch64; mask NaN lanes to +inf first.
+    let not_nan = unsafe { vceqq_f32(v, v) };
+    let clean = unsafe { vbslq_f32(not_nan, v, vdupq_n_f32(f32::INFINITY)) };
+    let m = unsafe { vminvq_f32(clean) };
     let eq = unsafe { vceqq_f32(v, vdupq_n_f32(m)) };
-    // First occurrence = smallest GLOBAL index among tied lanes.
+    // All-NaN chunk: no lane matches; fall back to lane 0 (index 0).
     let mut mask = [0_u32; 4];
     unsafe { vst1q_u32(mask.as_mut_ptr(), eq) };
     let mut idxs = [0_i32; 4];
     unsafe { vst1q_s32(idxs.as_mut_ptr(), idx) };
+    if mask.iter().all(|&l| l == 0) {
+        return (f32::NAN, 0);
+    }
     let best = mask
         .iter()
         .zip(idxs)
@@ -566,7 +579,10 @@ unsafe fn hmax_128d(v: float64x2_t) -> f64 {
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn argmax_pair_128d(v: float64x2_t, idx: int64x2_t) -> (f64, usize) {
-    let m = unsafe { hmax_128d(v) };
+    // FMAXV propagates NaN on AArch64; mask NaN lanes to -inf first.
+    let not_nan = unsafe { vceqq_f64(v, v) };
+    let clean = unsafe { vbslq_f64(not_nan, v, vdupq_n_f64(f64::NEG_INFINITY)) };
+    let m = unsafe { hmax_128d(clean) };
     let eq = unsafe { vceqq_f64(v, vdupq_n_f64(m)) }; // uint64x2_t: [m==l0, m==l1]
     // Lane 0 is the max iff its mask bit is set (all-ones); ties → lane 0.
     // All-NaN chunk: neither mask is set; fall back to lane 0 (index 0).
@@ -598,7 +614,10 @@ unsafe fn argmax_pair_128d(v: float64x2_t, idx: int64x2_t) -> (f64, usize) {
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn argmin_pair_128d(v: float64x2_t, idx: int64x2_t) -> (f64, usize) {
-    let m = unsafe { hmin_128d(v) };
+    // FMINV propagates NaN on AArch64; mask NaN lanes to +inf first.
+    let not_nan = unsafe { vceqq_f64(v, v) };
+    let clean = unsafe { vbslq_f64(not_nan, v, vdupq_n_f64(f64::INFINITY)) };
+    let m = unsafe { hmin_128d(clean) };
     let eq = unsafe { vceqq_f64(v, vdupq_n_f64(m)) }; // uint64x2_t: [m==l0, m==l1]
     // Lane 0 is the min iff its mask bit is set (all-ones); ties → lane 0.
     // All-NaN chunk: neither mask is set; fall back to lane 0 (index 0).
