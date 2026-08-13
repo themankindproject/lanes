@@ -300,38 +300,54 @@ crate::simd_map!(
     |p| unsafe { _mm_loadu_ps(p) },
     |p, v| unsafe { _mm_storeu_ps(p, v) },
     |v| unsafe {
+        let a = _mm_andnot_ps(_mm_set1_ps(-0.0), v);
+        // ±1 for |x| > 9.011, x for |x| < 2e-4, series for |x| < 0.1,
+        // ratio (e-1)/(e+1) beyond (Sterbenz-exact, clamped for overflow).
+        let big_mask = _mm_cmpgt_ps(a, _mm_set1_ps(9.011));
+        if _mm_movemask_ps(big_mask) == 0xF {
+            // Saturated vector: skip the exp entirely (wide-style fast path).
+            return _mm_or_ps(_mm_set1_ps(1.0), _mm_and_ps(_mm_set1_ps(-0.0), v));
+        }
         let series = {
             let x2 = _mm_mul_ps(v, v);
             let x4 = _mm_mul_ps(x2, x2);
-            // x - x³/3 + 2x⁵/15
             _mm_add_ps(
                 _mm_sub_ps(v, _mm_div_ps(_mm_mul_ps(v, x2), _mm_set1_ps(3.0))),
                 _mm_div_ps(_mm_mul_ps(v, x4), _mm_set1_ps(7.5)),
             )
         };
         let e = vexp_128(_mm_add_ps(v, v));
-        // clamp e to FLT_MAX: (max-1)/(max+1) rounds to 1.0, so the ratio
-        // saturates to ±1 on exp overflow; copysign restores the sign.
         let em = _mm_min_ps(e, _mm_set1_ps(f32::MAX));
         let ratio = _mm_div_ps(
             _mm_sub_ps(em, _mm_set1_ps(1.0)),
             _mm_add_ps(em, _mm_set1_ps(1.0)),
         );
         let big = _mm_or_ps(ratio, _mm_and_ps(_mm_set1_ps(-0.0), v));
-        let small = _mm_cmplt_ps(_mm_andnot_ps(_mm_set1_ps(-0.0), v), _mm_set1_ps(0.1));
-        _mm_or_ps(_mm_and_ps(small, series), _mm_andnot_ps(small, big))
+        // series region [2e-4, 0.1); the rest of the non-big range is ratio.
+        let ser_mask = _mm_cmplt_ps(a, _mm_set1_ps(0.1));
+        let small = _mm_cmplt_ps(a, _mm_set1_ps(2e-4));
+        let mid = _mm_or_ps(_mm_and_ps(ser_mask, series), _mm_andnot_ps(ser_mask, big));
+        let result = _mm_or_ps(_mm_and_ps(small, v), _mm_andnot_ps(small, mid));
+        _mm_or_ps(
+            _mm_and_ps(
+                big_mask,
+                _mm_or_ps(_mm_set1_ps(1.0), _mm_and_ps(_mm_set1_ps(-0.0), v)),
+            ),
+            _mm_andnot_ps(big_mask, result),
+        )
     },
     |x: f32| {
-        if x.abs() < 0.1 {
+        let a = x.abs();
+        if a > 9.011 {
+            x.signum()
+        } else if a < 2e-4 {
+            x
+        } else if a < 0.1 {
             let x2 = x * x;
             x * (1.0 - x2 / 3.0 + 2.0 * x2 * x2 / 15.0)
         } else {
             let e = crate::kernels::exp::exp(2.0 * x);
-            if e.is_infinite() {
-                x.signum()
-            } else {
-                (e - 1.0) / (e + 1.0)
-            }
+            (e - 1.0) / (e + 1.0)
         }
     }
 );
@@ -1061,8 +1077,13 @@ crate::simd_map!(
     |p| unsafe { _mm_loadu_pd(p) },
     |p, v| unsafe { _mm_storeu_pd(p, v) },
     |v: __m128d| unsafe {
-        // Piecewise: Horner series through x¹³ for |x| < 0.1 (truncation
-        // < 0.1 ulp there; the exp form cancels to 0), exp form beyond.
+        let a = _mm_andnot_pd(_mm_set1_pd(-0.0), v);
+        // ±1 for |x| > 19.062, x for |x| < 5e-8, series for |x| < 0.1,
+        // ratio (e-1)/(e+1) beyond (Sterbenz-exact, clamped for overflow).
+        let big_mask = _mm_cmpgt_pd(a, _mm_set1_pd(19.062));
+        if _mm_movemask_pd(big_mask) == 0x3 {
+            return _mm_or_pd(_mm_set1_pd(1.0), _mm_and_pd(_mm_set1_pd(-0.0), v));
+        }
         let y = _mm_mul_pd(v, v);
         let p = _mm_set1_pd(0.003_592_128_572_437_055);
         let p = _mm_add_pd(_mm_mul_pd(p, y), _mm_set1_pd(-0.008_863_235_529_902_197));
@@ -1078,11 +1099,25 @@ crate::simd_map!(
             _mm_add_pd(em, _mm_set1_pd(1.0)),
         );
         let big = _mm_or_pd(ratio, _mm_and_pd(_mm_set1_pd(-0.0), v));
-        let small = _mm_cmplt_pd(_mm_andnot_pd(_mm_set1_pd(-0.0), v), _mm_set1_pd(0.1));
-        _mm_or_pd(_mm_and_pd(small, series), _mm_andnot_pd(small, big))
+        let ser_mask = _mm_cmplt_pd(a, _mm_set1_pd(0.1));
+        let small = _mm_cmplt_pd(a, _mm_set1_pd(2e-8));
+        let mid = _mm_or_pd(_mm_and_pd(ser_mask, series), _mm_andnot_pd(ser_mask, big));
+        let result = _mm_or_pd(_mm_and_pd(small, v), _mm_andnot_pd(small, mid));
+        _mm_or_pd(
+            _mm_and_pd(
+                big_mask,
+                _mm_or_pd(_mm_set1_pd(1.0), _mm_and_pd(_mm_set1_pd(-0.0), v)),
+            ),
+            _mm_andnot_pd(big_mask, result),
+        )
     },
     |x: f64| {
-        if x.abs() < 0.1 {
+        let a = x.abs();
+        if a > 19.062 {
+            x.signum()
+        } else if a < 2e-8 {
+            x
+        } else if a < 0.1 {
             let y = x * x;
             let p = 0.003_592_128_572_437_055_f64;
             let p = p.mul_add(y, -0.008_863_235_529_902_197);
@@ -1093,11 +1128,7 @@ crate::simd_map!(
             x * p.mul_add(y, 1.0)
         } else {
             let e = crate::kernels::exp::exp_f64(2.0 * x);
-            if e.is_infinite() {
-                x.signum()
-            } else {
-                (e - 1.0) / (e + 1.0)
-            }
+            (e - 1.0) / (e + 1.0)
         }
     }
 );

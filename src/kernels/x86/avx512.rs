@@ -242,7 +242,13 @@ crate::simd_map!(
     |p| unsafe { _mm512_loadu_ps(p) },
     |p, v| unsafe { _mm512_storeu_ps(p, v) },
     |v| unsafe {
-        // Piecewise: series for |x| < 0.1, exp form beyond (see scalar).
+        let a = _mm512_andnot_ps(_mm512_set1_ps(-0.0), v);
+        // ±1 for |x| > 9.011, x for |x| < 2e-4, series for |x| < 0.1,
+        // ratio (e-1)/(e+1) beyond (Sterbenz-exact, clamped for overflow).
+        let big_mask = _mm512_cmp_ps_mask(a, _mm512_set1_ps(9.011), _CMP_GT_OQ);
+        if big_mask == 0xFFFF {
+            return _mm512_or_ps(_mm512_set1_ps(1.0), _mm512_and_ps(_mm512_set1_ps(-0.0), v));
+        }
         let x2 = _mm512_mul_ps(v, v);
         let x4 = _mm512_mul_ps(x2, x2);
         let series = _mm512_add_ps(
@@ -256,24 +262,28 @@ crate::simd_map!(
             _mm512_add_ps(em, _mm512_set1_ps(1.0)),
         );
         let big = _mm512_or_ps(ratio, _mm512_and_ps(_mm512_set1_ps(-0.0), v));
-        let small_mask = _mm512_cmp_ps_mask(
-            _mm512_andnot_ps(_mm512_set1_ps(-0.0), v),
-            _mm512_set1_ps(0.1),
-            _CMP_LT_OQ,
-        );
-        _mm512_mask_blend_ps(small_mask, big, series)
+        let ser_mask = _mm512_cmp_ps_mask(a, _mm512_set1_ps(0.1), _CMP_LT_OQ);
+        let small_mask = _mm512_cmp_ps_mask(a, _mm512_set1_ps(2e-4), _CMP_LT_OQ);
+        let mid = _mm512_mask_blend_ps(ser_mask, big, series);
+        let result = _mm512_mask_blend_ps(small_mask, mid, v);
+        _mm512_mask_blend_ps(
+            big_mask,
+            result,
+            _mm512_or_ps(_mm512_set1_ps(1.0), _mm512_and_ps(_mm512_set1_ps(-0.0), v)),
+        )
     },
     |x: f32| {
-        if x.abs() < 0.1 {
+        let a = x.abs();
+        if a > 9.011 {
+            x.signum()
+        } else if a < 2e-4 {
+            x
+        } else if a < 0.1 {
             let x2 = x * x;
             x * (1.0 - x2 / 3.0 + 2.0 * x2 * x2 / 15.0)
         } else {
             let e = crate::kernels::exp::exp(2.0 * x);
-            if e.is_infinite() {
-                x.signum()
-            } else {
-                (e - 1.0) / (e + 1.0)
-            }
+            (e - 1.0) / (e + 1.0)
         }
     }
 );
@@ -906,8 +916,13 @@ crate::simd_map!(
     |p| unsafe { _mm512_loadu_pd(p) },
     |p, v| unsafe { _mm512_storeu_pd(p, v) },
     |v: __m512d| unsafe {
-        // Piecewise: Horner series through x¹³ for |x| < 0.1 (truncation
-        // < 0.1 ulp there; the exp form cancels to 0), exp form beyond.
+        let a = _mm512_andnot_pd(_mm512_set1_pd(-0.0), v);
+        // ±1 for |x| > 19.062, x for |x| < 5e-8, series for |x| < 0.1,
+        // ratio (e-1)/(e+1) beyond (Sterbenz-exact, clamped for overflow).
+        let big_mask = _mm512_cmp_pd_mask(a, _mm512_set1_pd(19.062), _CMP_GT_OQ);
+        if big_mask == 0xFF {
+            return _mm512_or_pd(_mm512_set1_pd(1.0), _mm512_and_pd(_mm512_set1_pd(-0.0), v));
+        }
         let y = _mm512_mul_pd(v, v);
         let p = _mm512_set1_pd(0.003_592_128_572_437_055);
         let p = _mm512_add_pd(
@@ -935,15 +950,23 @@ crate::simd_map!(
             _mm512_add_pd(em, _mm512_set1_pd(1.0)),
         );
         let big = _mm512_or_pd(ratio, _mm512_and_pd(_mm512_set1_pd(-0.0), v));
-        let small_mask = _mm512_cmp_pd_mask(
-            _mm512_andnot_pd(_mm512_set1_pd(-0.0), v),
-            _mm512_set1_pd(0.1),
-            _CMP_LT_OQ,
-        );
-        _mm512_mask_blend_pd(small_mask, big, series)
+        let ser_mask = _mm512_cmp_pd_mask(a, _mm512_set1_pd(0.1), _CMP_LT_OQ);
+        let small_mask = _mm512_cmp_pd_mask(a, _mm512_set1_pd(2e-8), _CMP_LT_OQ);
+        let mid = _mm512_mask_blend_pd(ser_mask, big, series);
+        let result = _mm512_mask_blend_pd(small_mask, mid, v);
+        _mm512_mask_blend_pd(
+            big_mask,
+            result,
+            _mm512_or_pd(_mm512_set1_pd(1.0), _mm512_and_pd(_mm512_set1_pd(-0.0), v)),
+        )
     },
     |x: f64| {
-        if x.abs() < 0.1 {
+        let a = x.abs();
+        if a > 19.062 {
+            x.signum()
+        } else if a < 2e-8 {
+            x
+        } else if a < 0.1 {
             let y = x * x;
             let p = 0.003_592_128_572_437_055_f64;
             let p = p.mul_add(y, -0.008_863_235_529_902_197);
@@ -954,11 +977,7 @@ crate::simd_map!(
             x * p.mul_add(y, 1.0)
         } else {
             let e = crate::kernels::exp::exp_f64(2.0 * x);
-            if e.is_infinite() {
-                x.signum()
-            } else {
-                (e - 1.0) / (e + 1.0)
-            }
+            (e - 1.0) / (e + 1.0)
         }
     }
 );

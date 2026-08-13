@@ -351,7 +351,14 @@ crate::simd_map!(
     |p| unsafe { vld1q_f32(p) },
     |p, v| unsafe { vst1q_f32(p, v) },
     |v| unsafe {
-        // Piecewise: series for |x| < 0.1, exp form beyond (see scalar).
+        let a = vabsq_f32(v);
+        // ±1 for |x| > 9.011, x for |x| < 2e-4, series for |x| < 0.1,
+        // ratio (e-1)/(e+1) beyond (Sterbenz-exact, clamped for overflow).
+        let big_mask = vcgtq_f32(a, vdupq_n_f32(9.011));
+        if vminvq_u32(big_mask) != 0 {
+            let sign = vandq_u32(vreinterpretq_u32_f32(v), vdupq_n_u32(0x8000_0000));
+            return vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(vdupq_n_f32(1.0)), sign));
+        }
         let x2 = vmulq_f32(v, v);
         let x4 = vmulq_f32(x2, x2);
         let series = vaddq_f32(
@@ -364,24 +371,27 @@ crate::simd_map!(
             vsubq_f32(em, vdupq_n_f32(1.0)),
             vaddq_f32(em, vdupq_n_f32(1.0)),
         );
-        // copysign(ratio, v) via bit OR: ratio is positive (or NaN), so
-        // OR-ing v's sign bit restores ±0.0 and ±1.0 correctly.
         let sign = vandq_u32(vreinterpretq_u32_f32(v), vdupq_n_u32(0x8000_0000));
         let big = vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(ratio), sign));
-        let small = vcltq_f32(vabsq_f32(v), vdupq_n_f32(0.1));
-        vbslq_f32(small, series, big)
+        let ser_mask = vcltq_f32(a, vdupq_n_f32(0.1));
+        let small = vcltq_f32(a, vdupq_n_f32(2e-4));
+        let mid = vbslq_f32(ser_mask, series, big);
+        let result = vbslq_f32(small, v, mid);
+        let one = vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(vdupq_n_f32(1.0)), sign));
+        vbslq_f32(big_mask, one, result)
     },
     |x: f32| {
-        if x.abs() < 0.1 {
+        let a = x.abs();
+        if a > 9.011 {
+            x.signum()
+        } else if a < 2e-4 {
+            x
+        } else if a < 0.1 {
             let x2 = x * x;
             x * (1.0 - x2 / 3.0 + 2.0 * x2 * x2 / 15.0)
         } else {
             let e = crate::kernels::exp::exp(2.0 * x);
-            if e.is_infinite() {
-                x.signum()
-            } else {
-                (e - 1.0) / (e + 1.0)
-            }
+            (e - 1.0) / (e + 1.0)
         }
     }
 );
@@ -945,8 +955,14 @@ crate::simd_map!(
     |p| unsafe { vld1q_f64(p) },
     |p, v| unsafe { vst1q_f64(p, v) },
     |v: float64x2_t| unsafe {
-        // Piecewise: Horner series through x¹³ for |x| < 0.1 (truncation
-        // < 0.1 ulp there; the exp form cancels to 0), exp form beyond.
+        let a = vabsq_f64(v);
+        // ±1 for |x| > 19.062, x for |x| < 5e-8, series for |x| < 0.1,
+        // ratio (e-1)/(e+1) beyond (Sterbenz-exact, clamped for overflow).
+        let big_mask = vcgtq_f64(a, vdupq_n_f64(19.062));
+        if vgetq_lane_u64(big_mask, 0) != 0 && vgetq_lane_u64(big_mask, 1) != 0 {
+            let sign = vandq_u64(vreinterpretq_u64_f64(v), vdupq_n_u64(0x8000_0000_0000_0000));
+            return vreinterpretq_f64_u64(vorrq_u64(vreinterpretq_u64_f64(vdupq_n_f64(1.0)), sign));
+        }
         let y = vmulq_f64(v, v);
         let p = vdupq_n_f64(0.003_592_128_572_437_055);
         let p = vaddq_f64(vmulq_f64(p, y), vdupq_n_f64(-0.008_863_235_529_902_197));
@@ -963,11 +979,20 @@ crate::simd_map!(
         );
         let sign = vandq_u64(vreinterpretq_u64_f64(v), vdupq_n_u64(0x8000_0000_0000_0000));
         let big = vreinterpretq_f64_u64(vorrq_u64(vreinterpretq_u64_f64(ratio), sign));
-        let small = vcltq_f64(vabsq_f64(v), vdupq_n_f64(0.1));
-        vbslq_f64(small, series, big)
+        let ser_mask = vcltq_f64(a, vdupq_n_f64(0.1));
+        let small = vcltq_f64(a, vdupq_n_f64(2e-8));
+        let mid = vbslq_f64(ser_mask, series, big);
+        let result = vbslq_f64(small, v, mid);
+        let one = vreinterpretq_f64_u64(vorrq_u64(vreinterpretq_u64_f64(vdupq_n_f64(1.0)), sign));
+        vbslq_f64(big_mask, one, result)
     },
     |x: f64| {
-        if x.abs() < 0.1 {
+        let a = x.abs();
+        if a > 19.062 {
+            x.signum()
+        } else if a < 2e-8 {
+            x
+        } else if a < 0.1 {
             let y = x * x;
             let p = 0.003_592_128_572_437_055_f64;
             let p = p.mul_add(y, -0.008_863_235_529_902_197);
@@ -978,11 +1003,7 @@ crate::simd_map!(
             x * p.mul_add(y, 1.0)
         } else {
             let e = crate::kernels::exp::exp_f64(2.0 * x);
-            if e.is_infinite() {
-                x.signum()
-            } else {
-                (e - 1.0) / (e + 1.0)
-            }
+            (e - 1.0) / (e + 1.0)
         }
     }
 );

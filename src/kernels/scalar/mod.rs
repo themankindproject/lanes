@@ -82,16 +82,17 @@ pub(crate) fn relu(values: &[f32], out: &mut [f32]) {
 #[inline]
 pub(crate) fn tanh(values: &[f32], out: &mut [f32]) {
     map(values, out, |x| {
-        if x.abs() < 0.1 {
+        let a = x.abs();
+        if a > 9.011 {
+            x.signum() // tanh(x) = ±1 to f32 precision (e^-2x < 2^-24)
+        } else if a < 2e-4 {
+            x // tanh(x) ≈ x, error x³/3 < 1 ulp
+        } else if a < 0.1 {
             let x2 = x * x;
             x * (1.0 - x2 / 3.0 + 2.0 * x2 * x2 / 15.0)
         } else {
             let e = exp::exp(2.0 * x);
-            if e.is_infinite() {
-                x.signum() // saturate to ±1; exp overflowed
-            } else {
-                (e - 1.0) / (e + 1.0) // Sterbenz-exact for e in [1, 2]
-            }
+            (e - 1.0) / (e + 1.0) // Sterbenz-exact for e in [1, 2]
         }
     });
 }
@@ -446,7 +447,12 @@ pub(crate) fn relu_f64(values: &[f64], out: &mut [f64]) {
 #[inline]
 pub(crate) fn tanh_f64(values: &[f64], out: &mut [f64]) {
     for (v, o) in values.iter().zip(out) {
-        *o = if v.abs() < 0.1 {
+        let a = v.abs();
+        *o = if a > 19.062 {
+            v.signum() // tanh(x) = ±1 to f64 precision (e^-2x < 2^-54)
+        } else if a < 2e-8 {
+            *v // tanh(x) ≈ x, error x³/3 < 1 ulp
+        } else if a < 0.1 {
             // tanh(x) = x·P(x²), P = Σ c_k·x^{2k} (odd-powers Taylor).
             let y = v * v;
             let p = 0.003_592_128_572_437_055_f64; // 21844/6081075
@@ -458,11 +464,7 @@ pub(crate) fn tanh_f64(values: &[f64], out: &mut [f64]) {
             v * p.mul_add(y, 1.0)
         } else {
             let e = crate::kernels::exp::exp_f64(2.0 * v);
-            if e.is_infinite() {
-                v.signum() // saturate to ±1; exp overflowed
-            } else {
-                (e - 1.0) / (e + 1.0) // Sterbenz-exact for e in [1, 2]
-            }
+            (e - 1.0) / (e + 1.0) // Sterbenz-exact for e in [1, 2]
         };
     }
 }

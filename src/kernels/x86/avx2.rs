@@ -298,7 +298,13 @@ crate::simd_map!(
     |p| unsafe { _mm256_loadu_ps(p) },
     |p, v| unsafe { _mm256_storeu_ps(p, v) },
     |v| unsafe {
-        // Piecewise: series for |x| < 0.1, exp form beyond (see scalar).
+        let a = _mm256_andnot_ps(_mm256_set1_ps(-0.0), v);
+        // ±1 for |x| > 9.011, x for |x| < 2e-4, series for |x| < 0.1,
+        // ratio (e-1)/(e+1) beyond (Sterbenz-exact, clamped for overflow).
+        let big_mask = _mm256_cmp_ps(a, _mm256_set1_ps(9.011), _CMP_GT_OQ);
+        if _mm256_movemask_ps(big_mask) == 0xFF {
+            return _mm256_or_ps(_mm256_set1_ps(1.0), _mm256_and_ps(_mm256_set1_ps(-0.0), v));
+        }
         let x2 = _mm256_mul_ps(v, v);
         let x4 = _mm256_mul_ps(x2, x2);
         let series = _mm256_add_ps(
@@ -312,24 +318,33 @@ crate::simd_map!(
             _mm256_add_ps(em, _mm256_set1_ps(1.0)),
         );
         let big = _mm256_or_ps(ratio, _mm256_and_ps(_mm256_set1_ps(-0.0), v));
-        let small = _mm256_cmp_ps(
-            _mm256_andnot_ps(_mm256_set1_ps(-0.0), v),
-            _mm256_set1_ps(0.1),
-            _CMP_LT_OQ,
+        let ser_mask = _mm256_cmp_ps(a, _mm256_set1_ps(0.1), _CMP_LT_OQ);
+        let small = _mm256_cmp_ps(a, _mm256_set1_ps(2e-4), _CMP_LT_OQ);
+        let mid = _mm256_or_ps(
+            _mm256_and_ps(ser_mask, series),
+            _mm256_andnot_ps(ser_mask, big),
         );
-        _mm256_or_ps(_mm256_and_ps(small, series), _mm256_andnot_ps(small, big))
+        let result = _mm256_or_ps(_mm256_and_ps(small, v), _mm256_andnot_ps(small, mid));
+        _mm256_or_ps(
+            _mm256_and_ps(
+                big_mask,
+                _mm256_or_ps(_mm256_set1_ps(1.0), _mm256_and_ps(_mm256_set1_ps(-0.0), v)),
+            ),
+            _mm256_andnot_ps(big_mask, result),
+        )
     },
     |x: f32| {
-        if x.abs() < 0.1 {
+        let a = x.abs();
+        if a > 9.011 {
+            x.signum()
+        } else if a < 2e-4 {
+            x
+        } else if a < 0.1 {
             let x2 = x * x;
             x * (1.0 - x2 / 3.0 + 2.0 * x2 * x2 / 15.0)
         } else {
             let e = crate::kernels::exp::exp(2.0 * x);
-            if e.is_infinite() {
-                x.signum()
-            } else {
-                (e - 1.0) / (e + 1.0)
-            }
+            (e - 1.0) / (e + 1.0)
         }
     }
 );
@@ -1078,8 +1093,13 @@ crate::simd_map!(
     |p| unsafe { _mm256_loadu_pd(p) },
     |p, v| unsafe { _mm256_storeu_pd(p, v) },
     |v: __m256d| unsafe {
-        // Piecewise: Horner series through x¹³ for |x| < 0.1 (truncation
-        // < 0.1 ulp there; the exp form cancels to 0), exp form beyond.
+        let a = _mm256_andnot_pd(_mm256_set1_pd(-0.0), v);
+        // ±1 for |x| > 19.062, x for |x| < 5e-8, series for |x| < 0.1,
+        // ratio (e-1)/(e+1) beyond (Sterbenz-exact, clamped for overflow).
+        let big_mask = _mm256_cmp_pd(a, _mm256_set1_pd(19.062), _CMP_GT_OQ);
+        if _mm256_movemask_pd(big_mask) == 0xF {
+            return _mm256_or_pd(_mm256_set1_pd(1.0), _mm256_and_pd(_mm256_set1_pd(-0.0), v));
+        }
         let y = _mm256_mul_pd(v, v);
         let p = _mm256_set1_pd(0.003_592_128_572_437_055);
         let p = _mm256_add_pd(
@@ -1107,15 +1127,28 @@ crate::simd_map!(
             _mm256_add_pd(em, _mm256_set1_pd(1.0)),
         );
         let big = _mm256_or_pd(ratio, _mm256_and_pd(_mm256_set1_pd(-0.0), v));
-        let small = _mm256_cmp_pd(
-            _mm256_andnot_pd(_mm256_set1_pd(-0.0), v),
-            _mm256_set1_pd(0.1),
-            _CMP_LT_OQ,
+        let ser_mask = _mm256_cmp_pd(a, _mm256_set1_pd(0.1), _CMP_LT_OQ);
+        let small = _mm256_cmp_pd(a, _mm256_set1_pd(2e-8), _CMP_LT_OQ);
+        let mid = _mm256_or_pd(
+            _mm256_and_pd(ser_mask, series),
+            _mm256_andnot_pd(ser_mask, big),
         );
-        _mm256_or_pd(_mm256_and_pd(small, series), _mm256_andnot_pd(small, big))
+        let result = _mm256_or_pd(_mm256_and_pd(small, v), _mm256_andnot_pd(small, mid));
+        _mm256_or_pd(
+            _mm256_and_pd(
+                big_mask,
+                _mm256_or_pd(_mm256_set1_pd(1.0), _mm256_and_pd(_mm256_set1_pd(-0.0), v)),
+            ),
+            _mm256_andnot_pd(big_mask, result),
+        )
     },
     |x: f64| {
-        if x.abs() < 0.1 {
+        let a = x.abs();
+        if a > 19.062 {
+            x.signum()
+        } else if a < 2e-8 {
+            x
+        } else if a < 0.1 {
             let y = x * x;
             let p = 0.003_592_128_572_437_055_f64;
             let p = p.mul_add(y, -0.008_863_235_529_902_197);
@@ -1126,11 +1159,7 @@ crate::simd_map!(
             x * p.mul_add(y, 1.0)
         } else {
             let e = crate::kernels::exp::exp_f64(2.0 * x);
-            if e.is_infinite() {
-                x.signum()
-            } else {
-                (e - 1.0) / (e + 1.0)
-            }
+            (e - 1.0) / (e + 1.0)
         }
     }
 );
