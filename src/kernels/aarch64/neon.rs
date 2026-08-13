@@ -651,14 +651,7 @@ crate::simd_map!(
     |x: f32| {
         let a = x.abs();
         let z = crate::kernels::exp::exp(-a);
-        let u = 1.0 + z;
-        #[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
-        let lp = if u == 1.0 {
-            z
-        } else {
-            crate::kernels::ln::ln(u) * z / (u - 1.0)
-        };
-        x.max(0.0) + lp
+        x.max(0.0) + crate::kernels::scalar::log1p(z)
     }
 );
 
@@ -1072,14 +1065,7 @@ crate::simd_map!(
     |x: f64| {
         let a = x.abs();
         let z = crate::kernels::exp::exp_f64(-a);
-        let u = 1.0 + z;
-        #[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
-        let lp = if u == 1.0 {
-            z
-        } else {
-            crate::kernels::ln::ln_f64(u) * z / (u - 1.0)
-        };
-        x.max(0.0) + lp
+        x.max(0.0) + crate::kernels::scalar::log1p_f64(z)
     }
 );
 

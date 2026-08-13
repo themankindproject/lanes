@@ -62,9 +62,8 @@ pub fn exp(x: f32) -> f32 {
         return f32::INFINITY;
     }
     // n = round(x / ln2), r = x - n*ln2 (exact-ish in f64).
-    let inv_ln2 = std_ln2_inv();
-    let n = round_f64(xd * inv_ln2);
-    let r = xd - n * std_ln2();
+    let n = round_f64(xd * INV_LN2_F64);
+    let r = xd - n * LN2_F64;
     // exp(r) degree-13 poly (r ∈ [-0.35, 0.35]), Horner in r (NOT r² — the
     // r² form would drop all odd powers and compute a cosh-like function).
     // Horner on descending coefficients: ((…(1/13!·r + 1/12!)·r + …)·r + 1)
@@ -190,15 +189,6 @@ const COEFFS_F64: [f64; 21] = [
 fn round_f64(x: f64) -> f64 {
     let shifted = if x >= 0.0 { x + 0.5 } else { x - 0.5 };
     shifted as i64 as f64
-}
-
-#[inline]
-fn std_ln2() -> f64 {
-    LN2_F64
-}
-#[inline]
-fn std_ln2_inv() -> f64 {
-    INV_LN2_F64
 }
 
 /// `2^n` in f64 via exponent manipulation (n integer).

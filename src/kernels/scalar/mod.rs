@@ -132,9 +132,11 @@ pub(crate) fn softplus(values: &[f32], out: &mut [f32]) {
 
 /// `ln(1+z)` for `z ≥ 0` via the musl/fdlibm `s_log1pf` identity:
 /// `z·ln(1+z)/((1+z)-1)` — accurate even when `z` underflows toward 0.
+/// `ln(1+z)` for `z >= 0` (`musl s_log1pf.c` identity). Shared by the softplus
+/// scalar tails on every backend.
 #[inline]
 #[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
-fn log1p(z: f32) -> f32 {
+pub(crate) fn log1p(z: f32) -> f32 {
     let u = 1.0 + z;
     if u == 1.0 {
         z
@@ -564,9 +566,11 @@ pub(crate) fn softplus_f64(values: &[f64], out: &mut [f64]) {
 }
 
 /// `ln(1+z)` for `z ≥ 0` via the musl/fdlibm `s_log1p` identity.
+/// `ln(1+z)` for `z >= 0` (`musl s_log1p.c` identity). Shared by the softplus
+/// scalar tails on every backend.
 #[inline]
 #[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
-fn log1p_f64(z: f64) -> f64 {
+pub(crate) fn log1p_f64(z: f64) -> f64 {
     let u = 1.0 + z;
     if u == 1.0 {
         z
