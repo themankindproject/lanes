@@ -11,7 +11,18 @@ readme = "README.md"
 repository = "https://github.com/themankindproject/lanes"
 homepage = "https://github.com/themankindproject/lanes"
 authors = ["bravo1goingdark <kumarashutosh34169@gmail.com>"]
-exclude = ["fuzz"]
+exclude = [
+    "fuzz",
+    ".github",
+    ".gitignore",
+    "benches",
+    "tests",
+    "clippy.toml",
+    "deny.toml",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+    "Cargo.lock",
+]
 
 [features]
 default = ["std"]
