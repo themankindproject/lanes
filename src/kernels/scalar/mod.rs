@@ -157,6 +157,13 @@ pub(crate) fn clip(values: &[f32], lo: f32, hi: f32, out: &mut [f32]) {
 /// Gated on `alloc`: its only caller (`dispatch_rsqrt`) is alloc-gated.
 #[cfg(feature = "alloc")]
 #[inline]
+pub(crate) fn sub_scalar(values: &[f32], p: f32, _p2: f32, out: &mut [f32]) {
+    for (o, &x) in out.iter_mut().zip(values) {
+        *o = x - p;
+    }
+}
+
+#[cfg(feature = "alloc")]
 pub(crate) fn rsqrt(values: &[f32], out: &mut [f32]) {
     map(values, out, |x| 1.0 / crate::kernels::sqrt::sqrt(x));
 }
@@ -169,6 +176,28 @@ pub(crate) fn rsqrt(values: &[f32], out: &mut [f32]) {
 #[inline]
 pub(crate) fn exp(values: &[f32], out: &mut [f32]) {
     map(values, out, crate::kernels::exp::exp);
+}
+
+/// Elementwise natural logarithm into `out`.
+///
+/// Uses the std-free `kernels::ln::ln` (≤ 1 ulp vs `f32::ln`, fdlibm
+/// algorithm). Gated on `alloc`: its only caller (`dispatch_ln`) is
+/// alloc-gated.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn ln(values: &[f32], out: &mut [f32]) {
+    map(values, out, crate::kernels::ln::ln);
+}
+
+/// Elementwise natural logarithm into `out` (`f64`).
+///
+/// Uses the std-free `kernels::ln::ln_f64` (≤ 1 ulp vs `f64::ln`).
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn ln_f64(values: &[f64], out: &mut [f64]) {
+    for (v, o) in values.iter().zip(out) {
+        *o = crate::kernels::ln::ln_f64(*v);
+    }
 }
 
 /// Compute the sum of squares of all elements in a slice.
@@ -372,9 +401,15 @@ pub(crate) fn rsqrt_f64(values: &[f64], out: &mut [f64]) {
     }
 }
 
-/// Elementwise exponential into `out`.
+/// Elementwise subtract a scalar into `out`: `x - p`.
 #[cfg(feature = "alloc")]
 #[inline]
+pub(crate) fn sub_scalar_f64(values: &[f64], p: f64, _p2: f64, out: &mut [f64]) {
+    for (o, &x) in out.iter_mut().zip(values) {
+        *o = x - p;
+    }
+}
+
 pub(crate) fn exp_f64(values: &[f64], out: &mut [f64]) {
     for (v, o) in values.iter().zip(out) {
         *o = crate::kernels::exp::exp_f64(*v);
@@ -456,12 +491,12 @@ pub(crate) fn tanh_f64(values: &[f64], out: &mut [f64]) {
             // tanh(x) = x·P(x²), P = Σ c_k·x^{2k} (odd-powers Taylor).
             let y = v * v;
             let p = 0.003_592_128_572_437_055_f64; // 21844/6081075
-            let p = p.mul_add(y, -0.008_863_235_529_902_197); // -1382/155925
-            let p = p.mul_add(y, 0.021_869_488_536_155_2); // 62/2835
-            let p = p.mul_add(y, -0.053_968_253_968_253_97); // -17/315
-            let p = p.mul_add(y, 0.133_333_333_333_333_33); // 2/15
-            let p = p.mul_add(y, -0.333_333_333_333_333_3); // -1/3
-            v * p.mul_add(y, 1.0)
+            let p = p * y - 0.008_863_235_529_902_197; // -1382/155925
+            let p = p * y + 0.021_869_488_536_155_2; // 62/2835
+            let p = p * y - 0.053_968_253_968_253_97; // -17/315
+            let p = p * y + 0.133_333_333_333_333_33; // 2/15
+            let p = p * y - 0.333_333_333_333_333_3; // -1/3
+            v * (p * y + 1.0)
         } else {
             let e = crate::kernels::exp::exp_f64(2.0 * v);
             (e - 1.0) / (e + 1.0) // Sterbenz-exact for e in [1, 2]

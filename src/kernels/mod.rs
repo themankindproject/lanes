@@ -8,6 +8,7 @@
 //! implementation and universal fallback.
 
 pub(crate) mod exp;
+pub(crate) mod ln;
 pub(crate) mod macros;
 pub(crate) mod scalar;
 pub(crate) mod sqrt;
@@ -309,6 +310,19 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_sub_scalar,
+    [values: &[f32], p: f32, p2: f32, out: &mut [f32]],
+    (),
+    scalar::sub_scalar,
+    x86::sse2::sub_scalar,
+    x86::avx2::sub_scalar,
+    x86::avx512::sub_scalar,
+    aarch64::neon::sub_scalar,
+    id,
+    alloc
+);
+
+dispatch!(
     dispatch_rms_norm,
     [values: &[f32], eps: f32, out: &mut [f32]],
     (),
@@ -372,6 +386,19 @@ dispatch!(
     x86::avx2::exp,
     x86::avx512::exp,
     aarch64::neon::exp,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_ln,
+    [values: &[f32], out: &mut [f32]],
+    (),
+    scalar::ln,
+    x86::sse2::ln,
+    x86::avx2::ln,
+    x86::avx512::ln,
+    aarch64::neon::ln,
     id,
     alloc
 );
@@ -554,6 +581,19 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_ln_f64,
+    [values: &[f64], out: &mut [f64]],
+    (),
+    scalar::ln_f64,
+    x86::sse2::ln_f64,
+    x86::avx2::ln_f64,
+    x86::avx512::ln_f64,
+    aarch64::neon::ln_f64,
+    id,
+    alloc
+);
+
+dispatch!(
     dispatch_softmax_f64,
     [values: &[f64], out: &mut [f64]],
     (),
@@ -627,6 +667,19 @@ dispatch!(
     x86::avx2::tanh_f64,
     x86::avx512::tanh_f64,
     aarch64::neon::tanh_f64,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_sub_scalar_f64,
+    [values: &[f64], p: f64, p2: f64, out: &mut [f64]],
+    (),
+    scalar::sub_scalar_f64,
+    x86::sse2::sub_scalar_f64,
+    x86::avx2::sub_scalar_f64,
+    x86::avx512::sub_scalar_f64,
+    aarch64::neon::sub_scalar_f64,
     id,
     alloc
 );

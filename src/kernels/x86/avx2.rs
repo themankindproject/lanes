@@ -389,6 +389,18 @@ crate::simd_map!(
 );
 
 // RMS norm: two-pass (sum of squares, then scale by rsqrt).
+// Sub scalar: x - p (used by logsumexp/layer_norm centering).
+crate::simd_map_param!(
+    sub_scalar,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    |p, v| unsafe { _mm256_storeu_ps(p, v) },
+    |v: __m256, p1: f32, _p2: f32| _mm256_sub_ps(v, _mm256_set1_ps(p1)),
+    |x: f32, p1: f32, _p2: f32| x - p1
+);
+
 crate::simd_rms_norm!(
     rms_norm,
     f32,
@@ -468,6 +480,7 @@ crate::simd_exp!(
     |a, b| unsafe { _mm256_or_ps(a, b) },
     |a, b| unsafe { _mm256_cmp_ps(a, b, _CMP_GT_OQ) },
     |v| unsafe { _mm256_castsi256_ps(v) },
+    |v| unsafe { _mm256_castps_si256(v) },
     |v| unsafe { _mm256_cvttps_epi32(v) },
     |v| unsafe { _mm256_slli_epi32(v, 23) },
     |a, b| unsafe { _mm256_add_epi32(a, b) },
@@ -476,6 +489,46 @@ crate::simd_exp!(
     |a, b| unsafe { _mm256_and_si256(a, b) },
     |a, b| unsafe { _mm256_andnot_si256(a, b) },
     |a, b| unsafe { _mm256_or_si256(a, b) }
+);
+
+// Vector ln (f32): fdlibm e_log reduction, see simd_ln! in macros.rs.
+crate::simd_ln!(
+    vln_256,
+    "avx2",
+    __m256,
+    __m256i,
+    |s| unsafe { _mm256_set1_ps(s) },
+    |i| unsafe { _mm256_set1_epi32(i) },
+    |a, b| unsafe { _mm256_add_ps(a, b) },
+    |a, b| unsafe { _mm256_sub_ps(a, b) },
+    |a, b| unsafe { _mm256_mul_ps(a, b) },
+    |v| unsafe { _mm256_cvtepi32_ps(v) },
+    |v| unsafe { _mm256_castsi256_ps(v) },
+    |v| unsafe { _mm256_castps_si256(v) },
+    |a, b| unsafe { _mm256_and_si256(a, b) },
+    |a, b| unsafe { _mm256_or_si256(a, b) },
+    |v| unsafe { _mm256_srli_epi32(v, 23) },
+    |a, b| unsafe { _mm256_cmp_ps(a, b, _CMP_GT_OQ) },
+    |a, b| unsafe { _mm256_cmp_ps(a, b, _CMP_LT_OQ) },
+    |a, b| unsafe { _mm256_cmp_ps(a, b, _CMP_EQ_OQ) },
+    |a, b| unsafe { _mm256_and_ps(a, b) },
+    |a, b| unsafe { _mm256_andnot_ps(a, b) },
+    |a, b| unsafe { _mm256_or_ps(a, b) }
+);
+// Ln: one-pass map; the register kernel handles normal x, the scalar tail
+// covers special cases (x <= 0, inf, NaN, subnormal).
+
+// Ln: one-pass map; the register kernel handles normal x, the scalar tail
+// covers special cases (x <= 0, inf, NaN, subnormal).
+crate::simd_map!(
+    ln,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    |p, v| unsafe { _mm256_storeu_ps(p, v) },
+    |v: __m256| unsafe { vln_256(v) },
+    |x: f32| crate::kernels::ln::ln(x)
 );
 
 /// Horizontal sum of all 8 lanes in a `__m256` register.
@@ -972,6 +1025,7 @@ crate::simd_exp_f64!(
     |a, b| unsafe { _mm256_add_pd(a, b) },
     |a, b| unsafe { _mm256_sub_pd(a, b) },
     |v| unsafe { _mm256_castsi256_pd(v) },
+    |v| unsafe { _mm256_castpd_si256(v) },
     // Round-to-nearest: trunc(v + copysign(0.5, v)) in f64, converted to
     // i32 (|n| ≤ 1024 fits i32), then sign-extended to i64. `_mm256_cvttpd_epi64`
     // is AVX-512DQ, not AVX2 — using it here SIGILLs on AVX2-only CPUs.
@@ -995,6 +1049,42 @@ crate::simd_exp_f64!(
     |a, b| unsafe { _mm256_and_si256(a, b) },
     |a, b| unsafe { _mm256_andnot_si256(a, b) },
     |a, b| unsafe { _mm256_or_si256(a, b) }
+);
+// Vector ln (f64): fdlibm e_log, see simd_ln_f64! in macros.rs.
+crate::simd_ln_f64!(
+    vln_256d,
+    "avx2",
+    __m256d,
+    __m256i,
+    |s| unsafe { _mm256_set1_pd(s) },
+    |i| unsafe { _mm256_set1_epi64x(i) },
+    |a, b| unsafe { _mm256_add_pd(a, b) },
+    |a, b| unsafe { _mm256_sub_pd(a, b) },
+    |a, b| unsafe { _mm256_mul_pd(a, b) },
+    |a, b| unsafe { _mm256_div_pd(a, b) },
+    |v| unsafe { _mm256_castsi256_pd(v) },
+    |v| unsafe { _mm256_castsi256_pd(v) },
+    |v| unsafe { _mm256_castpd_si256(v) },
+    |a, b| unsafe { _mm256_and_si256(a, b) },
+    |a, b| unsafe { _mm256_or_si256(a, b) },
+    |v| unsafe { _mm256_srli_epi64(v, 52) },
+    |a, b| unsafe { _mm256_cmp_pd(a, b, _CMP_GT_OQ) },
+    |a, b| unsafe { _mm256_cmp_pd(a, b, _CMP_LT_OQ) },
+    |a, b| unsafe { _mm256_cmp_pd(a, b, _CMP_EQ_OQ) },
+    |a, b| unsafe { _mm256_and_pd(a, b) },
+    |a, b| unsafe { _mm256_andnot_pd(a, b) },
+    |a, b| unsafe { _mm256_or_pd(a, b) }
+);
+// Ln (f64): one-pass map; the register kernel handles normal x.
+crate::simd_map!(
+    ln_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |v: __m256d| unsafe { vln_256d(v) },
+    |x: f64| crate::kernels::ln::ln_f64(x)
 );
 
 crate::simd_map!(
@@ -1219,12 +1309,12 @@ crate::simd_map!(
         } else if a < 0.1 {
             let y = x * x;
             let p = 0.003_592_128_572_437_055_f64;
-            let p = p.mul_add(y, -0.008_863_235_529_902_197);
-            let p = p.mul_add(y, 0.021_869_488_536_155_2);
-            let p = p.mul_add(y, -0.053_968_253_968_253_97);
-            let p = p.mul_add(y, 0.133_333_333_333_333_33);
-            let p = p.mul_add(y, -0.333_333_333_333_333_3);
-            x * p.mul_add(y, 1.0)
+            let p = p * y - 0.008_863_235_529_902_197;
+            let p = p * y + 0.021_869_488_536_155_2;
+            let p = p * y - 0.053_968_253_968_253_97;
+            let p = p * y + 0.133_333_333_333_333_33;
+            let p = p * y - 0.333_333_333_333_333_3;
+            x * (p * y + 1.0)
         } else {
             let e = crate::kernels::exp::exp_f64(2.0 * x);
             (e - 1.0) / (e + 1.0)
@@ -1233,6 +1323,18 @@ crate::simd_map!(
 );
 
 // RMS norm (f64).
+// Sub scalar (f64): x - p.
+crate::simd_map_param!(
+    sub_scalar_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |v: __m256d, p1: f64, _p2: f64| _mm256_sub_pd(v, _mm256_set1_pd(p1)),
+    |x: f64, p1: f64, _p2: f64| x - p1
+);
+
 crate::simd_rms_norm!(
     rms_norm_f64,
     f64,

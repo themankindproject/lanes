@@ -451,6 +451,18 @@ crate::simd_map!(
 );
 
 // RMS norm: two-pass (sum of squares, then scale by rsqrt).
+// Sub scalar: x - p (used by logsumexp/layer_norm centering).
+crate::simd_map_param!(
+    sub_scalar,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    |v: float32x4_t, p1: f32, _p2: f32| vsubq_f32(v, vdupq_n_f32(p1)),
+    |x: f32, p1: f32, _p2: f32| x - p1
+);
+
 crate::simd_rms_norm!(
     rms_norm,
     f32,
@@ -549,6 +561,7 @@ crate::simd_exp!(
         vreinterpretq_f32_s32(vreinterpretq_s32_u32(vcgtq_f32(a, b)))
     },
     |v| unsafe { vreinterpretq_f32_s32(v) },
+    |v| unsafe { vreinterpretq_s32_f32(v) },
     |v| unsafe { vcvtq_s32_f32(v) },
     |v| unsafe { vshlq_n_s32(v, 23) },
     |a, b| unsafe { vaddq_s32(a, b) },
@@ -558,6 +571,61 @@ crate::simd_exp!(
     // `vbicq(a, b) = a & ~b`; andnot(a, b) = ~a & b = vbicq(b, a).
     |a, b| unsafe { vbicq_s32(b, a) },
     |a, b| unsafe { vorrq_s32(a, b) }
+);
+
+// Vector ln (f32): fdlibm e_log reduction, see simd_ln! in macros.rs.
+crate::simd_ln!(
+    vln_neon,
+    "neon",
+    float32x4_t,
+    int32x4_t,
+    |s| unsafe { vdupq_n_f32(s) },
+    |i| unsafe { vdupq_n_s32(i) },
+    |a, b| unsafe { vaddq_f32(a, b) },
+    |a, b| unsafe { vsubq_f32(a, b) },
+    |a, b| unsafe { vmulq_f32(a, b) },
+    |v| unsafe { vcvtq_f32_s32(v) },
+    |v| unsafe { vreinterpretq_f32_s32(v) },
+    |v| unsafe { vreinterpretq_s32_f32(v) },
+    |a, b| unsafe { vandq_s32(a, b) },
+    |a, b| unsafe { vorrq_s32(a, b) },
+    |v| unsafe { vshrq_n_s32(v, 23) },
+    |a, b| unsafe { vreinterpretq_f32_s32(vreinterpretq_s32_u32(vcgtq_f32(a, b))) },
+    |a, b| unsafe { vreinterpretq_f32_s32(vreinterpretq_s32_u32(vcltq_f32(a, b))) },
+    |a, b| unsafe { vreinterpretq_f32_s32(vreinterpretq_s32_u32(vceqq_f32(a, b))) },
+    |a, b| unsafe {
+        vreinterpretq_f32_s32(vandq_s32(
+            vreinterpretq_s32_f32(a),
+            vreinterpretq_s32_f32(b),
+        ))
+    },
+    |a, b| unsafe {
+        vreinterpretq_f32_s32(vbicq_s32(
+            vreinterpretq_s32_f32(b),
+            vreinterpretq_s32_f32(a),
+        ))
+    },
+    |a, b| unsafe {
+        vreinterpretq_f32_s32(vorrq_s32(
+            vreinterpretq_s32_f32(a),
+            vreinterpretq_s32_f32(b),
+        ))
+    }
+);
+// Ln: one-pass map; the register kernel handles normal x, the scalar tail
+// covers special cases (x <= 0, inf, NaN, subnormal).
+
+// Ln: one-pass map; the register kernel handles normal x, the scalar tail
+// covers special cases (x <= 0, inf, NaN, subnormal).
+crate::simd_map!(
+    ln,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    |v: float32x4_t| unsafe { vln_neon(v) },
+    |x: f32| crate::kernels::ln::ln(x)
 );
 
 // ===========================================================================
@@ -879,6 +947,7 @@ crate::simd_exp_f64!(
     |a, b| unsafe { vaddq_f64(a, b) },
     |a, b| unsafe { vsubq_f64(a, b) },
     |v| unsafe { vreinterpretq_f64_s64(v) },
+    |v| unsafe { vreinterpretq_s64_f64(v) },
     // Round-to-nearest (ties-even) float→int: the aarch64 FCVTNS instruction.
     |v| unsafe { vcvtaq_s64_f64(v) },
     // int→float for the reduction (exact for |n| < 2^52).
@@ -895,6 +964,57 @@ crate::simd_exp_f64!(
     // x86 semantics (~under & n_bits), so the operands must be swapped.
     |a, b| unsafe { vbicq_s64(b, a) },
     |a, b| unsafe { vorrq_s64(a, b) }
+);
+// Vector ln (f64): fdlibm e_log, see simd_ln_f64! in macros.rs.
+crate::simd_ln_f64!(
+    vln_128d,
+    "neon",
+    float64x2_t,
+    int64x2_t,
+    |s| unsafe { vdupq_n_f64(s) },
+    |i| unsafe { vdupq_n_s64(i) },
+    |a, b| unsafe { vaddq_f64(a, b) },
+    |a, b| unsafe { vsubq_f64(a, b) },
+    |a, b| unsafe { vmulq_f64(a, b) },
+    |a, b| unsafe { vdivq_f64(a, b) },
+    |v| unsafe { vreinterpretq_f64_s64(v) },
+    |v| unsafe { vreinterpretq_f64_s64(v) },
+    |v| unsafe { vreinterpretq_s64_f64(v) },
+    |a, b| unsafe { vandq_s64(a, b) },
+    |a, b| unsafe { vorrq_s64(a, b) },
+    |v| unsafe { vshrq_n_s64(v, 52) },
+    |a, b| unsafe { vreinterpretq_f64_s64(vreinterpretq_s64_u64(vcgtq_f64(a, b))) },
+    |a, b| unsafe { vreinterpretq_f64_s64(vreinterpretq_s64_u64(vcltq_f64(a, b))) },
+    |a, b| unsafe { vreinterpretq_f64_s64(vreinterpretq_s64_u64(vceqq_f64(a, b))) },
+    |a, b| unsafe {
+        vreinterpretq_f64_s64(vandq_s64(
+            vreinterpretq_s64_f64(a),
+            vreinterpretq_s64_f64(b),
+        ))
+    },
+    |a, b| unsafe {
+        vreinterpretq_f64_s64(vbicq_s64(
+            vreinterpretq_s64_f64(b),
+            vreinterpretq_s64_f64(a),
+        ))
+    },
+    |a, b| unsafe {
+        vreinterpretq_f64_s64(vorrq_s64(
+            vreinterpretq_s64_f64(a),
+            vreinterpretq_s64_f64(b),
+        ))
+    }
+);
+// Ln (f64): one-pass map; the register kernel handles normal x.
+crate::simd_map!(
+    ln_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    |v: float64x2_t| unsafe { vln_128d(v) },
+    |x: f64| crate::kernels::ln::ln_f64(x)
 );
 
 crate::simd_map!(
@@ -1092,12 +1212,12 @@ crate::simd_map!(
         } else if a < 0.1 {
             let y = x * x;
             let p = 0.003_592_128_572_437_055_f64;
-            let p = p.mul_add(y, -0.008_863_235_529_902_197);
-            let p = p.mul_add(y, 0.021_869_488_536_155_2);
-            let p = p.mul_add(y, -0.053_968_253_968_253_97);
-            let p = p.mul_add(y, 0.133_333_333_333_333_33);
-            let p = p.mul_add(y, -0.333_333_333_333_333_3);
-            x * p.mul_add(y, 1.0)
+            let p = p * y - 0.008_863_235_529_902_197;
+            let p = p * y + 0.021_869_488_536_155_2;
+            let p = p * y - 0.053_968_253_968_253_97;
+            let p = p * y + 0.133_333_333_333_333_33;
+            let p = p * y - 0.333_333_333_333_333_3;
+            x * (p * y + 1.0)
         } else {
             let e = crate::kernels::exp::exp_f64(2.0 * x);
             (e - 1.0) / (e + 1.0)
@@ -1106,6 +1226,18 @@ crate::simd_map!(
 );
 
 // RMS norm (f64).
+// Sub scalar (f64): x - p.
+crate::simd_map_param!(
+    sub_scalar_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    |v: float64x2_t, p1: f64, _p2: f64| vsubq_f64(v, vdupq_n_f64(p1)),
+    |x: f64, p1: f64, _p2: f64| x - p1
+);
+
 crate::simd_rms_norm!(
     rms_norm_f64,
     f64,

@@ -235,7 +235,7 @@ macro_rules! simd_exp {
         $mul:expr, $add:expr, $sub:expr,
         $andf:expr, $andnotf:expr, $orf:expr,
         $cmpgt_f:expr,
-        $cast_iv:expr,
+        $cast_iv:expr, $cast_vi:expr,
         $cvtt_f2i:expr, $slli_i:expr, $add_i:expr,
         $cmpgt_i:expr, $cmplt_i:expr,
         $and_i:expr, $andnot_i:expr, $or_i:expr
@@ -272,6 +272,27 @@ macro_rules! simd_exp {
                 $sub(v, $mul(n, $set1(0.693_145_75))),
                 $mul(n, $set1(1.428_606_77e-6)),
             );
+            // Zero r on saturated lanes BEFORE the poly: for huge |x| the
+            // float→int convert saturates and r = x - n·ln2 is garbage
+            // (the add-magic n is unchanged for |t| > 2^23), making the
+            // Taylor poly NaN/inf (NaN × 0 = NaN defeats the exponent
+            // clamp below). r = 0 gives poly = 1, so the clamped exponent
+            // scale produces the correct 0 or inf.
+            let n_int_early = $cvtt_f2i(n);
+            let sat = $or_i(
+                $cmplt_i(n_int_early, $set1i(-126)),
+                $cmpgt_i(n_int_early, $set1i(128)),
+            );
+            // NaN lanes must keep propagating NaN, not zero r: cvtt(NaN)
+            // saturates to i32::MIN so they would be classified as
+            // under-saturated. Detect NaN via bits (exponent all-ones +
+            // nonzero mantissa) and exempt them from the mask.
+            let nan = $cmpgt_i(
+                $and_i($cast_vi(v), $set1i(0x7fff_ffff)),
+                $set1i(0x7f80_0000),
+            );
+            let sat = $andnot_i(nan, sat);
+            let r = $andnotf($cast_iv(sat), r);
             // exp(r) degree-9 Taylor, Horner in r (NOT r² — r² would drop
             // odd powers and compute a cosh-like fn). Error < 0.35^10/10!.
             let p1 = $add($set1(1.0 / 362_880.0), $mul(r, $set1(1.0 / 3_628_800.0)));
@@ -324,7 +345,7 @@ macro_rules! simd_exp_f64 {
         $name:ident, $feat:literal, $vt:ty, $ivt:ty,
         $set1:expr, $set1i:expr,
         $mul:expr, $add:expr, $sub:expr,
-        $cast_iv:expr,
+        $cast_iv:expr, $cast_vi:expr,
         $round_f2i:expr, $cvti2f:expr, $slli_i:expr, $add_i:expr,
         $cmpgt_i:expr, $cmplt_i:expr,
         $and_i:expr, $andnot_i:expr, $or_i:expr
@@ -349,6 +370,23 @@ macro_rules! simd_exp_f64 {
                 $sub(v, $mul(n, $set1(6.931_471_803_691_238e-1))),
                 $mul(n, $set1(1.908_214_929_270_588e-10)),
             );
+            // Zero r on saturated lanes BEFORE the poly: for huge |x| the
+            // float→int convert saturates and r = x - n·ln2 is garbage,
+            // making the Taylor poly NaN/inf (NaN × 0 = NaN defeats the
+            // exponent clamp below). r = 0 gives poly = 1, so the clamped
+            // exponent scale produces the correct 0 or inf.
+            let sat = $or_i(
+                $cmplt_i(n_int, $set1i(-1022)),
+                $cmpgt_i(n_int, $set1i(1023)),
+            );
+            // NaN lanes must keep propagating NaN, not force p = 1:
+            // round(NaN) saturates so they'd be classified as saturated.
+            // Detect NaN via bits and exempt it from the mask.
+            let nan = $cmpgt_i(
+                $and_i($cast_vi(v), $set1i(0x7fff_ffff_ffff_ffff)),
+                $set1i(0x7ff0_0000_0000_0000),
+            );
+            let sat = $andnot_i(nan, sat);
             // exp(r) degree-20 Taylor, Horner in r (descending coefficients).
             let p1 = $add(
                 $set1(1.0 / 2_432_902_008_176_640_000.0),
@@ -382,7 +420,251 @@ macro_rules! simd_exp_f64 {
             let n_bits = $andnot_i(under, n_bits);
             let n_bits = $andnot_i(over, n_bits);
             let n_bits = $or_i(n_bits, $and_i(over, $set1i(0x7FF0_0000_0000_0000)));
+            // On saturated lanes force p = 1.0 (r was garbage, so the poly
+            // could be NaN/inf); the exponent clamp below then produces
+            // the correct 0 or inf.
+            let p_bits = $cast_vi(p);
+            let p_bits = $andnot_i(sat, p_bits);
+            let p_bits = $or_i(p_bits, $and_i(sat, $cast_vi($set1(1.0))));
+            let p = $cast_iv(p_bits);
             $mul(p, $cast_iv(n_bits))
+        }
+    };
+}
+
+/// Generate a register-only vector `ln` kernel for `f32` (`vln_128`,
+/// `vln_256`, `vln_512`, `vln_neon`).
+///
+/// Mirrors the scalar `kernels::ln::ln` (fdlibm `__ieee754_log`): extract
+/// exponent `k` and mantissa `f` so `x = 2^k·(1+f)` with `√2/2 < 1+f < √2`,
+/// then `ln(x) = k·ln2_hi + (f - s·(f - R))` with `s = f/(2+f)` and the
+/// degree-14 Lg polynomial `R(s²)`. Accuracy ≤ 1 ulp vs `f32::ln` over the
+/// full finite range (see the scalar's dense sweep).
+///
+/// # Safety
+/// The generated function is `unsafe fn` with `#[target_feature]`; the
+/// caller must verify the CPU feature before invoking it.
+///
+/// # Parameters
+///
+/// * `$name` — function name.
+/// * `$feat` — `target_feature` string.
+/// * `$vt` — float vector type.
+/// * `$ivt` — same-width integer vector type.
+/// * `$set1f` / `$set1i` — scalar broadcasts.
+/// * `$add/$sub/$mul/$div` — float ops.
+/// * `$cast_iv` — `int → float` bit-cast.
+/// * `$cast_vi` — `float → int` bit-cast.
+/// * `$and_i/$or_i/$slli_i/$srli_i/$cmpgt_i` — integer ops.
+/// * `$cmpgt_f/$cmplt_f/$cmpeq_f` — float compares (float-mask vectors).
+/// * `$andf/$andnotf/$orf` — float-domain bit ops (for masking).
+#[macro_export]
+macro_rules! simd_ln {
+    (
+        $name:ident, $feat:literal, $vt:ty, $ivt:ty,
+        $set1f:expr, $set1i:expr,
+        $add:expr, $sub:expr, $mul:expr,
+        $cast_iv:expr, $cast_ib:expr, $cast_vi:expr,
+        $and_i:expr, $or_i:expr,
+        $srli_i:expr,
+        $cmpgt_f:expr, $cmplt_f:expr, $cmpeq_f:expr,
+        $andf:expr, $andnotf:expr, $orf:expr
+    ) => {
+        /// Vector `f32` `ln`, register-only. Matches the scalar
+        /// `kernels::ln::ln` to ≤ 1 ulp on the normal range.
+        ///
+        /// # Safety
+        /// Caller must ensure the CPU feature is available and `v` has no
+        /// special-case lanes (x ≤ 0, subnormal, inf, NaN); the enclosing
+        /// map kernel's scalar tail handles those. This register path
+        /// assumes normal positive finite `x`.
+        #[cfg(feature = "alloc")]
+        #[inline]
+        #[target_feature(enable = $feat)]
+        unsafe fn $name(v: $vt) -> $vt {
+            // Subnormal scaling is branchless here but the contract
+            // excludes subnormals from the vector path (see the scalar
+            // `kernels::ln::ln` which handles them); the map macro's
+            // scalar tail covers the remainder lanes where subnormals
+            // typically appear. For safety this macro still scales
+            // in-range subnormals correctly when they do occur.
+            let min_norm = $set1f(1.175_494_35e-38); // 2^-126
+            let is_sub = $cmplt_f(v, min_norm);
+            let scale = $orf($andf(is_sub, $set1f(33_554_432.0)), $set1f(1.0)); // 2^25
+            let x = $mul(v, scale);
+            let k_adj = $andf(is_sub, $set1f(-25.0));
+            // exponent/mantissa extraction.
+            let bits = $cast_vi(x);
+            // Exponent: shifted right 23 → numeric convert (cvtepi32_ps);
+            // mantissa: bit-pattern float in [1, 2) → bitcast.
+            let exp = $sub($cast_iv($srli_i(bits)), $set1f(127.0));
+            let mant = $or_i($and_i(bits, $set1i(0x7f_ffff)), $set1i(0x3f80_0000));
+            let m = $cast_ib(mant); // m ∈ [1, 2)
+            // normalize: m ≥ √2 → m/2, k += 1.
+            // m ≥ √2 (including the boundary float, matching fdlibm's
+            // bit test): ge = NOT(m < √2).
+            let ge_sqrt2 = $andnotf($cmplt_f(m, $set1f(1.414_213_5)), $cast_ib($set1i(-1)));
+            let m = $add($mul($andf(ge_sqrt2, m), $set1f(0.5)), $andnotf(ge_sqrt2, m));
+            let k = $add($add(exp, $andf(ge_sqrt2, $set1f(1.0))), k_adj);
+            let f = $sub(m, $set1f(1.0));
+            // SLEEF division-free core (same reduction as fdlibm, one
+            // degree-8 minimax poly instead of the s-form's division):
+            // ln(1+f) = f - f²/2 + f³·P(f) on f ∈ [-0.293, 0.414).
+            let f2 = $mul(f, f);
+            let f3 = $mul(f2, f);
+            let mut p = $set1f(7.037_683_629_2e-02); // P8
+            p = $add($mul(p, f), $set1f(-1.151_461_031_0e-01)); // P7
+            p = $add($mul(p, f), $set1f(1.167_699_874_0e-01));
+            p = $add($mul(p, f), $set1f(-1.242_014_084_6e-01));
+            p = $add($mul(p, f), $set1f(1.424_932_278_7e-01));
+            p = $add($mul(p, f), $set1f(-1.666_805_766_5e-01));
+            p = $add($mul(p, f), $set1f(2.000_071_476_5e-01));
+            p = $add($mul(p, f), $set1f(-2.499_999_399_3e-01));
+            p = $add($mul(p, f), $set1f(3.333_333_117_4e-01));
+            // ln(x) = k·ln2_hi + (f - f²/2 + f³·P) + k·ln2_lo (wide's order).
+            let k2lo = $mul(k, $set1f(-2.121_944_40e-04));
+            let mut normal = $mul(f3, p);
+            normal = $add(k2lo, normal);
+            normal = $add($sub(f, $mul($set1f(0.5), f2)), normal);
+            let k2hi = $mul(k, $set1f(6.933_593_75e-01));
+            normal = $add(k2hi, normal);
+            // Special-case masks (branchless): x < 0 (excludes -0.0) → NaN,
+            // x = ±0 → -inf, x = +inf → +inf, NaN → NaN (propagate).
+            // Order: NaN and zero are disjoint (cmpeq with NaN is false).
+            let zero_v = $set1f(0.0);
+            let nan_v = $set1f(f32::NAN);
+            let is_neg = $cmplt_f(v, zero_v);
+            let is_zero = $cmpeq_f(v, zero_v);
+            let is_inf = $cmpeq_f(v, $set1f(f32::INFINITY));
+            let is_nan = $andnotf($cmpeq_f(v, v), $cast_ib($set1i(-1)));
+            let mut result = normal;
+            result = $orf($andf(is_neg, nan_v), $andnotf(is_neg, result));
+            result = $orf(
+                $andf(is_zero, $set1f(f32::NEG_INFINITY)),
+                $andnotf(is_zero, result),
+            );
+            result = $orf(
+                $andf(is_inf, $set1f(f32::INFINITY)),
+                $andnotf(is_inf, result),
+            );
+            result = $orf($andf(is_nan, nan_v), $andnotf(is_nan, result));
+            result
+        }
+    };
+}
+
+/// Generate a register-only vector `ln` kernel for `f64` (`vln_128d`,
+/// `vln_256d`, `vln_512d`).
+///
+/// Same fdlibm `__ieee754_log` reduction as [`simd_ln!`] but with the f64
+/// constants (bit-exact fdlibm values), 52-bit exponent shifts, and bias
+/// 1023. Accuracy ≤ 1 ulp vs `f64::ln` over the full finite range.
+///
+/// # Safety
+/// The generated function is `unsafe fn` with `#[target_feature]`; the
+/// caller must verify the CPU feature before invoking it.
+#[macro_export]
+macro_rules! simd_ln_f64 {
+    (
+        $name:ident, $feat:literal, $vt:ty, $ivt:ty,
+        $set1f:expr, $set1i:expr,
+        $add:expr, $sub:expr, $mul:expr, $div:expr,
+        $cast_iv:expr, $cast_ib:expr, $cast_vi:expr,
+        $and_i:expr, $or_i:expr,
+        $srli_i:expr,
+        $cmpgt_f:expr, $cmplt_f:expr, $cmpeq_f:expr,
+        $andf:expr, $andnotf:expr, $orf:expr
+    ) => {
+        /// Vector `f64` `ln`, register-only. Matches the scalar
+        /// `kernels::ln::ln_f64` to ≤ 1 ulp on the normal range.
+        ///
+        /// # Safety
+        /// Caller must ensure the CPU feature is available. Subnormal lanes
+        /// are scaled by 2^54 branchlessly; special cases are masked.
+        #[cfg(feature = "alloc")]
+        #[inline]
+        #[target_feature(enable = $feat)]
+        unsafe fn $name(v: $vt) -> $vt {
+            let min_norm = $set1f(2.225_073_858_507_201_4e-308); // 2^-1022
+            let is_sub = $cmplt_f(v, min_norm);
+            let scale = $orf($andf(is_sub, $set1f(18_014_398_509_481_984.0)), $set1f(1.0)); // 2^54
+            let x = $mul(v, scale);
+            let k_adj = $andf(is_sub, $set1f(-54.0));
+            let bits = $cast_vi(x);
+            // Exponent: i64 → f64 numeric conversion does not exist below
+            // AVX-512DQ, so use the 2^52 magic: (e | 2^52) - 2^52 is an
+            // exact integer→float convert for e ∈ [0, 2046].
+            let e_int = $srli_i(bits);
+            let e_magic = $cast_ib($or_i(e_int, $set1i(0x4330_0000_0000_0000)));
+            let exp = $sub(
+                $sub(e_magic, $set1f(4_503_599_627_370_496.0)),
+                $set1f(1023.0),
+            );
+            let mant = $or_i(
+                $and_i(bits, $set1i(0x000f_ffff_ffff_ffff)),
+                $set1i(0x3ff0_0000_0000_0000),
+            );
+            let m = $cast_ib(mant);
+            // m ≥ √2 (including the boundary float, matching fdlibm's
+            // bit test): ge = NOT(m < √2).
+            let ge_sqrt2 = $andnotf(
+                $cmplt_f(m, $set1f(1.414_213_562_373_095_1)),
+                $cast_ib($set1i(-1)),
+            );
+            let m = $add($mul($andf(ge_sqrt2, m), $set1f(0.5)), $andnotf(ge_sqrt2, m));
+            let k = $add($add(exp, $andf(ge_sqrt2, $set1f(1.0))), k_adj);
+            let f = $sub(m, $set1f(1.0));
+            let s = $div(f, $add($set1f(2.0), f));
+            let z = $mul(s, s);
+            let w = $mul(z, z);
+            let w2 = $mul(w, w);
+            let t1 = $mul(
+                w,
+                $add(
+                    $set1f(3.999_999_999_940_941_908e-01), // Lg2
+                    $add(
+                        $mul(w, $set1f(2.222_219_843_214_978_396e-01)), // Lg4
+                        $mul(w2, $set1f(1.531_383_769_920_937_332e-01)), // Lg6
+                    ),
+                ),
+            );
+            let t2 = $mul(
+                z,
+                $add(
+                    $set1f(6.666_666_666_666_735_130e-01), // Lg1
+                    $add(
+                        $mul(w, $set1f(2.857_142_874_366_239_149e-01)), // Lg3
+                        $add(
+                            $mul(w2, $set1f(1.818_357_216_161_805_012e-01)), // Lg5
+                            $mul($mul(w2, w), $set1f(1.479_819_860_511_658_591e-01)), // Lg7
+                        ),
+                    ),
+                ),
+            );
+            let r = $add(t2, t1);
+            let k2hi = $mul(k, $set1f(6.931_471_803_691_238_164_90e-01));
+            let k2lo = $mul(k, $set1f(1.908_214_929_270_587_700_02e-10));
+            let inner = $sub(f, $mul(s, $sub(f, r)));
+            let normal = $add(k2hi, $sub(inner, k2lo));
+            // Special-case masks (same contract as the f32 kernel).
+            let zero_v = $set1f(0.0);
+            let nan_v = $set1f(f64::NAN);
+            let is_neg = $cmplt_f(v, zero_v);
+            let is_zero = $cmpeq_f(v, zero_v);
+            let is_inf = $cmpeq_f(v, $set1f(f64::INFINITY));
+            let is_nan = $andnotf($cmpeq_f(v, v), $cast_ib($set1i(-1)));
+            let mut result = normal;
+            result = $orf($andf(is_neg, nan_v), $andnotf(is_neg, result));
+            result = $orf(
+                $andf(is_zero, $set1f(f64::NEG_INFINITY)),
+                $andnotf(is_zero, result),
+            );
+            result = $orf(
+                $andf(is_inf, $set1f(f64::INFINITY)),
+                $andnotf(is_inf, result),
+            );
+            result = $orf($andf(is_nan, nan_v), $andnotf(is_nan, result));
+            result
         }
     };
 }

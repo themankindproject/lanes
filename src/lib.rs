@@ -117,7 +117,7 @@ pub use error::Error;
 
 /// Statistical reductions (aggregates over slices): `sum`, `prod`, `min`,
 /// `max`, `argmax`, `argmin`, `sum_sq`, `mean`, `variance`, `std_dev`,
-/// `dot`.
+/// `geometric_mean`, `dot`.
 ///
 /// Precision is selected via the [`f32`] or [`f64`] submodule.
 pub mod stats {
@@ -132,14 +132,16 @@ pub mod distance {
 }
 
 /// Elementwise math functions (per-element maps): `sqrt`, `clip`, `rsqrt`,
-/// `exp`, `tanh`. Precision is selected via the [`f32`] or [`f64`] submodule.
+/// `exp`, `ln`, `tanh`. Precision is selected via the [`f32`] or [`f64`]
+/// submodule.
 #[cfg(feature = "alloc")]
 pub mod math {
     pub use crate::algorithms::math::{f32, f64};
 }
 
-/// ML kernels built on the `lanes` core (softmax, `rms_norm`,
-/// `cosine_similarity`, and future layer-norm, quantize, argmax). Available
+/// ML kernels built on the `lanes` core (softmax, sigmoid, silu, gelu,
+/// relu, tanh, `rms_norm`, `layer_norm`, `cosine_similarity`,
+/// `logsumexp`). Available
 /// on any target with an allocator: built with `std`, or with `no_std` +
 /// the `alloc` feature. Precision is selected via the [`f32`] or [`f64`]
 /// submodule.

@@ -179,6 +179,64 @@ pub mod f32 {
         }
         Ok(Some(dot / (na * nb)))
     }
+
+    /// Numerically-stable log-sum-exp: `ln(sum_i exp(x_i))`, the denominator
+    /// of the log-softmax and the log-normalizer of cross-entropy losses.
+    ///
+    /// Computes `max(x) + ln(sum_i exp(x_i - max(x)))`. The max subtraction
+    /// prevents overflow for large inputs. An empty slice yields
+    /// `-infinity`. Returns a scalar `f32`.
+    ///
+    /// # Example
+    /// ```
+    /// let s = lanes::ml::f32::logsumexp(&[1.0_f32, 2.0, 3.0]);
+    /// assert!((s - 3.407_606).abs() < 1e-5);
+    /// ```
+    #[must_use]
+    pub fn logsumexp(values: &[f32]) -> f32 {
+        if values.is_empty() {
+            return f32::NEG_INFINITY;
+        }
+        let backend = Backend::detect();
+        let m = kernels::dispatch_max(backend, values).unwrap_or(f32::NAN);
+        let mut out = alloc::vec![0.0_f32; values.len()];
+        kernels::dispatch_sub_scalar(backend, values, m, m, &mut out);
+        let shifted = out.clone();
+        kernels::dispatch_exp(backend, &shifted, &mut out);
+        let s = kernels::dispatch_sum(backend, &out);
+        m + kernels::ln::ln(s)
+    }
+
+    /// Layer normalization: `(x_i - mean(x)) / sqrt(variance(x) + eps)`.
+    ///
+    /// The standard pre-activation norm (complement to [`rms_norm`], which
+    /// drops the mean). Returns a new `Vec` of the same length; an empty
+    /// slice yields an empty `Vec`. NaNs propagate.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::ml::f32::layer_norm(&[1.0_f32, 2.0, 3.0], 1e-5);
+    /// let m: f32 = v.iter().sum::<f32>() / 3.0;
+    /// assert!(m.abs() < 1e-6);
+    /// // sum of squares after norm is n·var/(var+eps) ≈ 3 for this input.
+    /// let s: f32 = v.iter().map(|x| x * x).sum();
+    /// assert!((s - 3.0).abs() < 1e-3);
+    /// ```
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // `len as f32` is inherent to the mean
+    pub fn layer_norm(values: &[f32], eps: f32) -> Vec<f32> {
+        let mut out = alloc::vec![0.0_f32; values.len()];
+        if values.is_empty() {
+            return out;
+        }
+        let backend = Backend::detect();
+        let mean = kernels::dispatch_sum(backend, values) / values.len() as f32;
+        kernels::dispatch_sub_scalar(backend, values, mean, mean, &mut out);
+        let centered: alloc::vec::Vec<f32> = out.clone();
+        kernels::dispatch_rms_norm(backend, &centered, eps, &mut out);
+        out
+    }
 }
 
 pub mod f64 {
@@ -350,5 +408,63 @@ pub mod f64 {
             return Ok(None);
         }
         Ok(Some(dot / (na * nb)))
+    }
+
+    /// Numerically-stable log-sum-exp: `ln(sum_i exp(x_i))`, the denominator
+    /// of the log-softmax and the log-normalizer of cross-entropy losses.
+    ///
+    /// Computes `max(x) + ln(sum_i exp(x_i - max(x)))`. The max subtraction
+    /// prevents overflow for large inputs. An empty slice yields
+    /// `-infinity`.
+    ///
+    /// # Example
+    /// ```
+    /// let s = lanes::ml::f64::logsumexp(&[1.0_f64, 2.0, 3.0]);
+    /// assert!((s - 3.407_605_964_444_385).abs() < 1e-12);
+    /// ```
+    #[must_use]
+    pub fn logsumexp(values: &[f64]) -> f64 {
+        if values.is_empty() {
+            return f64::NEG_INFINITY;
+        }
+        let backend = Backend::detect();
+        let m = kernels::dispatch_max_f64(backend, values).unwrap_or(f64::NAN);
+        let mut out = alloc::vec![0.0_f64; values.len()];
+        kernels::dispatch_sub_scalar_f64(backend, values, m, m, &mut out);
+        let shifted = out.clone();
+        kernels::dispatch_exp_f64(backend, &shifted, &mut out);
+        let s = kernels::dispatch_sum_f64(backend, &out);
+        m + kernels::ln::ln_f64(s)
+    }
+
+    /// Layer normalization: `(x_i - mean(x)) / sqrt(variance(x) + eps)`.
+    ///
+    /// The standard pre-activation norm (complement to [`rms_norm`], which
+    /// drops the mean). Returns a new `Vec` of the same length; an empty
+    /// slice yields an empty `Vec`. NaNs propagate.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::ml::f64::layer_norm(&[1.0_f64, 2.0, 3.0], 1e-10);
+    /// let m: f64 = v.iter().sum::<f64>() / 3.0;
+    /// assert!(m.abs() < 1e-12);
+    /// // sum of squares after norm is n·var/(var+eps) ≈ 3 for this input.
+    /// let s: f64 = v.iter().map(|x| x * x).sum();
+    /// assert!((s - 3.0).abs() < 1e-9);
+    /// ```
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // `len as f64` is inherent to the mean
+    pub fn layer_norm(values: &[f64], eps: f64) -> Vec<f64> {
+        let mut out = alloc::vec![0.0_f64; values.len()];
+        if values.is_empty() {
+            return out;
+        }
+        let backend = Backend::detect();
+        let mean = kernels::dispatch_sum_f64(backend, values) / values.len() as f64;
+        kernels::dispatch_sub_scalar_f64(backend, values, mean, mean, &mut out);
+        let centered = out.clone();
+        kernels::dispatch_rms_norm_f64(backend, &centered, eps, &mut out);
+        out
     }
 }

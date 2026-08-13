@@ -392,6 +392,18 @@ crate::simd_map!(
 );
 
 // RMS norm: two-pass (sum of squares, then scale by rsqrt).
+// Sub scalar: x - p (used by logsumexp/layer_norm centering).
+crate::simd_map_param!(
+    sub_scalar,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    |p, v| unsafe { _mm_storeu_ps(p, v) },
+    |v: __m128, p1: f32, _p2: f32| _mm_sub_ps(v, _mm_set1_ps(p1)),
+    |x: f32, p1: f32, _p2: f32| x - p1
+);
+
 crate::simd_rms_norm!(
     rms_norm,
     f32,
@@ -468,6 +480,7 @@ crate::simd_exp!(
     |a, b| unsafe { _mm_or_ps(a, b) },
     |a, b| unsafe { _mm_cmpgt_ps(a, b) },
     |v| unsafe { _mm_castsi128_ps(v) },
+    |v| unsafe { _mm_castps_si128(v) },
     |v| unsafe { _mm_cvttps_epi32(v) },
     |v| unsafe { _mm_slli_epi32(v, 23) },
     |a, b| unsafe { _mm_add_epi32(a, b) },
@@ -476,6 +489,43 @@ crate::simd_exp!(
     |a, b| unsafe { _mm_and_si128(a, b) },
     |a, b| unsafe { _mm_andnot_si128(a, b) },
     |a, b| unsafe { _mm_or_si128(a, b) }
+);
+
+// Vector ln (f32): fdlibm e_log reduction, see simd_ln! in macros.rs.
+crate::simd_ln!(
+    vln_128,
+    "sse2",
+    __m128,
+    __m128i,
+    |s| unsafe { _mm_set1_ps(s) },
+    |i| unsafe { _mm_set1_epi32(i) },
+    |a, b| unsafe { _mm_add_ps(a, b) },
+    |a, b| unsafe { _mm_sub_ps(a, b) },
+    |a, b| unsafe { _mm_mul_ps(a, b) },
+    |v| unsafe { _mm_cvtepi32_ps(v) },
+    |v| unsafe { _mm_castsi128_ps(v) },
+    |v| unsafe { _mm_castps_si128(v) },
+    |a, b| unsafe { _mm_and_si128(a, b) },
+    |a, b| unsafe { _mm_or_si128(a, b) },
+    |v| unsafe { _mm_srli_epi32(v, 23) },
+    |a, b| unsafe { _mm_cmpgt_ps(a, b) },
+    |a, b| unsafe { _mm_cmplt_ps(a, b) },
+    |a, b| unsafe { _mm_cmpeq_ps(a, b) },
+    |a, b| unsafe { _mm_and_ps(a, b) },
+    |a, b| unsafe { _mm_andnot_ps(a, b) },
+    |a, b| unsafe { _mm_or_ps(a, b) }
+);
+// Ln: one-pass map; the register kernel handles normal x, the scalar tail
+// covers special cases (x <= 0, inf, NaN, subnormal).
+crate::simd_map!(
+    ln,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    |p, v| unsafe { _mm_storeu_ps(p, v) },
+    |v: __m128| unsafe { vln_128(v) },
+    |x: f32| crate::kernels::ln::ln(x)
 );
 
 /// Horizontal sum of the 4 lanes in a `__m128` register.
@@ -954,6 +1004,7 @@ crate::simd_exp_f64!(
     |a, b| unsafe { _mm_add_pd(a, b) },
     |a, b| unsafe { _mm_sub_pd(a, b) },
     |v| unsafe { _mm_castsi128_pd(v) },
+    |v| unsafe { _mm_castpd_si128(v) },
     // Round-to-nearest without SSE4.1: trunc(v + copysign(0.5, v))
     // (round-half-away-from-zero; ≤1 ulp difference from ties-even at the
     // exp boundary, within tolerance). Conversion goes through i32 (|n| ≤
@@ -985,6 +1036,42 @@ crate::simd_exp_f64!(
     |a, b| unsafe { _mm_and_si128(a, b) },
     |a, b| unsafe { _mm_andnot_si128(a, b) },
     |a, b| unsafe { _mm_or_si128(a, b) }
+);
+// Vector ln (f64): fdlibm e_log, see simd_ln_f64! in macros.rs.
+crate::simd_ln_f64!(
+    vln_128d,
+    "sse2",
+    __m128d,
+    __m128i,
+    |s| unsafe { _mm_set1_pd(s) },
+    |i| unsafe { _mm_set1_epi64x(i) },
+    |a, b| unsafe { _mm_add_pd(a, b) },
+    |a, b| unsafe { _mm_sub_pd(a, b) },
+    |a, b| unsafe { _mm_mul_pd(a, b) },
+    |a, b| unsafe { _mm_div_pd(a, b) },
+    |v| unsafe { _mm_castsi128_pd(v) },
+    |v| unsafe { _mm_castsi128_pd(v) },
+    |v| unsafe { _mm_castpd_si128(v) },
+    |a, b| unsafe { _mm_and_si128(a, b) },
+    |a, b| unsafe { _mm_or_si128(a, b) },
+    |v| unsafe { _mm_srli_epi64(v, 52) },
+    |a, b| unsafe { _mm_cmpgt_pd(a, b) },
+    |a, b| unsafe { _mm_cmplt_pd(a, b) },
+    |a, b| unsafe { _mm_cmpeq_pd(a, b) },
+    |a, b| unsafe { _mm_and_pd(a, b) },
+    |a, b| unsafe { _mm_andnot_pd(a, b) },
+    |a, b| unsafe { _mm_or_pd(a, b) }
+);
+// Ln (f64): one-pass map; the register kernel handles normal x.
+crate::simd_map!(
+    ln_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    |p, v| unsafe { _mm_storeu_pd(p, v) },
+    |v: __m128d| unsafe { vln_128d(v) },
+    |x: f64| crate::kernels::ln::ln_f64(x)
 );
 
 crate::simd_map!(
@@ -1188,12 +1275,12 @@ crate::simd_map!(
         } else if a < 0.1 {
             let y = x * x;
             let p = 0.003_592_128_572_437_055_f64;
-            let p = p.mul_add(y, -0.008_863_235_529_902_197);
-            let p = p.mul_add(y, 0.021_869_488_536_155_2);
-            let p = p.mul_add(y, -0.053_968_253_968_253_97);
-            let p = p.mul_add(y, 0.133_333_333_333_333_33);
-            let p = p.mul_add(y, -0.333_333_333_333_333_3);
-            x * p.mul_add(y, 1.0)
+            let p = p * y - 0.008_863_235_529_902_197;
+            let p = p * y + 0.021_869_488_536_155_2;
+            let p = p * y - 0.053_968_253_968_253_97;
+            let p = p * y + 0.133_333_333_333_333_33;
+            let p = p * y - 0.333_333_333_333_333_3;
+            x * (p * y + 1.0)
         } else {
             let e = crate::kernels::exp::exp_f64(2.0 * x);
             (e - 1.0) / (e + 1.0)
@@ -1202,6 +1289,18 @@ crate::simd_map!(
 );
 
 // RMS norm (f64).
+// Sub scalar (f64): x - p.
+crate::simd_map_param!(
+    sub_scalar_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    |p, v| unsafe { _mm_storeu_pd(p, v) },
+    |v: __m128d, p1: f64, _p2: f64| _mm_sub_pd(v, _mm_set1_pd(p1)),
+    |x: f64, p1: f64, _p2: f64| x - p1
+);
+
 crate::simd_rms_norm!(
     rms_norm_f64,
     f64,

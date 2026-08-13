@@ -131,6 +131,30 @@ pub mod f32 {
         kernels::dispatch_exp(backend, values, &mut out);
         out
     }
+
+    /// Elementwise natural logarithm over a slice: `ln(x)` per element.
+    ///
+    /// Returns a new `Vec` of the same length; an empty slice yields an empty
+    /// `Vec`. Follows IEEE 754: `ln(±0) = -inf`, `ln(x < 0) = NaN`,
+    /// `ln(+inf) = +inf`, `ln(NaN) = NaN`. Accuracy: ≤ 1 ulp vs `f32::ln`
+    /// (fdlibm algorithm).
+    ///
+    /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::math::f32::ln(&[1.0_f32, std::f32::consts::E]);
+    /// assert!(v[0].abs() < 1e-6);
+    /// assert!((v[1] - 1.0).abs() < 1e-6);
+    /// ```
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn ln(values: &[f32]) -> Vec<f32> {
+        let mut out = alloc::vec![0.0_f32; values.len()];
+        let backend = Backend::detect();
+        kernels::dispatch_ln(backend, values, &mut out);
+        out
+    }
 }
 
 pub mod f64 {
@@ -231,6 +255,30 @@ pub mod f64 {
         let mut out = alloc::vec![0.0_f64; values.len()];
         let backend = Backend::detect();
         kernels::dispatch_exp_f64(backend, values, &mut out);
+        out
+    }
+
+    /// Elementwise natural logarithm over a slice: `ln(x)` per element.
+    ///
+    /// Returns a new `Vec` of the same length; an empty slice yields an empty
+    /// `Vec`. Follows IEEE 754: `ln(±0) = -inf`, `ln(x < 0) = NaN`,
+    /// `ln(+inf) = +inf`, `ln(NaN) = NaN`. Accuracy: ≤ 1 ulp vs `f64::ln`
+    /// (fdlibm algorithm).
+    ///
+    /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::math::f64::ln(&[1.0_f64, std::f64::consts::E]);
+    /// assert!(v[0].abs() < 1e-12);
+    /// assert!((v[1] - 1.0).abs() < 1e-12);
+    /// ```
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn ln(values: &[f64]) -> Vec<f64> {
+        let mut out = alloc::vec![0.0_f64; values.len()];
+        let backend = Backend::detect();
+        kernels::dispatch_ln_f64(backend, values, &mut out);
         out
     }
 

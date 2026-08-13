@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ln` (`math`), `logsumexp`/`layer_norm` (`ml`), and
+  `geometric_mean` (`stats`) in both `f32` and `f64`. `ln` gets a
+  full SIMD kernel on every backend (scalar, SSE2, AVX2, AVX-512F,
+  NEON) with fdlibm/SLEEF reduction, ≤ 1 ulp vs `std`; the composed
+  functions reuse the existing `exp`/`rms_norm`/reduction kernels.
 - `std_dev` (`stats`), `tanh` (`math`), `rms_norm` and
   `cosine_similarity` (`ml`) in both `f32` and `f64`. `tanh` and
   `rms_norm` get SIMD kernels on every backend (scalar, SSE2, AVX2,

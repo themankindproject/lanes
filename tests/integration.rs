@@ -885,3 +885,69 @@ fn cosine_similarity_known_cases() {
         Ok(None)
     );
 }
+
+#[test]
+fn ln_matches_std() {
+    for &x in &[1.0_f32, std::f32::consts::E, 2.0, 0.5, 0.001, 1e30, 1e-30] {
+        let got = lanes::math::f32::ln(&[x])[0];
+        assert!(
+            (got - x.ln()).abs() < 1e-5 * x.ln().abs().max(1.0),
+            "ln({x})"
+        );
+    }
+    for &x in &[1.0_f64, std::f64::consts::E, 2.0, 0.5, 0.001, 1e200, 1e-200] {
+        let got = lanes::math::f64::ln(&[x])[0];
+        assert!(
+            (got - x.ln()).abs() < 1e-12 * x.ln().abs().max(1.0),
+            "ln_f64({x})"
+        );
+    }
+    assert!(lanes::math::f32::ln(&[0.0_f32])[0].is_infinite());
+    assert!(lanes::math::f32::ln(&[-1.0_f32])[0].is_nan());
+    assert_eq!(lanes::math::f32::ln(&[f32::INFINITY])[0], f32::INFINITY);
+}
+
+#[test]
+fn logsumexp_stable_and_correct() {
+    let s = lanes::ml::f32::logsumexp(&[1.0_f32, 2.0, 3.0]);
+    assert!((s - 3.407_606).abs() < 1e-5);
+    assert_eq!(lanes::ml::f32::logsumexp(&[]), f32::NEG_INFINITY);
+    // Huge constants shift the result, not the shape.
+    let a = lanes::ml::f32::logsumexp(&[1.0_f32, 2.0, 3.0]);
+    let b = lanes::ml::f32::logsumexp(&[101.0_f32, 102.0, 103.0]);
+    assert!((b - a - 100.0).abs() < 1e-4);
+    let d = lanes::ml::f64::logsumexp(&[1.0_f64, 2.0, 3.0]);
+    assert!((d - 3.407_605_964_444_385).abs() < 1e-12);
+    assert_eq!(lanes::ml::f64::logsumexp(&[]), f64::NEG_INFINITY);
+}
+
+#[test]
+fn layer_norm_zero_mean_unit_var() {
+    for v in [vec![1.0_f32, 2.0, 3.0], vec![-2.0_f32, 5.0, -1.0, 4.0]] {
+        let out = lanes::ml::f32::layer_norm(&v, 1e-5);
+        let mean: f32 = out.iter().sum::<f32>() / out.len() as f32;
+        assert!(mean.abs() < 1e-5, "mean {mean}");
+        let var: f32 = out.iter().map(|x| x * x).sum::<f32>() / out.len() as f32;
+        assert!((var - 1.0).abs() < 1e-4, "var {var}");
+    }
+    // Constant vector: zero variance → layer_norm is all zeros (the
+    // standard definition; there is no unit variance to normalize to).
+    let out = lanes::ml::f32::layer_norm(&[1000.0_f32, 1000.0, 1000.0], 1e-5);
+    assert!(out.iter().all(|&x| x.abs() < 1e-6));
+    let out = lanes::ml::f64::layer_norm(&[1.0_f64, 2.0, 3.0], 1e-10);
+    let mean: f64 = out.iter().sum::<f64>() / 3.0;
+    assert!(mean.abs() < 1e-12);
+    assert_eq!(lanes::ml::f32::layer_norm(&[], 1e-5), Vec::<f32>::new());
+}
+
+#[test]
+fn geometric_mean_matches_product() {
+    let g = lanes::stats::f32::geometric_mean(&[1.0_f32, 4.0, 16.0]).unwrap();
+    assert!((g - 4.0).abs() < 1e-5);
+    let g = lanes::stats::f64::geometric_mean(&[1.0_f64, 4.0, 16.0]).unwrap();
+    assert!((g - 4.0).abs() < 1e-12);
+    assert!(lanes::stats::f32::geometric_mean(&[]).is_none());
+    assert!(lanes::stats::f32::geometric_mean(&[1.0_f32, -1.0]).is_none());
+    assert!(lanes::stats::f32::geometric_mean(&[1.0_f32, 0.0]).is_none());
+    assert!(lanes::stats::f64::geometric_mean(&[1.0_f64, f64::NAN]).is_none());
+}

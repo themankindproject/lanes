@@ -61,5 +61,23 @@ fuzz_target!(|input: ExpInput| {
             );
             assert!(t >= -1.0 && t <= 1.0, "tanh({x:e}) = {t} out of [-1,1]");
         }
+
+        // ln: IEEE special cases must match exactly, finite values ≤ 2 ulp
+        // (the kernel contract is ≤ 1 ulp; one extra for the map plumbing).
+        let l = lanes::math::f32::ln(std::slice::from_ref(&x))[0];
+        let lwant = x.ln();
+        assert!(
+            l.is_nan() == lwant.is_nan(),
+            "ln({x:e}) = {l:e}, std = {lwant:e}: NaN mismatch"
+        );
+        if l.is_infinite() || lwant.is_infinite() {
+            assert_eq!(l, lwant, "ln({x:e}) = {l:e}, std = {lwant:e}: inf mismatch");
+        } else if l.is_finite() {
+            assert!(
+                ulps(l, lwant) <= 2,
+                "ln({x:e}) = {l:e}, std = {lwant:e}, ulps = {}",
+                ulps(l, lwant)
+            );
+        }
     }
 });

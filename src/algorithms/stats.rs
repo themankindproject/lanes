@@ -195,6 +195,37 @@ pub mod f32 {
         variance(values).map(crate::kernels::sqrt::sqrt)
     }
 
+    /// Compute the geometric mean of a slice:
+    /// `exp(mean(ln(x)))`, the n-th root of the product.
+    ///
+    /// Returns [`None`] if the slice is empty, or if it contains any value
+    /// ≤ 0 (`ln` of a non-positive is `-inf`/NaN and the geometric mean is
+    /// undefined over the reals). NaN propagates.
+    ///
+    /// Gated on `alloc`: uses the vectorized `ln` map + `exp`.
+    ///
+    /// # Example
+    /// ```
+    /// let g = lanes::stats::f32::geometric_mean(&[1.0_f32, 4.0, 16.0]).unwrap();
+    /// assert!((g - 4.0).abs() < 1e-5);
+    /// ```
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // `len as f32` is inherent to the mean
+    pub fn geometric_mean(values: &[f32]) -> Option<f32> {
+        if values.is_empty() {
+            return None;
+        }
+        if values.iter().any(|&x| x <= 0.0 || x.is_nan()) {
+            return None;
+        }
+        let backend = Backend::detect();
+        let mut logs = alloc::vec![0.0_f32; values.len()];
+        kernels::dispatch_ln(backend, values, &mut logs);
+        let mean = kernels::dispatch_sum(backend, &logs) / values.len() as f32;
+        Some(crate::kernels::exp::exp(mean))
+    }
+
     /// Compute the dot product of two slices (linear algebra, part of the
     /// `stats` family).
     ///
@@ -408,6 +439,37 @@ pub mod f64 {
     #[must_use]
     pub fn std_dev(values: &[f64]) -> Option<f64> {
         variance(values).map(crate::kernels::sqrt::sqrt_f64)
+    }
+
+    /// Compute the geometric mean of a slice:
+    /// `exp(mean(ln(x)))`, the n-th root of the product.
+    ///
+    /// Returns [`None`] if the slice is empty, or if it contains any value
+    /// ≤ 0 (`ln` of a non-positive is `-inf`/NaN and the geometric mean is
+    /// undefined over the reals). NaN propagates.
+    ///
+    /// Gated on `alloc`: uses the vectorized `ln` map + `exp`.
+    ///
+    /// # Example
+    /// ```
+    /// let g = lanes::stats::f64::geometric_mean(&[1.0_f64, 4.0, 16.0]).unwrap();
+    /// assert!((g - 4.0).abs() < 1e-12);
+    /// ```
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // `len as f64` is inherent to the mean
+    pub fn geometric_mean(values: &[f64]) -> Option<f64> {
+        if values.is_empty() {
+            return None;
+        }
+        if values.iter().any(|&x| x <= 0.0 || x.is_nan()) {
+            return None;
+        }
+        let backend = Backend::detect();
+        let mut logs = alloc::vec![0.0_f64; values.len()];
+        kernels::dispatch_ln_f64(backend, values, &mut logs);
+        let mean = kernels::dispatch_sum_f64(backend, &logs) / values.len() as f64;
+        Some(crate::kernels::exp::exp_f64(mean))
     }
 
     /// Compute the dot product of two slices (double precision, linear
