@@ -17,11 +17,14 @@ exclude = [
     ".gitignore",
     "benches",
     "tests",
+    "examples",
     "clippy.toml",
     "deny.toml",
     "rust-toolchain.toml",
     "rustfmt.toml",
     "Cargo.lock",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
 ]
 
 [features]
