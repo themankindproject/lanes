@@ -645,7 +645,9 @@ macro_rules! simd_ln_f64 {
             let k2hi = $mul(k, $set1f(6.931_471_803_691_238_164_90e-01));
             let k2lo = $mul(k, $set1f(1.908_214_929_270_587_700_02e-10));
             let inner = $sub(f, $mul(s, $sub(f, r)));
-            let normal = $add(k2hi, $sub(inner, k2lo));
+            // fdlibm: dk·ln2_hi − ((s·(f−R) − dk·ln2_lo) − f)
+            //      = dk·ln2_hi + f − s·(f−R) + dk·ln2_lo  (note: + k·ln2_lo)
+            let normal = $add(k2hi, $add(inner, k2lo));
             // Special-case masks (same contract as the f32 kernel).
             let zero_v = $set1f(0.0);
             let nan_v = $set1f(f64::NAN);

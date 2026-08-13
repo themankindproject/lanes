@@ -908,6 +908,24 @@ fn ln_matches_std() {
 }
 
 #[test]
+fn ln_full_chunk_accuracy() {
+    // Multi-chunk input forces the SIMD register kernel (not the scalar
+    // tail), which the single-element tests above never exercise.
+    let xs_f64: Vec<f64> = (1..=128).map(|i| 0.5 + i as f64 * 0.03125).collect();
+    for (&x, &got) in xs_f64.iter().zip(&lanes::math::f64::ln(&xs_f64)) {
+        let want = x.ln();
+        let ulps = (got.to_bits() as i128 - want.to_bits() as i128).abs();
+        assert!(ulps <= 2, "ln_f64({x}) = {got} want {want} ({ulps} ulps)");
+    }
+    let xs_f32: Vec<f32> = (1..=256).map(|i| 0.5 + i as f32 * 0.25).collect();
+    for (&x, &got) in xs_f32.iter().zip(&lanes::math::f32::ln(&xs_f32)) {
+        let want = x.ln();
+        let ulps = (got.to_bits() as i64 - want.to_bits() as i64).abs();
+        assert!(ulps <= 2, "ln({x}) = {got} want {want} ({ulps} ulps)");
+    }
+}
+
+#[test]
 fn logsumexp_stable_and_correct() {
     let s = lanes::ml::f32::logsumexp(&[1.0_f32, 2.0, 3.0]);
     assert!((s - 3.407_606).abs() < 1e-5);
