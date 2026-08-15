@@ -8,8 +8,10 @@
 //! implementation and universal fallback.
 
 pub(crate) mod exp;
+pub(crate) mod hypot;
 pub(crate) mod ln;
 pub(crate) mod macros;
+pub(crate) mod powi;
 pub(crate) mod scalar;
 pub(crate) mod sqrt;
 
