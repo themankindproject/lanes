@@ -236,6 +236,29 @@ fn map_f64(values: &[f64], out: &mut [f64], op: impl Fn(f64) -> f64) {
     }
 }
 
+/// Shared two-input elementwise map: applies `op(a[i], b[i])`, writing into
+/// `out` (same length as both inputs). Skeleton for two-input scalar maps.
+#[cfg(feature = "alloc")]
+#[inline]
+fn map2(a: &[f32], b: &[f32], out: &mut [f32], op: impl Fn(f32, f32) -> f32) {
+    debug_assert_eq!(a.len(), b.len());
+    debug_assert_eq!(a.len(), out.len());
+    for ((o, &x), &y) in out.iter_mut().zip(a).zip(b) {
+        *o = op(x, y);
+    }
+}
+
+/// `map2` for `f64`, alloc-gated like its `f32` twin.
+#[cfg(feature = "alloc")]
+#[inline]
+fn map2_f64(a: &[f64], b: &[f64], out: &mut [f64], op: impl Fn(f64, f64) -> f64) {
+    debug_assert_eq!(a.len(), b.len());
+    debug_assert_eq!(a.len(), out.len());
+    for ((o, &x), &y) in out.iter_mut().zip(a).zip(b) {
+        *o = op(x, y);
+    }
+}
+
 /// Elementwise square root into `out` (same length as `values`).
 ///
 /// Uses the std-free `kernels::sqrt::sqrt` (IEEE-correct within 1 ulp).
@@ -254,6 +277,16 @@ pub(crate) fn sqrt(values: &[f32], out: &mut [f32]) {
 #[inline]
 pub(crate) fn clip(values: &[f32], lo: f32, hi: f32, out: &mut [f32]) {
     map(values, out, |x| x.clamp(lo, hi));
+}
+
+/// Elementwise absolute difference into `out`: `|a[i] - b[i]|`.
+///
+/// NaN inputs yield NaN (`abs` propagates NaN). Gated on `alloc`: its only
+/// caller (`dispatch_abs_sub`) is alloc-gated.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn abs_sub(a: &[f32], b: &[f32], out: &mut [f32]) {
+    map2(a, b, out, |x, y| (x - y).abs());
 }
 
 /// Elementwise reciprocal square root into `out`: `1/sqrt(x)`.
@@ -480,6 +513,16 @@ pub(crate) fn sqrt_f64(values: &[f64], out: &mut [f64]) {
 #[inline]
 pub(crate) fn clip_f64(values: &[f64], lo: f64, hi: f64, out: &mut [f64]) {
     map_f64(values, out, |x| x.clamp(lo, hi));
+}
+
+/// Elementwise absolute difference into `out` (`f64`): `|a[i] - b[i]|`.
+///
+/// NaN inputs yield NaN (`abs` propagates NaN). Gated on `alloc`: its only
+/// caller (`dispatch_abs_sub_f64`) is alloc-gated.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn abs_sub_f64(a: &[f64], b: &[f64], out: &mut [f64]) {
+    map2_f64(a, b, out, |x, y| (x - y).abs());
 }
 
 /// Elementwise reciprocal square root into `out`: `1/sqrt(x)`.

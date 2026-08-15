@@ -535,6 +535,17 @@ crate::simd_clip!(
     ),
     |x: f32, lo: f32, hi: f32| x.clamp(lo, hi)
 );
+// abs_sub: |a - b| per lane (native abs after sub).
+crate::simd_map2!(
+    abs_sub,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    |p, v| unsafe { _mm512_storeu_ps(p, v) },
+    |a: __m512, b: __m512| unsafe { _mm512_abs_ps(_mm512_sub_ps(a, b)) },
+    |x: f32, y: f32| (x - y).abs()
+);
 
 // Vector ln (f32): fdlibm e_log reduction, see simd_ln! in macros.rs.
 crate::simd_ln!(
@@ -1060,6 +1071,17 @@ crate::simd_clip!(
         _mm512_min_pd(_mm512_max_pd(v, _mm512_set1_pd(lo)), _mm512_set1_pd(hi))
     },
     |x: f64, lo: f64, hi: f64| x.clamp(lo, hi)
+);
+// abs_sub: |a - b| per lane (native abs after sub).
+crate::simd_map2!(
+    abs_sub_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |a: __m512d, b: __m512d| unsafe { _mm512_abs_pd(_mm512_sub_pd(a, b)) },
+    |x: f64, y: f64| (x - y).abs()
 );
 
 // f64 vector exp for AVX-512F (8 lanes).

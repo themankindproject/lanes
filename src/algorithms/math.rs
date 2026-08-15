@@ -118,6 +118,58 @@ pub mod f32 {
         out
     }
 
+    /// Elementwise absolute difference `|a[i] - b[i]|`, written into `out`
+    /// (allocation-free variant of [`abs_sub`]).
+    ///
+    /// Allocation-free: `a`, `b`, and `out` must all have the same length;
+    /// reuse `out` across calls to avoid per-call allocation in hot loops.
+    ///
+    /// # Example
+    /// ```
+    /// let a = [1.0_f32, 5.0, -3.0];
+    /// let b = [4.0_f32, 2.0, -8.0];
+    /// let mut out = vec![0.0_f32; a.len()];
+    /// lanes::math::f32::abs_sub_into(&a, &b, &mut out);
+    /// assert_eq!(out, [3.0, 3.0, 5.0]);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a.len() != b.len()` or `out.len() != a.len()`.
+    pub fn abs_sub_into(a: &[f32], b: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` (or mismatched inputs) would be UB.
+        assert_eq!(a.len(), b.len());
+        assert_eq!(a.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_abs_sub(backend, a, b, out);
+    }
+
+    /// Elementwise absolute difference over two slices: `|a[i] - b[i]|`.
+    ///
+    /// Returns a new `Vec` of length `a.len()`; an empty pair yields an
+    /// empty `Vec`. NaN inputs yield NaN (`abs` propagates NaN).
+    ///
+    /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::math::f32::abs_sub(&[1.0_f32, 5.0], &[4.0_f32, 2.0]);
+    /// assert_eq!(v, [3.0, 3.0]);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a.len() != b.len()`.
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn abs_sub(a: &[f32], b: &[f32]) -> Vec<f32> {
+        assert_eq!(a.len(), b.len());
+        let mut out = alloc::vec![0.0_f32; a.len()];
+        abs_sub_into(a, b, &mut out);
+        out
+    }
+
     /// Elementwise reciprocal square root, written into `out` (allocation-free variant of [`rsqrt`]).
     ///
     /// Allocation-free: `out` must have the same length as `values`; reuse
@@ -439,6 +491,58 @@ pub mod f64 {
     pub fn clip(values: &[f64], lo: f64, hi: f64) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
         clip_into(values, lo, hi, &mut out);
+        out
+    }
+
+    /// Elementwise absolute difference `|a[i] - b[i]|`, written into `out`
+    /// (allocation-free variant of [`abs_sub`]).
+    ///
+    /// Allocation-free: `a`, `b`, and `out` must all have the same length;
+    /// reuse `out` across calls to avoid per-call allocation in hot loops.
+    ///
+    /// # Example
+    /// ```
+    /// let a = [1.0_f64, 5.0, -3.0];
+    /// let b = [4.0_f64, 2.0, -8.0];
+    /// let mut out = vec![0.0_f64; a.len()];
+    /// lanes::math::f64::abs_sub_into(&a, &b, &mut out);
+    /// assert_eq!(out, [3.0, 3.0, 5.0]);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a.len() != b.len()` or `out.len() != a.len()`.
+    pub fn abs_sub_into(a: &[f64], b: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` (or mismatched inputs) would be UB.
+        assert_eq!(a.len(), b.len());
+        assert_eq!(a.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_abs_sub_f64(backend, a, b, out);
+    }
+
+    /// Elementwise absolute difference over two slices: `|a[i] - b[i]|`.
+    ///
+    /// Returns a new `Vec` of length `a.len()`; an empty pair yields an
+    /// empty `Vec`. NaN inputs yield NaN (`abs` propagates NaN).
+    ///
+    /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::math::f64::abs_sub(&[1.0_f64, 5.0], &[4.0_f64, 2.0]);
+    /// assert_eq!(v, [3.0, 3.0]);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a.len() != b.len()`.
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn abs_sub(a: &[f64], b: &[f64]) -> Vec<f64> {
+        assert_eq!(a.len(), b.len());
+        let mut out = alloc::vec![0.0_f64; a.len()];
+        abs_sub_into(a, b, &mut out);
         out
     }
 

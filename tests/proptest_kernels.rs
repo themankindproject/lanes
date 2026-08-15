@@ -622,3 +622,17 @@ proptest! {
         }
     }
 }
+
+#[cfg(feature = "alloc")]
+proptest! {
+    #[test]
+    fn prop_abs_sub_matches_naive(a in mid_f32_vec()) {
+        // Build a same-length b by reversing a (deterministic, no extra strategy).
+        let b: Vec<f32> = a.iter().rev().copied().collect();
+        let out = lanes::math::f32::abs_sub(&a, &b);
+        for (i, (got, (x, y))) in out.iter().zip(a.iter().zip(b.iter())).enumerate() {
+            let want = (x - y).abs();
+            prop_assert_eq!(*got, want, "lane {}: |{} - {}|", i, x, y);
+        }
+    }
+}

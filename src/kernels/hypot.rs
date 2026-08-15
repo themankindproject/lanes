@@ -10,6 +10,8 @@
 
 /// `f32` hypotenuse. Delegates to `f32::hypot` in `std`; portable
 /// scale-by-max in `no_std`.
+// TODO(issue #1 phase 3): remove once `dispatch_hypot` wires this in.
+#[allow(dead_code)]
 #[inline]
 pub(crate) fn hypot(x: f32, y: f32) -> f32 {
     #[cfg(feature = "std")]
@@ -24,6 +26,8 @@ pub(crate) fn hypot(x: f32, y: f32) -> f32 {
 
 /// `f64` hypotenuse. Delegates to `f64::hypot` in `std`; portable
 /// scale-by-max in `no_std`.
+// TODO(issue #1 phase 3): remove once `dispatch_hypot_f64` wires this in.
+#[allow(dead_code)]
 #[inline]
 pub(crate) fn hypot_f64(x: f64, y: f64) -> f64 {
     #[cfg(feature = "std")]

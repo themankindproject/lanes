@@ -565,6 +565,17 @@ crate::simd_clip!(
     |v: float32x4_t, lo: f32, hi: f32| vminq_f32(vmaxq_f32(v, vdupq_n_f32(lo)), vdupq_n_f32(hi)),
     |x: f32, lo: f32, hi: f32| x.clamp(lo, hi)
 );
+// abs_sub: |a - b| per lane (native vabs after sub).
+crate::simd_map2!(
+    abs_sub,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    |a: float32x4_t, b: float32x4_t| unsafe { vabsq_f32(vsubq_f32(a, b)) },
+    |x: f32, y: f32| (x - y).abs()
+);
 
 // Rsqrt: one-pass map, 1/sqrt(v) (exact via div+sqrt, not the ~12-bit
 // hardware approximation — correctness-first).
@@ -1030,6 +1041,17 @@ crate::simd_clip!(
         vmaxq_f64(vminq_f64(v, vdupq_n_f64(hi)), vdupq_n_f64(lo))
     },
     |x: f64, lo: f64, hi: f64| x.clamp(lo, hi)
+);
+// abs_sub: |a - b| per lane (native vabs after sub).
+crate::simd_map2!(
+    abs_sub_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    |a: float64x2_t, b: float64x2_t| unsafe { vabsq_f64(vsubq_f64(a, b)) },
+    |x: f64, y: f64| (x - y).abs()
 );
 
 // f64 vector exp for NEON (2 lanes).

@@ -518,6 +518,17 @@ crate::simd_clip!(
     |v: __m128, lo: f32, hi: f32| _mm_min_ps(_mm_max_ps(v, _mm_set1_ps(lo)), _mm_set1_ps(hi)),
     |x: f32, lo: f32, hi: f32| x.clamp(lo, hi)
 );
+// abs_sub: |a - b| per lane (sign-bit clear after sub).
+crate::simd_map2!(
+    abs_sub,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    |p, v| unsafe { _mm_storeu_ps(p, v) },
+    |a: __m128, b: __m128| unsafe { _mm_andnot_ps(_mm_set1_ps(-0.0), _mm_sub_ps(a, b)) },
+    |x: f32, y: f32| (x - y).abs()
+);
 // Rsqrt: one-pass map, 1/sqrt(v) (exact via div+sqrt, not the ~12-bit
 // hardware approximation — correctness-first).
 crate::simd_map!(
@@ -1114,6 +1125,17 @@ crate::simd_clip!(
         _mm_min_pd(_mm_max_pd(v, _mm_set1_pd(lo)), _mm_set1_pd(hi))
     },
     |x: f64, lo: f64, hi: f64| x.clamp(lo, hi)
+);
+// abs_sub: |a - b| per lane (sign-bit clear after sub).
+crate::simd_map2!(
+    abs_sub_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    |p, v| unsafe { _mm_storeu_pd(p, v) },
+    |a: __m128d, b: __m128d| unsafe { _mm_andnot_pd(_mm_set1_pd(-0.0), _mm_sub_pd(a, b)) },
+    |x: f64, y: f64| (x - y).abs()
 );
 
 // f64 vector exp for SSE2 (2 lanes).

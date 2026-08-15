@@ -1027,3 +1027,20 @@ fn layer_norm_into_short_buffer_panics() {
     let mut out = [0.0_f64; 2];
     lanes::ml::f64::layer_norm_into(&[1.0, 2.0, 3.0], 1e-9, &mut out);
 }
+
+#[test]
+fn math_abs_sub_known_and_empty() {
+    let a = [1.0_f32, -5.0, 3.0];
+    let b = [4.0_f32, -2.0, 3.0];
+    assert_eq!(lanes::math::f32::abs_sub(&a, &b), [3.0, 3.0, 0.0]);
+    assert!(lanes::math::f32::abs_sub(&[], &[]).is_empty());
+    let a64 = [1.0_f64, -5.0];
+    let b64 = [4.0_f64, -2.0];
+    assert_eq!(lanes::math::f64::abs_sub(&a64, &b64), [3.0, 3.0]);
+}
+
+#[test]
+#[should_panic(expected = "assertion")]
+fn math_abs_sub_panics_on_length_mismatch() {
+    let _ = lanes::math::f32::abs_sub(&[1.0, 2.0], &[1.0]);
+}

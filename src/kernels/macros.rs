@@ -1001,6 +1001,63 @@ macro_rules! simd_clip {
     };
 }
 
+/// Generate a two-input vector elementwise map kernel (`op(a[i], b[i])`).
+///
+/// Same skeleton as [`simd_map!`], but loads from two equal-length input
+/// slices `a` and `b` and applies a binary `$op` per lane; the scalar tail
+/// uses `$scalar`.
+///
+/// # Parameters
+///
+/// * `$name` — function name.
+/// * `$t` — scalar element type (`f32` or `f64`).
+/// * `$feat` — `target_feature` string.
+/// * `$lanes` — vector width in `$t` elements.
+/// * `$load` — `fn(*const $t) -> V`.
+/// * `$store` — `fn(*mut $t, V)`.
+/// * `$op` — `fn(V, V) -> V` binary elementwise op.
+/// * `$scalar` — `fn($t, $t) -> $t` scalar tail op.
+///
+/// # Safety
+/// The generated function is `unsafe fn` with `#[target_feature]`; the
+/// caller must verify the CPU feature and that `a`, `b`, and `out` all have
+/// equal lengths.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! simd_map2 {
+    (
+        $name:ident, $t:ty, $feat:literal, $lanes:expr,
+        $load:expr, $store:expr, $op:expr, $scalar:expr
+    ) => {
+        /// Vector two-input elementwise map. See the scalar reference for
+        /// semantics.
+        ///
+        /// # Safety
+        /// Caller must ensure the CPU feature is available and that `a`,
+        /// `b`, and `out` have equal lengths.
+        #[cfg(feature = "alloc")]
+        #[inline]
+        #[target_feature(enable = $feat)]
+        pub(crate) unsafe fn $name(a: &[$t], b: &[$t], out: &mut [$t]) {
+            debug_assert_eq!(a.len(), b.len());
+            let len = a.len();
+            let chunks = len / $lanes;
+            let rem = len % $lanes;
+            for i in 0..chunks {
+                let va = $load(unsafe { a.as_ptr().add(i * $lanes) });
+                let vb = $load(unsafe { b.as_ptr().add(i * $lanes) });
+                $store(unsafe { out.as_mut_ptr().add(i * $lanes) }, $op(va, vb));
+            }
+            for i in 0..rem {
+                let x = unsafe { *a.get_unchecked(chunks * $lanes + i) };
+                let y = unsafe { *b.get_unchecked(chunks * $lanes + i) };
+                let mapped = $scalar(x, y);
+                unsafe { *out.get_unchecked_mut(chunks * $lanes + i) = mapped };
+            }
+        }
+    };
+}
+
 /// Generate an RMS-norm kernel (two-pass: sum of squares → rsqrt → scale).
 ///
 /// Pass 1 reduces `sum(x²)` over vector chunks plus a scalar tail; pass 2

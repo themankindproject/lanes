@@ -406,6 +406,19 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_abs_sub,
+    [a: &[f32], b: &[f32], out: &mut [f32]],
+    (),
+    scalar::abs_sub,
+    x86::sse2::abs_sub,
+    x86::avx2::abs_sub,
+    x86::avx512::abs_sub,
+    aarch64::neon::abs_sub,
+    id,
+    alloc
+);
+
+dispatch!(
     dispatch_rsqrt,
     [values: &[f32], out: &mut [f32]],
     (),
@@ -604,6 +617,19 @@ dispatch!(
     x86::avx2::clip_f64,
     x86::avx512::clip_f64,
     aarch64::neon::clip_f64,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_abs_sub_f64,
+    [a: &[f64], b: &[f64], out: &mut [f64]],
+    (),
+    scalar::abs_sub_f64,
+    x86::sse2::abs_sub_f64,
+    x86::avx2::abs_sub_f64,
+    x86::avx512::abs_sub_f64,
+    aarch64::neon::abs_sub_f64,
     id,
     alloc
 );

@@ -11,6 +11,8 @@
 
 /// `f32` integer power. Delegates to `f32::powi` in `std`; portable squaring
 /// loop in `no_std`.
+// TODO(issue #1 phase 4): remove once `dispatch_powi` wires this in.
+#[allow(dead_code)]
 #[inline]
 pub(crate) fn powi(x: f32, n: i32) -> f32 {
     #[cfg(feature = "std")]
@@ -25,6 +27,8 @@ pub(crate) fn powi(x: f32, n: i32) -> f32 {
 
 /// `f64` integer power. Delegates to `f64::powi` in `std`; portable squaring
 /// loop in `no_std`.
+// TODO(issue #1 phase 4): remove once `dispatch_powi_f64` wires this in.
+#[allow(dead_code)]
 #[inline]
 pub(crate) fn powi_f64(x: f64, n: i32) -> f64 {
     #[cfg(feature = "std")]
