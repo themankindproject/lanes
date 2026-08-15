@@ -546,6 +546,38 @@ crate::simd_map2!(
     |a: __m512, b: __m512| unsafe { _mm512_abs_ps(_mm512_sub_ps(a, b)) },
     |x: f32, y: f32| (x - y).abs()
 );
+// hypot: overflow-safe sqrt(a²+b²) via scale-by-max (SLEEF u35 strategy).
+// Special-case order: min==0 → max, then NaN, then inf last (inf overrides
+// NaN: hypot(inf, nan) == inf per IEEE).
+crate::simd_map2!(
+    hypot,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    |p, v| unsafe { _mm512_storeu_ps(p, v) },
+    |a: __m512, b: __m512| unsafe {
+        let ax = _mm512_abs_ps(a);
+        let ay = _mm512_abs_ps(b);
+        let mx = _mm512_max_ps(ax, ay);
+        let mn = _mm512_min_ps(ax, ay);
+        let t = _mm512_div_ps(mn, mx);
+        let one = _mm512_set1_ps(1.0);
+        let r = _mm512_mul_ps(mx, _mm512_sqrt_ps(_mm512_add_ps(_mm512_mul_ps(t, t), one)));
+        // min==0 → max (covers hypot(x,0)=|x| and hypot(0,0)=0).
+        let zero_m = _mm512_cmp_ps_mask(mn, _mm512_setzero_ps(), _CMP_EQ_OQ);
+        let r = _mm512_mask_blend_ps(zero_m, r, mx);
+        // any NaN → NaN.
+        let nan_m = _mm512_cmp_ps_mask(a, a, _CMP_UNORD_Q) | _mm512_cmp_ps_mask(b, b, _CMP_UNORD_Q);
+        let r = _mm512_mask_blend_ps(nan_m, r, _mm512_set1_ps(f32::NAN));
+        // any inf → inf (overrides NaN; IEEE hypot(inf, nan) == inf).
+        let inf = _mm512_set1_ps(f32::INFINITY);
+        let inf_m =
+            _mm512_cmp_ps_mask(ax, inf, _CMP_EQ_OQ) | _mm512_cmp_ps_mask(ay, inf, _CMP_EQ_OQ);
+        _mm512_mask_blend_ps(inf_m, r, inf)
+    },
+    |x: f32, y: f32| crate::kernels::hypot::hypot(x, y)
+);
 
 // Vector ln (f32): fdlibm e_log reduction, see simd_ln! in macros.rs.
 crate::simd_ln!(
@@ -1158,6 +1190,33 @@ crate::simd_map2!(
     |p, v| unsafe { _mm512_storeu_pd(p, v) },
     |a: __m512d, b: __m512d| unsafe { _mm512_abs_pd(_mm512_sub_pd(a, b)) },
     |x: f64, y: f64| (x - y).abs()
+);
+// hypot_f64: overflow-safe sqrt(a²+b²) via scale-by-max (see f32 hypot).
+crate::simd_map2!(
+    hypot_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |a: __m512d, b: __m512d| unsafe {
+        let ax = _mm512_abs_pd(a);
+        let ay = _mm512_abs_pd(b);
+        let mx = _mm512_max_pd(ax, ay);
+        let mn = _mm512_min_pd(ax, ay);
+        let t = _mm512_div_pd(mn, mx);
+        let one = _mm512_set1_pd(1.0);
+        let r = _mm512_mul_pd(mx, _mm512_sqrt_pd(_mm512_add_pd(_mm512_mul_pd(t, t), one)));
+        let zero_m = _mm512_cmp_pd_mask(mn, _mm512_setzero_pd(), _CMP_EQ_OQ);
+        let r = _mm512_mask_blend_pd(zero_m, r, mx);
+        let nan_m = _mm512_cmp_pd_mask(a, a, _CMP_UNORD_Q) | _mm512_cmp_pd_mask(b, b, _CMP_UNORD_Q);
+        let r = _mm512_mask_blend_pd(nan_m, r, _mm512_set1_pd(f64::NAN));
+        let inf = _mm512_set1_pd(f64::INFINITY);
+        let inf_m =
+            _mm512_cmp_pd_mask(ax, inf, _CMP_EQ_OQ) | _mm512_cmp_pd_mask(ay, inf, _CMP_EQ_OQ);
+        _mm512_mask_blend_pd(inf_m, r, inf)
+    },
+    |x: f64, y: f64| crate::kernels::hypot::hypot_f64(x, y)
 );
 
 // f64 vector exp for AVX-512F (8 lanes).

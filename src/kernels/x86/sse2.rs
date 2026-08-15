@@ -568,6 +568,41 @@ crate::simd_map2!(
     |a: __m128, b: __m128| unsafe { _mm_andnot_ps(_mm_set1_ps(-0.0), _mm_sub_ps(a, b)) },
     |x: f32, y: f32| (x - y).abs()
 );
+// hypot: overflow-safe sqrt(a²+b²) via scale-by-max (SLEEF u35 strategy).
+// Special-case order: min==0 → max, then NaN, then inf last (inf overrides
+// NaN: hypot(inf, nan) == inf per IEEE).
+crate::simd_map2!(
+    hypot,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    |p, v| unsafe { _mm_storeu_ps(p, v) },
+    |a: __m128, b: __m128| unsafe {
+        let sign = _mm_set1_ps(-0.0);
+        let ax = _mm_andnot_ps(sign, a);
+        let ay = _mm_andnot_ps(sign, b);
+        let mx = _mm_max_ps(ax, ay);
+        let mn = _mm_min_ps(ax, ay);
+        let t = _mm_div_ps(mn, mx);
+        let one = _mm_set1_ps(1.0);
+        let r = _mm_mul_ps(mx, _mm_sqrt_ps(_mm_add_ps(_mm_mul_ps(t, t), one)));
+        // min==0 → max (covers hypot(x,0)=|x| and hypot(0,0)=0).
+        let zero_m = _mm_cmpeq_ps(mn, _mm_setzero_ps());
+        let r = _mm_or_ps(_mm_and_ps(zero_m, mx), _mm_andnot_ps(zero_m, r));
+        // any NaN → NaN.
+        let nan_m = _mm_or_ps(_mm_cmpunord_ps(a, a), _mm_cmpunord_ps(b, b));
+        let r = _mm_or_ps(
+            _mm_and_ps(nan_m, _mm_set1_ps(f32::NAN)),
+            _mm_andnot_ps(nan_m, r),
+        );
+        // any inf → inf (overrides NaN; IEEE hypot(inf, nan) == inf).
+        let inf = _mm_set1_ps(f32::INFINITY);
+        let inf_m = _mm_or_ps(_mm_cmpeq_ps(ax, inf), _mm_cmpeq_ps(ay, inf));
+        _mm_or_ps(_mm_and_ps(inf_m, inf), _mm_andnot_ps(inf_m, r))
+    },
+    |x: f32, y: f32| crate::kernels::hypot::hypot(x, y)
+);
 // Rsqrt: one-pass map, 1/sqrt(v) (exact via div+sqrt, not the ~12-bit
 // hardware approximation — correctness-first).
 crate::simd_map!(
@@ -1214,6 +1249,36 @@ crate::simd_map2!(
     |p, v| unsafe { _mm_storeu_pd(p, v) },
     |a: __m128d, b: __m128d| unsafe { _mm_andnot_pd(_mm_set1_pd(-0.0), _mm_sub_pd(a, b)) },
     |x: f64, y: f64| (x - y).abs()
+);
+// hypot_f64: overflow-safe sqrt(a²+b²) via scale-by-max (see f32 hypot).
+crate::simd_map2!(
+    hypot_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    |p, v| unsafe { _mm_storeu_pd(p, v) },
+    |a: __m128d, b: __m128d| unsafe {
+        let sign = _mm_set1_pd(-0.0);
+        let ax = _mm_andnot_pd(sign, a);
+        let ay = _mm_andnot_pd(sign, b);
+        let mx = _mm_max_pd(ax, ay);
+        let mn = _mm_min_pd(ax, ay);
+        let t = _mm_div_pd(mn, mx);
+        let one = _mm_set1_pd(1.0);
+        let r = _mm_mul_pd(mx, _mm_sqrt_pd(_mm_add_pd(_mm_mul_pd(t, t), one)));
+        let zero_m = _mm_cmpeq_pd(mn, _mm_setzero_pd());
+        let r = _mm_or_pd(_mm_and_pd(zero_m, mx), _mm_andnot_pd(zero_m, r));
+        let nan_m = _mm_or_pd(_mm_cmpunord_pd(a, a), _mm_cmpunord_pd(b, b));
+        let r = _mm_or_pd(
+            _mm_and_pd(nan_m, _mm_set1_pd(f64::NAN)),
+            _mm_andnot_pd(nan_m, r),
+        );
+        let inf = _mm_set1_pd(f64::INFINITY);
+        let inf_m = _mm_or_pd(_mm_cmpeq_pd(ax, inf), _mm_cmpeq_pd(ay, inf));
+        _mm_or_pd(_mm_and_pd(inf_m, inf), _mm_andnot_pd(inf_m, r))
+    },
+    |x: f64, y: f64| crate::kernels::hypot::hypot_f64(x, y)
 );
 
 // f64 vector exp for SSE2 (2 lanes).

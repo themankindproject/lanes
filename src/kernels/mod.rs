@@ -455,6 +455,19 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_hypot,
+    [a: &[f32], b: &[f32], out: &mut [f32]],
+    (),
+    scalar::hypot,
+    x86::sse2::hypot,
+    x86::avx2::hypot,
+    x86::avx512::hypot,
+    aarch64::neon::hypot,
+    id,
+    alloc
+);
+
+dispatch!(
     dispatch_rsqrt,
     [values: &[f32], out: &mut [f32]],
     (),
@@ -702,6 +715,19 @@ dispatch!(
     x86::avx2::abs_sub_f64,
     x86::avx512::abs_sub_f64,
     aarch64::neon::abs_sub_f64,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_hypot_f64,
+    [a: &[f64], b: &[f64], out: &mut [f64]],
+    (),
+    scalar::hypot_f64,
+    x86::sse2::hypot_f64,
+    x86::avx2::hypot_f64,
+    x86::avx512::hypot_f64,
+    aarch64::neon::hypot_f64,
     id,
     alloc
 );

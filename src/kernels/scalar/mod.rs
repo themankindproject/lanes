@@ -289,6 +289,16 @@ pub(crate) fn abs_sub(a: &[f32], b: &[f32], out: &mut [f32]) {
     map2(a, b, out, |x, y| (x - y).abs());
 }
 
+/// Elementwise overflow-safe hypotenuse into `out`: `hypot(a[i], b[i])`.
+///
+/// Matches `f32::hypot` semantics (overflow-safe, `hypot(inf, nan) == inf`).
+/// Gated on `alloc`: its only caller (`dispatch_hypot`) is alloc-gated.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn hypot(a: &[f32], b: &[f32], out: &mut [f32]) {
+    map2(a, b, out, crate::kernels::hypot::hypot);
+}
+
 /// Elementwise reciprocal square root into `out`: `1/sqrt(x)`.
 ///
 /// Gated on `alloc`: its only caller (`dispatch_rsqrt`) is alloc-gated.
@@ -559,6 +569,16 @@ pub(crate) fn clip_f64(values: &[f64], lo: f64, hi: f64, out: &mut [f64]) {
 #[inline]
 pub(crate) fn abs_sub_f64(a: &[f64], b: &[f64], out: &mut [f64]) {
     map2_f64(a, b, out, |x, y| (x - y).abs());
+}
+
+/// Elementwise overflow-safe hypotenuse into `out` (`f64`).
+///
+/// Matches `f64::hypot` semantics. Gated on `alloc`: its only caller
+/// (`dispatch_hypot_f64`) is alloc-gated.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn hypot_f64(a: &[f64], b: &[f64], out: &mut [f64]) {
+    map2_f64(a, b, out, crate::kernels::hypot::hypot_f64);
 }
 
 /// Elementwise reciprocal square root into `out`: `1/sqrt(x)`.

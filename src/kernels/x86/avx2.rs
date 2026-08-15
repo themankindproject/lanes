@@ -572,6 +572,47 @@ crate::simd_map2!(
     |a: __m256, b: __m256| unsafe { _mm256_andnot_ps(_mm256_set1_ps(-0.0), _mm256_sub_ps(a, b)) },
     |x: f32, y: f32| (x - y).abs()
 );
+// hypot: overflow-safe sqrt(a²+b²) via scale-by-max (SLEEF u35 strategy).
+// Special-case order: min==0 → max, then NaN, then inf last (inf overrides
+// NaN: hypot(inf, nan) == inf per IEEE).
+crate::simd_map2!(
+    hypot,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    |p, v| unsafe { _mm256_storeu_ps(p, v) },
+    |a: __m256, b: __m256| unsafe {
+        let sign = _mm256_set1_ps(-0.0);
+        let ax = _mm256_andnot_ps(sign, a);
+        let ay = _mm256_andnot_ps(sign, b);
+        let mx = _mm256_max_ps(ax, ay);
+        let mn = _mm256_min_ps(ax, ay);
+        let t = _mm256_div_ps(mn, mx);
+        let one = _mm256_set1_ps(1.0);
+        let r = _mm256_mul_ps(mx, _mm256_sqrt_ps(_mm256_add_ps(_mm256_mul_ps(t, t), one)));
+        // min==0 → max (covers hypot(x,0)=|x| and hypot(0,0)=0).
+        let zero_m = _mm256_cmp_ps(mn, _mm256_setzero_ps(), _CMP_EQ_OQ);
+        let r = _mm256_or_ps(_mm256_and_ps(zero_m, mx), _mm256_andnot_ps(zero_m, r));
+        // any NaN → NaN.
+        let nan_m = _mm256_or_ps(
+            _mm256_cmp_ps(a, a, _CMP_UNORD_Q),
+            _mm256_cmp_ps(b, b, _CMP_UNORD_Q),
+        );
+        let r = _mm256_or_ps(
+            _mm256_and_ps(nan_m, _mm256_set1_ps(f32::NAN)),
+            _mm256_andnot_ps(nan_m, r),
+        );
+        // any inf → inf (overrides NaN; IEEE hypot(inf, nan) == inf).
+        let inf = _mm256_set1_ps(f32::INFINITY);
+        let inf_m = _mm256_or_ps(
+            _mm256_cmp_ps(ax, inf, _CMP_EQ_OQ),
+            _mm256_cmp_ps(ay, inf, _CMP_EQ_OQ),
+        );
+        _mm256_or_ps(_mm256_and_ps(inf_m, inf), _mm256_andnot_ps(inf_m, r))
+    },
+    |x: f32, y: f32| crate::kernels::hypot::hypot(x, y)
+);
 // Rsqrt: one-pass map, 1/sqrt(v) (exact via div+sqrt, not the ~12-bit
 // hardware approximation — correctness-first).
 crate::simd_map!(
@@ -1243,6 +1284,42 @@ crate::simd_map2!(
     |p, v| unsafe { _mm256_storeu_pd(p, v) },
     |a: __m256d, b: __m256d| unsafe { _mm256_andnot_pd(_mm256_set1_pd(-0.0), _mm256_sub_pd(a, b)) },
     |x: f64, y: f64| (x - y).abs()
+);
+// hypot_f64: overflow-safe sqrt(a²+b²) via scale-by-max (see f32 hypot).
+crate::simd_map2!(
+    hypot_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |a: __m256d, b: __m256d| unsafe {
+        let sign = _mm256_set1_pd(-0.0);
+        let ax = _mm256_andnot_pd(sign, a);
+        let ay = _mm256_andnot_pd(sign, b);
+        let mx = _mm256_max_pd(ax, ay);
+        let mn = _mm256_min_pd(ax, ay);
+        let t = _mm256_div_pd(mn, mx);
+        let one = _mm256_set1_pd(1.0);
+        let r = _mm256_mul_pd(mx, _mm256_sqrt_pd(_mm256_add_pd(_mm256_mul_pd(t, t), one)));
+        let zero_m = _mm256_cmp_pd(mn, _mm256_setzero_pd(), _CMP_EQ_OQ);
+        let r = _mm256_or_pd(_mm256_and_pd(zero_m, mx), _mm256_andnot_pd(zero_m, r));
+        let nan_m = _mm256_or_pd(
+            _mm256_cmp_pd(a, a, _CMP_UNORD_Q),
+            _mm256_cmp_pd(b, b, _CMP_UNORD_Q),
+        );
+        let r = _mm256_or_pd(
+            _mm256_and_pd(nan_m, _mm256_set1_pd(f64::NAN)),
+            _mm256_andnot_pd(nan_m, r),
+        );
+        let inf = _mm256_set1_pd(f64::INFINITY);
+        let inf_m = _mm256_or_pd(
+            _mm256_cmp_pd(ax, inf, _CMP_EQ_OQ),
+            _mm256_cmp_pd(ay, inf, _CMP_EQ_OQ),
+        );
+        _mm256_or_pd(_mm256_and_pd(inf_m, inf), _mm256_andnot_pd(inf_m, r))
+    },
+    |x: f64, y: f64| crate::kernels::hypot::hypot_f64(x, y)
 );
 
 // f64 vector exp for AVX2 (4 lanes).

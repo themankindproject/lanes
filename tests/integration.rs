@@ -1067,3 +1067,32 @@ fn stats_counts_known_and_empty() {
     assert_eq!(lanes::stats::f64::count_nan(&v64), 1);
     assert_eq!(lanes::stats::f64::count_infinite(&v64), 1);
 }
+
+#[test]
+fn math_hypot_known_overflow_and_specials() {
+    // 3-4-5 triangle.
+    let r = lanes::math::f32::hypot(&[3.0_f32], &[4.0_f32]);
+    assert!((r[0] - 5.0).abs() < 1e-6);
+    // Overflow case: naive sqrt(x²+y²) overflows, hypot must not.
+    let big = [2.0e19_f32];
+    let r = lanes::math::f32::hypot(&big, &big);
+    assert!(r[0].is_finite(), "hypot overflowed: {}", r[0]);
+    // Specials: inf wins over NaN.
+    let r = lanes::math::f32::hypot(&[f32::INFINITY], &[f32::NAN]);
+    assert_eq!(r[0], f32::INFINITY);
+    let r = lanes::math::f32::hypot(&[f32::NAN], &[1.0]);
+    assert!(r[0].is_nan());
+    let r = lanes::math::f32::hypot(&[5.0], &[0.0]);
+    assert_eq!(r[0], 5.0);
+    // f64 twins.
+    let r64 = lanes::math::f64::hypot(&[3.0_f64], &[4.0_f64]);
+    assert!((r64[0] - 5.0).abs() < 1e-12);
+    let r64 = lanes::math::f64::hypot(&[f64::INFINITY], &[f64::NAN]);
+    assert_eq!(r64[0], f64::INFINITY);
+}
+
+#[test]
+#[should_panic(expected = "assertion")]
+fn math_hypot_panics_on_length_mismatch() {
+    let _ = lanes::math::f32::hypot(&[1.0, 2.0], &[1.0]);
+}

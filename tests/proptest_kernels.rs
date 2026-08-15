@@ -654,3 +654,21 @@ proptest! {
         );
     }
 }
+
+#[cfg(feature = "alloc")]
+proptest! {
+    #[test]
+    fn prop_hypot_matches_std(a in proptest::collection::vec(-1e15_f32..1e15, 0..512)) {
+        let b: Vec<f32> = a.iter().rev().copied().collect();
+        let out = lanes::math::f32::hypot(&a, &b);
+        for (i, (got, (x, y))) in out.iter().zip(a.iter().zip(b.iter())).enumerate() {
+            let want = x.hypot(*y);
+            let tol = (want.abs() * 1e-6).max(1e-6);
+            prop_assert!(
+                (got - want).abs() <= tol,
+                "lane {}: hypot({},{}) got {}, want {}",
+                i, x, y, got, want
+            );
+        }
+    }
+}

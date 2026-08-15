@@ -170,6 +170,58 @@ pub mod f32 {
         out
     }
 
+    /// Elementwise overflow-safe hypotenuse `sqrt(a[i]² + b[i]²)`, written
+    /// into `out` (allocation-free variant of [`hypot`]).
+    ///
+    /// Scales by `max(|a[i]|, |b[i]|)` instead of squaring directly, so it
+    /// does not overflow for large magnitudes (matches [`f32::hypot`]).
+    ///
+    /// # Example
+    /// ```
+    /// let a = [3.0_f32];
+    /// let b = [4.0_f32];
+    /// let mut out = vec![0.0_f32; 1];
+    /// lanes::math::f32::hypot_into(&a, &b, &mut out);
+    /// assert!((out[0] - 5.0).abs() < 1e-6);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a.len() != b.len()` or `out.len() != a.len()`.
+    pub fn hypot_into(a: &[f32], b: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` (or mismatched inputs) would be UB.
+        assert_eq!(a.len(), b.len());
+        assert_eq!(a.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_hypot(backend, a, b, out);
+    }
+
+    /// Elementwise overflow-safe hypotenuse over two slices.
+    ///
+    /// Returns a new `Vec`; matches `f32::hypot` within 1–2 ulp with
+    /// identical NaN/inf propagation (`hypot(inf, nan) == inf`).
+    ///
+    /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::math::f32::hypot(&[3.0_f32], &[4.0_f32]);
+    /// assert!((v[0] - 5.0).abs() < 1e-6);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a.len() != b.len()`.
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn hypot(a: &[f32], b: &[f32]) -> Vec<f32> {
+        assert_eq!(a.len(), b.len());
+        let mut out = alloc::vec![0.0_f32; a.len()];
+        hypot_into(a, b, &mut out);
+        out
+    }
+
     /// Elementwise reciprocal square root, written into `out` (allocation-free variant of [`rsqrt`]).
     ///
     /// Allocation-free: `out` must have the same length as `values`; reuse
@@ -543,6 +595,58 @@ pub mod f64 {
         assert_eq!(a.len(), b.len());
         let mut out = alloc::vec![0.0_f64; a.len()];
         abs_sub_into(a, b, &mut out);
+        out
+    }
+
+    /// Elementwise overflow-safe hypotenuse `sqrt(a[i]² + b[i]²)`, written
+    /// into `out` (allocation-free variant of [`hypot`]).
+    ///
+    /// Scales by `max(|a[i]|, |b[i]|)` instead of squaring directly, so it
+    /// does not overflow for large magnitudes (matches [`f64::hypot`]).
+    ///
+    /// # Example
+    /// ```
+    /// let a = [3.0_f64];
+    /// let b = [4.0_f64];
+    /// let mut out = vec![0.0_f64; 1];
+    /// lanes::math::f64::hypot_into(&a, &b, &mut out);
+    /// assert!((out[0] - 5.0).abs() < 1e-12);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a.len() != b.len()` or `out.len() != a.len()`.
+    pub fn hypot_into(a: &[f64], b: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` (or mismatched inputs) would be UB.
+        assert_eq!(a.len(), b.len());
+        assert_eq!(a.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_hypot_f64(backend, a, b, out);
+    }
+
+    /// Elementwise overflow-safe hypotenuse over two slices.
+    ///
+    /// Returns a new `Vec`; matches `f64::hypot` within 1–2 ulp with
+    /// identical NaN/inf propagation (`hypot(inf, nan) == inf`).
+    ///
+    /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::math::f64::hypot(&[3.0_f64], &[4.0_f64]);
+    /// assert!((v[0] - 5.0).abs() < 1e-12);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `a.len() != b.len()`.
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn hypot(a: &[f64], b: &[f64]) -> Vec<f64> {
+        assert_eq!(a.len(), b.len());
+        let mut out = alloc::vec![0.0_f64; a.len()];
+        hypot_into(a, b, &mut out);
         out
     }
 

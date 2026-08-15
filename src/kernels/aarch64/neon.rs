@@ -612,6 +612,37 @@ crate::simd_map2!(
     |a: float32x4_t, b: float32x4_t| unsafe { vabsq_f32(vsubq_f32(a, b)) },
     |x: f32, y: f32| (x - y).abs()
 );
+// hypot: overflow-safe sqrt(a²+b²) via scale-by-max (SLEEF u35 strategy).
+// Special-case order: min==0 → max, then NaN, then inf last (inf overrides
+// NaN: hypot(inf, nan) == inf per IEEE).
+crate::simd_map2!(
+    hypot,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    |a: float32x4_t, b: float32x4_t| unsafe {
+        let ax = vabsq_f32(a);
+        let ay = vabsq_f32(b);
+        let mx = vmaxq_f32(ax, ay);
+        let mn = vminq_f32(ax, ay);
+        let t = vdivq_f32(mn, mx);
+        let one = vdupq_n_f32(1.0);
+        let r = vmulq_f32(mx, vsqrtq_f32(vaddq_f32(vmulq_f32(t, t), one)));
+        // min==0 → max (covers hypot(x,0)=|x| and hypot(0,0)=0).
+        let zero_m = vceqq_f32(mn, vdupq_n_f32(0.0));
+        let r = vbslq_f32(zero_m, mx, r);
+        // any NaN → NaN (vceq is all-ones for ordered; invert).
+        let nan_m = vorrq_u32(vmvnq_u32(vceqq_f32(a, a)), vmvnq_u32(vceqq_f32(b, b)));
+        let r = vbslq_f32(nan_m, vdupq_n_f32(f32::NAN), r);
+        // any inf → inf (overrides NaN; IEEE hypot(inf, nan) == inf).
+        let inf = vdupq_n_f32(f32::INFINITY);
+        let inf_m = vorrq_u32(vceqq_f32(ax, inf), vceqq_f32(ay, inf));
+        vbslq_f32(inf_m, inf, r)
+    },
+    |x: f32, y: f32| crate::kernels::hypot::hypot(x, y)
+);
 
 // Rsqrt: one-pass map, 1/sqrt(v) (exact via div+sqrt, not the ~12-bit
 // hardware approximation — correctness-first).
@@ -1125,6 +1156,36 @@ crate::simd_map2!(
     |p, v| unsafe { vst1q_f64(p, v) },
     |a: float64x2_t, b: float64x2_t| unsafe { vabsq_f64(vsubq_f64(a, b)) },
     |x: f64, y: f64| (x - y).abs()
+);
+// hypot_f64: overflow-safe sqrt(a²+b²) via scale-by-max (see f32 hypot).
+crate::simd_map2!(
+    hypot_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    |a: float64x2_t, b: float64x2_t| unsafe {
+        let ax = vabsq_f64(a);
+        let ay = vabsq_f64(b);
+        let mx = vmaxq_f64(ax, ay);
+        let mn = vminq_f64(ax, ay);
+        let t = vdivq_f64(mn, mx);
+        let one = vdupq_n_f64(1.0);
+        let r = vmulq_f64(mx, vsqrtq_f64(vaddq_f64(vmulq_f64(t, t), one)));
+        let zero_m = vceqq_f64(mn, vdupq_n_f64(0.0));
+        let r = vbslq_f64(zero_m, mx, r);
+        // any NaN → NaN (vceq is all-ones for ordered; invert via XOR).
+        let nan_m = vorrq_u64(
+            veorq_u64(vceqq_f64(a, a), vdupq_n_u64(u64::MAX)),
+            veorq_u64(vceqq_f64(b, b), vdupq_n_u64(u64::MAX)),
+        );
+        let r = vbslq_f64(nan_m, vdupq_n_f64(f64::NAN), r);
+        let inf = vdupq_n_f64(f64::INFINITY);
+        let inf_m = vorrq_u64(vceqq_f64(ax, inf), vceqq_f64(ay, inf));
+        vbslq_f64(inf_m, inf, r)
+    },
+    |x: f64, y: f64| crate::kernels::hypot::hypot_f64(x, y)
 );
 
 // f64 vector exp for NEON (2 lanes).
