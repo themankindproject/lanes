@@ -222,6 +222,51 @@ pub mod f32 {
         out
     }
 
+    /// Elementwise integer power `values[i].powi(n)`, written into `out`
+    /// (allocation-free variant of [`powi`]).
+    ///
+    /// Bit-exact with [`f32::powi`]: `powi(x, 0) == 1` for every `x`
+    /// (including NaN/inf), negative `n` takes the reciprocal, and
+    /// `powi(x, i32::MIN)` is `1 / x^(2^31)`.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [2.0_f32, 3.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::math::f32::powi_into(&v, 3, &mut out);
+    /// assert_eq!(out, [8.0, 27.0]);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn powi_into(values: &[f32], n: i32, out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_powi(backend, values, n, out);
+    }
+
+    /// Elementwise integer power over a slice: `values[i].powi(n)`.
+    ///
+    /// Returns a new `Vec`; bit-exact with [`f32::powi`] on every backend.
+    ///
+    /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::math::f32::powi(&[2.0_f32, 3.0], 3);
+    /// assert_eq!(v, [8.0, 27.0]);
+    /// ```
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn powi(values: &[f32], n: i32) -> Vec<f32> {
+        let mut out = alloc::vec![0.0_f32; values.len()];
+        powi_into(values, n, &mut out);
+        out
+    }
+
     /// Elementwise reciprocal square root, written into `out` (allocation-free variant of [`rsqrt`]).
     ///
     /// Allocation-free: `out` must have the same length as `values`; reuse
@@ -647,6 +692,51 @@ pub mod f64 {
         assert_eq!(a.len(), b.len());
         let mut out = alloc::vec![0.0_f64; a.len()];
         hypot_into(a, b, &mut out);
+        out
+    }
+
+    /// Elementwise integer power `values[i].powi(n)`, written into `out`
+    /// (allocation-free variant of [`powi`]).
+    ///
+    /// Bit-exact with [`f64::powi`]: `powi(x, 0) == 1` for every `x`
+    /// (including NaN/inf), negative `n` takes the reciprocal, and
+    /// `powi(x, i32::MIN)` is `1 / x^(2^31)`.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [2.0_f64, 3.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::math::f64::powi_into(&v, 3, &mut out);
+    /// assert_eq!(out, [8.0, 27.0]);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn powi_into(values: &[f64], n: i32, out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_powi_f64(backend, values, n, out);
+    }
+
+    /// Elementwise integer power over a slice: `values[i].powi(n)`.
+    ///
+    /// Returns a new `Vec`; bit-exact with [`f64::powi`] on every backend.
+    ///
+    /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::math::f64::powi(&[2.0_f64, 3.0], 3);
+    /// assert_eq!(v, [8.0, 27.0]);
+    /// ```
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn powi(values: &[f64], n: i32) -> Vec<f64> {
+        let mut out = alloc::vec![0.0_f64; values.len()];
+        powi_into(values, n, &mut out);
         out
     }
 

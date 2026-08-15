@@ -672,3 +672,22 @@ proptest! {
         }
     }
 }
+
+#[cfg(feature = "alloc")]
+proptest! {
+    #[test]
+    fn prop_powi_bit_exact_with_std(
+        values in proptest::collection::vec(-10.0_f32..10.0, 0..512),
+        n in -12_i32..12,
+    ) {
+        let out = lanes::math::f32::powi(&values, n);
+        for (i, (got, x)) in out.iter().zip(values.iter()).enumerate() {
+            let want = x.powi(n);
+            prop_assert_eq!(
+                got.to_bits(), want.to_bits(),
+                "lane {}: powi({}, {}) got {}, std {}",
+                i, x, n, got, want
+            );
+        }
+    }
+}

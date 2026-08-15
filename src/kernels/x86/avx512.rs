@@ -578,6 +578,20 @@ crate::simd_map2!(
     },
     |x: f32, y: f32| crate::kernels::hypot::hypot(x, y)
 );
+// powi: bit-exact exponentiation by squaring (shared scalar exponent ⇒
+// identical multiply sequence per lane; see simd_powi!).
+crate::simd_powi!(
+    powi,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    |p, v| unsafe { _mm512_storeu_ps(p, v) },
+    |a, b| unsafe { _mm512_mul_ps(a, b) },
+    |a, b| unsafe { _mm512_div_ps(a, b) },
+    unsafe { _mm512_set1_ps(1.0) },
+    |x: f32, n: i32| crate::kernels::powi::powi(x, n)
+);
 
 // Vector ln (f32): fdlibm e_log reduction, see simd_ln! in macros.rs.
 crate::simd_ln!(
@@ -1217,6 +1231,19 @@ crate::simd_map2!(
         _mm512_mask_blend_pd(inf_m, r, inf)
     },
     |x: f64, y: f64| crate::kernels::hypot::hypot_f64(x, y)
+);
+// powi_f64: bit-exact exponentiation by squaring (see f32 powi).
+crate::simd_powi!(
+    powi_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |a, b| unsafe { _mm512_mul_pd(a, b) },
+    |a, b| unsafe { _mm512_div_pd(a, b) },
+    unsafe { _mm512_set1_pd(1.0) },
+    |x: f64, n: i32| crate::kernels::powi::powi_f64(x, n)
 );
 
 // f64 vector exp for AVX-512F (8 lanes).

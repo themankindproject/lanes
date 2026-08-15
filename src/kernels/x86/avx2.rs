@@ -613,6 +613,20 @@ crate::simd_map2!(
     },
     |x: f32, y: f32| crate::kernels::hypot::hypot(x, y)
 );
+// powi: bit-exact exponentiation by squaring (shared scalar exponent ⇒
+// identical multiply sequence per lane; see simd_powi!).
+crate::simd_powi!(
+    powi,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    |p, v| unsafe { _mm256_storeu_ps(p, v) },
+    |a, b| unsafe { _mm256_mul_ps(a, b) },
+    |a, b| unsafe { _mm256_div_ps(a, b) },
+    unsafe { _mm256_set1_ps(1.0) },
+    |x: f32, n: i32| crate::kernels::powi::powi(x, n)
+);
 // Rsqrt: one-pass map, 1/sqrt(v) (exact via div+sqrt, not the ~12-bit
 // hardware approximation — correctness-first).
 crate::simd_map!(
@@ -1320,6 +1334,19 @@ crate::simd_map2!(
         _mm256_or_pd(_mm256_and_pd(inf_m, inf), _mm256_andnot_pd(inf_m, r))
     },
     |x: f64, y: f64| crate::kernels::hypot::hypot_f64(x, y)
+);
+// powi_f64: bit-exact exponentiation by squaring (see f32 powi).
+crate::simd_powi!(
+    powi_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |a, b| unsafe { _mm256_mul_pd(a, b) },
+    |a, b| unsafe { _mm256_div_pd(a, b) },
+    unsafe { _mm256_set1_pd(1.0) },
+    |x: f64, n: i32| crate::kernels::powi::powi_f64(x, n)
 );
 
 // f64 vector exp for AVX2 (4 lanes).

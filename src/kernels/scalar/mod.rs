@@ -299,6 +299,16 @@ pub(crate) fn hypot(a: &[f32], b: &[f32], out: &mut [f32]) {
     map2(a, b, out, crate::kernels::hypot::hypot);
 }
 
+/// Elementwise integer power into `out`: `values[i].powi(n)`.
+///
+/// Bit-exact with `f32::powi` (same squaring loop). Gated on `alloc`: its
+/// only caller (`dispatch_powi`) is alloc-gated.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn powi(values: &[f32], n: i32, out: &mut [f32]) {
+    map(values, out, |x| crate::kernels::powi::powi(x, n));
+}
+
 /// Elementwise reciprocal square root into `out`: `1/sqrt(x)`.
 ///
 /// Gated on `alloc`: its only caller (`dispatch_rsqrt`) is alloc-gated.
@@ -579,6 +589,16 @@ pub(crate) fn abs_sub_f64(a: &[f64], b: &[f64], out: &mut [f64]) {
 #[inline]
 pub(crate) fn hypot_f64(a: &[f64], b: &[f64], out: &mut [f64]) {
     map2_f64(a, b, out, crate::kernels::hypot::hypot_f64);
+}
+
+/// Elementwise integer power into `out` (`f64`): `values[i].powi(n)`.
+///
+/// Bit-exact with `f64::powi` (same squaring loop). Gated on `alloc`: its
+/// only caller (`dispatch_powi_f64`) is alloc-gated.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn powi_f64(values: &[f64], n: i32, out: &mut [f64]) {
+    map_f64(values, out, |x| crate::kernels::powi::powi_f64(x, n));
 }
 
 /// Elementwise reciprocal square root into `out`: `1/sqrt(x)`.

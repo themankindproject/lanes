@@ -643,6 +643,20 @@ crate::simd_map2!(
     },
     |x: f32, y: f32| crate::kernels::hypot::hypot(x, y)
 );
+// powi: bit-exact exponentiation by squaring (shared scalar exponent ⇒
+// identical multiply sequence per lane; see simd_powi!).
+crate::simd_powi!(
+    powi,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    |a, b| unsafe { vmulq_f32(a, b) },
+    |a, b| unsafe { vdivq_f32(a, b) },
+    unsafe { vdupq_n_f32(1.0) },
+    |x: f32, n: i32| crate::kernels::powi::powi(x, n)
+);
 
 // Rsqrt: one-pass map, 1/sqrt(v) (exact via div+sqrt, not the ~12-bit
 // hardware approximation — correctness-first).
@@ -1186,6 +1200,19 @@ crate::simd_map2!(
         vbslq_f64(inf_m, inf, r)
     },
     |x: f64, y: f64| crate::kernels::hypot::hypot_f64(x, y)
+);
+// powi_f64: bit-exact exponentiation by squaring (see f32 powi).
+crate::simd_powi!(
+    powi_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    |a, b| unsafe { vmulq_f64(a, b) },
+    |a, b| unsafe { vdivq_f64(a, b) },
+    unsafe { vdupq_n_f64(1.0) },
+    |x: f64, n: i32| crate::kernels::powi::powi_f64(x, n)
 );
 
 // f64 vector exp for NEON (2 lanes).

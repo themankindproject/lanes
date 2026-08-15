@@ -1096,3 +1096,24 @@ fn math_hypot_known_overflow_and_specials() {
 fn math_hypot_panics_on_length_mismatch() {
     let _ = lanes::math::f32::hypot(&[1.0, 2.0], &[1.0]);
 }
+
+#[test]
+fn math_powi_known_and_specials() {
+    assert_eq!(lanes::math::f32::powi(&[2.0_f32, 3.0], 3), [8.0, 27.0]);
+    assert_eq!(lanes::math::f32::powi(&[2.0], -2), [0.25]);
+    // powi(x, 0) == 1 for every x, incl. NaN/inf.
+    let r = lanes::math::f32::powi(&[f32::NAN, f32::INFINITY, 0.0], 0);
+    assert_eq!(r, [1.0, 1.0, 1.0]);
+    // Empty.
+    assert!(lanes::math::f32::powi(&[], 5).is_empty());
+    // f64 twins.
+    assert_eq!(lanes::math::f64::powi(&[2.0_f64, 3.0], 3), [8.0, 27.0]);
+    assert_eq!(lanes::math::f64::powi(&[2.0], -2), [0.25]);
+}
+
+#[test]
+#[should_panic(expected = "assertion")]
+fn math_powi_panics_on_length_mismatch() {
+    let mut out = [0.0_f32; 1];
+    lanes::math::f32::powi_into(&[1.0, 2.0], 2, &mut out);
+}

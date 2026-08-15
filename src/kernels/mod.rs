@@ -468,6 +468,19 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_powi,
+    [values: &[f32], n: i32, out: &mut [f32]],
+    (),
+    scalar::powi,
+    x86::sse2::powi,
+    x86::avx2::powi,
+    x86::avx512::powi,
+    aarch64::neon::powi,
+    id,
+    alloc
+);
+
+dispatch!(
     dispatch_rsqrt,
     [values: &[f32], out: &mut [f32]],
     (),
@@ -728,6 +741,19 @@ dispatch!(
     x86::avx2::hypot_f64,
     x86::avx512::hypot_f64,
     aarch64::neon::hypot_f64,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_powi_f64,
+    [values: &[f64], n: i32, out: &mut [f64]],
+    (),
+    scalar::powi_f64,
+    x86::sse2::powi_f64,
+    x86::avx2::powi_f64,
+    x86::avx512::powi_f64,
+    aarch64::neon::powi_f64,
     id,
     alloc
 );

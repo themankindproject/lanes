@@ -1058,6 +1058,81 @@ macro_rules! simd_map2 {
     };
 }
 
+/// Generate an elementwise integer-power kernel (`x.powi(n)` per lane).
+///
+/// The exponent `n` is a scalar shared by all lanes, so the
+/// exponentiation-by-squaring loop has the identical multiply sequence in
+/// every lane — the result is bit-exact with the scalar `compiler-builtins`
+/// algorithm (and thus `std::powi`). `$mul`/`$div`/`$one` are the vector
+/// multiply/divide/broadcast-one; `$scalar` handles the tail.
+///
+/// # Parameters
+///
+/// * `$name` — function name.
+/// * `$t` — scalar element type (`f32` or `f64`).
+/// * `$feat` — `target_feature` string.
+/// * `$lanes` — vector width in `$t` elements.
+/// * `$load` — `fn(*const $t) -> V`.
+/// * `$store` — `fn(*mut $t, V)`.
+/// * `$mul` — `fn(V, V) -> V` vector multiply.
+/// * `$div` — `fn(V, V) -> V` vector divide.
+/// * `$one` — `V` broadcast of `1.0` (expression, may be re-evaluated).
+/// * `$scalar` — `fn($t, i32) -> $t` scalar tail power.
+///
+/// # Safety
+/// The generated function is `unsafe fn` with `#[target_feature]`; the
+/// caller must verify the CPU feature and equal-length `values`/`out`.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! simd_powi {
+    (
+        $name:ident, $t:ty, $feat:literal, $lanes:expr,
+        $load:expr, $store:expr, $mul:expr, $div:expr, $one:expr, $scalar:expr
+    ) => {
+        /// Vector elementwise integer power. See the scalar reference for
+        /// semantics.
+        ///
+        /// # Safety
+        /// Caller must ensure the CPU feature is available and that
+        /// `values` and `out` have equal lengths.
+        #[cfg(feature = "alloc")]
+        #[inline]
+        #[target_feature(enable = $feat)]
+        pub(crate) unsafe fn $name(values: &[$t], n: i32, out: &mut [$t]) {
+            let len = values.len();
+            let chunks = len / $lanes;
+            let rem = len % $lanes;
+            let recip = n < 0;
+            let exp = n.unsigned_abs();
+            for i in 0..chunks {
+                let v = $load(unsafe { values.as_ptr().add(i * $lanes) });
+                // Exponentiation by squaring: identical multiply sequence to
+                // the scalar compiler-builtins `pow`, so each lane is
+                // bit-exact with `std::powi`.
+                let mut base = v;
+                let mut acc = $one;
+                let mut e = exp;
+                loop {
+                    if (e & 1) != 0 {
+                        acc = $mul(acc, base);
+                    }
+                    e >>= 1;
+                    if e == 0 {
+                        break;
+                    }
+                    base = $mul(base, base);
+                }
+                let r = if recip { $div($one, acc) } else { acc };
+                $store(unsafe { out.as_mut_ptr().add(i * $lanes) }, r);
+            }
+            for i in 0..rem {
+                let x = unsafe { *values.get_unchecked(chunks * $lanes + i) };
+                unsafe { *out.get_unchecked_mut(chunks * $lanes + i) = $scalar(x, n) };
+            }
+        }
+    };
+}
+
 /// Generate a predicate-count reduction kernel (returns the number of lanes
 /// satisfying a predicate, as `usize`).
 ///
