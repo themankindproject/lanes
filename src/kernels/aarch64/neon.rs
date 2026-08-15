@@ -316,6 +316,25 @@ crate::simd_reduce2!(
     |r, a, b| r + a * b,
     vaddq_f32
 );
+// Squared distance: fused sub + square + accumulate (dot skeleton).
+crate::simd_reduce2!(
+    squared_distance,
+    f32,
+    ["neon"],
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    vdupq_n_f32(0.0),
+    |acc: float32x4_t, va: float32x4_t, vb: float32x4_t| unsafe {
+        let d = vsubq_f32(va, vb);
+        vfmaq_f32(acc, d, d)
+    },
+    |v| unsafe { vaddvq_f32(v) },
+    |r: f32, a: f32, b: f32| {
+        let d = a - b;
+        r + d * d
+    },
+    vaddq_f32
+);
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
 // Uses the crate's `no_std` `exp`, so available in all builds.
@@ -1031,6 +1050,25 @@ crate::simd_reduce2!(
     |acc: float64x2_t, a: float64x2_t, b: float64x2_t| vfmaq_f64(acc, a, b),
     |v| unsafe { hsum_128d(v) },
     |r, a, b| r + a * b,
+    vaddq_f64
+);
+// Squared distance (f64): fused sub + square + accumulate (dot skeleton).
+crate::simd_reduce2!(
+    squared_distance_f64,
+    f64,
+    ["neon"],
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    vdupq_n_f64(0.0),
+    |acc: float64x2_t, a: float64x2_t, b: float64x2_t| unsafe {
+        let d = vsubq_f64(a, b);
+        vfmaq_f64(acc, d, d)
+    },
+    |v| unsafe { hsum_128d(v) },
+    |r: f64, a: f64, b: f64| {
+        let d = a - b;
+        r + d * d
+    },
     vaddq_f64
 );
 

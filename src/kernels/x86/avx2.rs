@@ -252,6 +252,25 @@ crate::simd_reduce2!(
     |r, a, b| r + a * b,
     _mm256_add_ps
 );
+// Squared distance: fused sub + square + accumulate (dot skeleton, FMA).
+crate::simd_reduce2!(
+    squared_distance,
+    f32,
+    ["avx2", "fma"],
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    _mm256_setzero_ps(),
+    |acc: __m256, va: __m256, vb: __m256| unsafe {
+        let d = _mm256_sub_ps(va, vb);
+        _mm256_fmadd_ps(d, d, acc)
+    },
+    |v| unsafe { hsum_256(v) },
+    |r: f32, a: f32, b: f32| {
+        let d = a - b;
+        r + d * d
+    },
+    _mm256_add_ps
+);
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
 // Uses the crate's `no_std` `exp`, so available in all builds.
@@ -1155,6 +1174,25 @@ crate::simd_reduce2!(
     |acc: __m256d, a: __m256d, b: __m256d| _mm256_fmadd_pd(a, b, acc),
     |v| unsafe { hsum_256d(v) },
     |r, a, b| r + a * b,
+    _mm256_add_pd
+);
+// Squared distance (f64): fused sub + square + accumulate (dot skeleton, FMA).
+crate::simd_reduce2!(
+    squared_distance_f64,
+    f64,
+    ["avx2", "fma"],
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    _mm256_setzero_pd(),
+    |acc: __m256d, a: __m256d, b: __m256d| unsafe {
+        let d = _mm256_sub_pd(a, b);
+        _mm256_fmadd_pd(d, d, acc)
+    },
+    |v| unsafe { hsum_256d(v) },
+    |r: f64, a: f64, b: f64| {
+        let d = a - b;
+        r + d * d
+    },
     _mm256_add_pd
 );
 

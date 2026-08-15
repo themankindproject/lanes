@@ -270,6 +270,18 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_squared_distance,
+    [a: &[f32], b: &[f32]],
+    f32,
+    scalar::squared_distance,
+    x86::sse2::squared_distance,
+    x86::avx2::squared_distance,
+    x86::avx512::squared_distance,
+    aarch64::neon::squared_distance,
+    id
+);
+
+dispatch!(
     dispatch_softmax,
     [values: &[f32], out: &mut [f32]],
     (),
@@ -677,6 +689,18 @@ dispatch!(
     x86::avx2::dot_f64,
     x86::avx512::dot_f64,
     aarch64::neon::dot_f64,
+    id
+);
+
+dispatch!(
+    dispatch_squared_distance_f64,
+    [a: &[f64], b: &[f64]],
+    f64,
+    scalar::squared_distance_f64,
+    x86::sse2::squared_distance_f64,
+    x86::avx2::squared_distance_f64,
+    x86::avx512::squared_distance_f64,
+    aarch64::neon::squared_distance_f64,
     id
 );
 

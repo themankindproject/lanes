@@ -691,3 +691,19 @@ proptest! {
         }
     }
 }
+
+proptest! {
+    #[test]
+    fn prop_squared_distance_matches_naive(a in bounded_f32_vec()) {
+        let b: Vec<f32> = a.iter().rev().copied().collect();
+        let got = lanes::distance::f32::squared_distance(&a, &b).unwrap();
+        let naive: f32 = a.iter().zip(b.iter()).map(|(x, y)| { let d = x - y; d * d }).sum();
+        // Same summation-order caveat as dot: use the input-magnitude tolerance.
+        let scale: f64 = a.iter().zip(b.iter()).map(|(x, y)| f64::from((x - y).abs())).sum();
+        let tol = scale * scale * (a.len() as f64) * 2_f64.powi(-20) + 1.0;
+        prop_assert!(
+            (f64::from(got) - f64::from(naive)).abs() <= tol,
+            "got {}, naive {}", got, naive
+        );
+    }
+}

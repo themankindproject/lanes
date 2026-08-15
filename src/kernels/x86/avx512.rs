@@ -237,6 +237,25 @@ crate::simd_reduce2!(
     |r, a, b| r + a * b,
     _mm512_add_ps
 );
+// Squared distance: fused sub + square + accumulate (dot skeleton).
+crate::simd_reduce2!(
+    squared_distance,
+    f32,
+    ["avx512f"],
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    _mm512_setzero_ps(),
+    |acc: __m512, va: __m512, vb: __m512| unsafe {
+        let d = _mm512_sub_ps(va, vb);
+        _mm512_add_ps(acc, _mm512_mul_ps(d, d))
+    },
+    |v| unsafe { _mm512_reduce_add_ps(v) },
+    |r: f32, a: f32, b: f32| {
+        let d = a - b;
+        r + d * d
+    },
+    _mm512_add_ps
+);
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
 // Uses the crate's `no_std` `exp`, so available in all builds.
@@ -1061,6 +1080,25 @@ crate::simd_reduce2!(
     |acc: __m512d, a: __m512d, b: __m512d| _mm512_fmadd_pd(a, b, acc),
     |v| unsafe { _mm512_reduce_add_pd(v) },
     |r, a, b| r + a * b,
+    _mm512_add_pd
+);
+// Squared distance (f64): fused sub + square + accumulate (dot skeleton).
+crate::simd_reduce2!(
+    squared_distance_f64,
+    f64,
+    ["avx512f"],
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_setzero_pd(),
+    |acc: __m512d, a: __m512d, b: __m512d| unsafe {
+        let d = _mm512_sub_pd(a, b);
+        _mm512_fmadd_pd(d, d, acc)
+    },
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |r: f64, a: f64, b: f64| {
+        let d = a - b;
+        r + d * d
+    },
     _mm512_add_pd
 );
 

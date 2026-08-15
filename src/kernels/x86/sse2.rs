@@ -254,6 +254,25 @@ crate::simd_reduce2!(
     |r, a, b| r + a * b,
     _mm_add_ps
 );
+// Squared distance: fused sub + square + accumulate (dot skeleton).
+crate::simd_reduce2!(
+    squared_distance,
+    f32,
+    ["sse2"],
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    _mm_setzero_ps(),
+    |acc: __m128, va: __m128, vb: __m128| unsafe {
+        let d = _mm_sub_ps(va, vb);
+        _mm_add_ps(acc, _mm_mul_ps(d, d))
+    },
+    |v| unsafe { hsum_128(v) },
+    |r: f32, a: f32, b: f32| {
+        let d = a - b;
+        r + d * d
+    },
+    _mm_add_ps
+);
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar
 // (no vector exp intrinsic); the macro handles the chunk loop.
@@ -1119,6 +1138,25 @@ crate::simd_reduce2!(
     |acc: __m128d, a: __m128d, b: __m128d| _mm_add_pd(acc, _mm_mul_pd(a, b)),
     |v| unsafe { hsum_128d(v) },
     |r, a, b| r + a * b,
+    _mm_add_pd
+);
+// Squared distance (f64): fused sub + square + accumulate (dot skeleton).
+crate::simd_reduce2!(
+    squared_distance_f64,
+    f64,
+    ["sse2"],
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    _mm_setzero_pd(),
+    |acc: __m128d, a: __m128d, b: __m128d| unsafe {
+        let d = _mm_sub_pd(a, b);
+        _mm_add_pd(acc, _mm_mul_pd(d, d))
+    },
+    |v| unsafe { hsum_128d(v) },
+    |r: f64, a: f64, b: f64| {
+        let d = a - b;
+        r + d * d
+    },
     _mm_add_pd
 );
 

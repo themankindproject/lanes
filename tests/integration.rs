@@ -1117,3 +1117,23 @@ fn math_powi_panics_on_length_mismatch() {
     let mut out = [0.0_f32; 1];
     lanes::math::f32::powi_into(&[1.0, 2.0], 2, &mut out);
 }
+
+#[test]
+fn distance_squared_distance_known_empty_and_mismatch() {
+    assert_eq!(
+        lanes::distance::f32::squared_distance(&[1.0, 2.0], &[4.0, 6.0]),
+        Ok(25.0)
+    );
+    assert_eq!(lanes::distance::f32::squared_distance(&[], &[]), Ok(0.0));
+    assert_eq!(
+        lanes::distance::f32::squared_distance(&[1.0, 2.0], &[1.0]),
+        Err(lanes::Error::LengthMismatch {
+            expected: 2,
+            actual: 1
+        })
+    );
+    assert_eq!(
+        lanes::distance::f64::squared_distance(&[1.0, 2.0], &[4.0, 6.0]),
+        Ok(25.0)
+    );
+}

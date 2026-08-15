@@ -10,6 +10,7 @@ pub mod f32 {
     //! Single-precision (`f32`) distance and norm functions.
 
     use crate::dispatch::Backend;
+    use crate::error::Error;
     use crate::kernels;
 
     /// Compute the L1 norm (sum of absolute values) of a slice.
@@ -62,12 +63,38 @@ pub mod f32 {
         let backend = Backend::detect();
         kernels::dispatch_max_norm(backend, values)
     }
+
+    /// Compute the squared Euclidean distance between two slices:
+    /// `sum((a[i] - b[i])²)`.
+    ///
+    /// Returns `Ok(0.0)` for two empty slices (same policy as
+    /// `dot`/`cosine_similarity`).
+    ///
+    /// # Errors
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
+    ///
+    /// # Example
+    /// ```
+    /// let d = lanes::distance::f32::squared_distance(&[1.0_f32, 2.0], &[4.0_f32, 6.0]);
+    /// assert_eq!(d, Ok(25.0));
+    /// ```
+    pub fn squared_distance(a: &[f32], b: &[f32]) -> Result<f32, Error> {
+        if a.len() != b.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len(),
+            });
+        }
+        let backend = Backend::detect();
+        Ok(kernels::dispatch_squared_distance(backend, a, b))
+    }
 }
 
 pub mod f64 {
     //! Double-precision (`f64`) distance and norm functions.
 
     use crate::dispatch::Backend;
+    use crate::error::Error;
     use crate::kernels;
 
     /// Compute the L1 norm (sum of absolute values) of a slice.
@@ -119,5 +146,30 @@ pub mod f64 {
         }
         let backend = Backend::detect();
         kernels::dispatch_max_norm_f64(backend, values)
+    }
+
+    /// Compute the squared Euclidean distance between two slices:
+    /// `sum((a[i] - b[i])²)`.
+    ///
+    /// Returns `Ok(0.0)` for two empty slices (same policy as
+    /// `dot`/`cosine_similarity`).
+    ///
+    /// # Errors
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
+    ///
+    /// # Example
+    /// ```
+    /// let d = lanes::distance::f64::squared_distance(&[1.0_f64, 2.0], &[4.0_f64, 6.0]);
+    /// assert_eq!(d, Ok(25.0));
+    /// ```
+    pub fn squared_distance(a: &[f64], b: &[f64]) -> Result<f64, Error> {
+        if a.len() != b.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len(),
+            });
+        }
+        let backend = Backend::detect();
+        Ok(kernels::dispatch_squared_distance_f64(backend, a, b))
     }
 }

@@ -407,6 +407,21 @@ pub(crate) fn dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum()
 }
 
+/// Squared Euclidean distance of two equal-length slices:
+/// `sum((a[i] - b[i])²)`. Returns `0.0` for empty inputs.
+///
+/// Caller guarantees equal lengths (zip stops at the shorter otherwise).
+#[inline]
+pub(crate) fn squared_distance(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| {
+            let d = x - y;
+            d * d
+        })
+        .sum()
+}
+
 /// Find the index of the maximum element in a slice, returning `(value, index)`.
 ///
 /// Caller must guarantee the slice is non-empty. Ties resolve to the first
@@ -507,6 +522,18 @@ pub(crate) fn max_norm_f64(values: &[f64]) -> Option<f64> {
 #[inline]
 pub(crate) fn dot_f64(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum()
+}
+
+/// `f64` twin of [`squared_distance`].
+#[inline]
+pub(crate) fn squared_distance_f64(a: &[f64], b: &[f64]) -> f64 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| {
+            let d = x - y;
+            d * d
+        })
+        .sum()
 }
 
 /// Find the index of the maximum element in a slice, returning `(value, index)`.
