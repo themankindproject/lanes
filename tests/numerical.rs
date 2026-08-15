@@ -1,0 +1,277 @@
+//! Strict numerical-correctness tests for the issue #1 kernels.
+//!
+//! Unlike the tolerance-based property tests, these pin the exact accuracy
+//! contracts:
+//!
+//! - `hypot` (f32/f64): max ULP distance vs `std::hypot` (correctly rounded
+//!   on glibc/musl/Apple libm) across a magnitude sweep, 50k random pairs
+//!   spanning 2^-60..2^60 (f32) / 2^-510..2^510 (f64), and a 1000-element
+//!   array that exercises the SIMD loop and scalar tail.
+//! - `powi` (f32/f64): **bit-exact** vs `std::powi` for exponents -40..=40
+//!   on random values, plus specials (`i32::MIN`, `i32::MAX`, ±0, ±inf,
+//!   NaN). The shared scalar exponent makes every lane run the identical
+//!   multiply sequence as `compiler-builtins`, so any mismatch is a bug.
+//! - `squared_distance` (f32): relative error vs an f64-precision reference
+//!   stays within the SIMD tree-summation bound.
+//! - `abs_sub` (f32): bit-exact vs `(x - y).abs()`.
+//!
+//! All inputs come from a seeded LCG, so failures are reproducible.
+//!
+//! These run against whichever backend `Backend::detect` picks; re-run with
+//! `LANES_BACKEND=scalar|sse2|avx2|avx512 cargo test --test numerical` to
+//! pin each backend (NEON on aarch64 hosts / CI).
+
+/// ULP distance between two `f32` (NaN == NaN counts as 0).
+fn ulp32(a: f32, b: f32) -> i64 {
+    if a.is_nan() && b.is_nan() {
+        return 0;
+    }
+    (i64::from(a.to_bits()) - i64::from(b.to_bits())).abs()
+}
+
+/// ULP distance between two `f64` (NaN == NaN counts as 0).
+fn ulp64(a: f64, b: f64) -> i64 {
+    if a.is_nan() && b.is_nan() {
+        return 0;
+    }
+    (a.to_bits() as i64 - b.to_bits() as i64).abs()
+}
+
+/// Deterministic 64-bit LCG (numerical recipes constants).
+struct Lcg(u64);
+impl Lcg {
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        self.0
+    }
+
+    /// Uniform `f32` in `[-1, 1]`.
+    fn next_f32(&mut self) -> f32 {
+        let u = self.next_u64() >> 40; // 24 bits
+        (u as f32 / 8_388_608.0) - 1.0
+    }
+
+    /// Uniform `f64` in `[-1, 1]`.
+    fn next_f64(&mut self) -> f64 {
+        let u = self.next_u64() >> 11; // 53 bits
+        (u as f64 / 4_503_599_627_370_496.0) - 1.0
+    }
+
+    /// Uniform `f32` in `[-1, 1]` scaled by `2^k`.
+    fn scaled_f32(&mut self, k: i32) -> f32 {
+        self.next_f32() * 2.0_f32.powi(k)
+    }
+
+    /// Uniform `f64` in `[-1, 1]` scaled by `2^k`.
+    fn scaled_f64(&mut self, k: i32) -> f64 {
+        self.next_f64() * 2.0_f64.powi(k)
+    }
+}
+
+#[test]
+fn hypot_f32_within_2_ulp_of_std() {
+    let mut rng = Lcg(0xDEAD_BEEF_CAFE_BABE);
+    let mut max_ulp: i64 = 0;
+    let mut worst = (0.0_f32, 0.0_f32);
+
+    let check = |a: f32, b: f32, max_ulp: &mut i64, worst: &mut (f32, f32)| {
+        let got = lanes::math::f32::hypot(&[a], &[b]).unwrap()[0];
+        let want = a.hypot(b);
+        let u = ulp32(got, want);
+        if u > *max_ulp {
+            *max_ulp = u;
+            *worst = (a, b);
+        }
+    };
+
+    // 1) Deterministic magnitude sweep (near-overflow, tiny, mixed ratios).
+    let mags: [f32; 13] = [
+        1e-38, 1e-30, 1e-20, 1e-10, 1e-5, 1e-3, 0.5, 1.0, 3.7, 1e3, 1e10, 1e20, 1e38,
+    ];
+    for &ma in &mags {
+        for &mb in &mags {
+            for &sa in &[1.0_f32, -1.0] {
+                for &sb in &[1.0_f32, -1.0] {
+                    check(sa * ma, sb * mb, &mut max_ulp, &mut worst);
+                }
+            }
+        }
+    }
+
+    // 2) 50k random pairs across magnitudes 2^-60..2^60.
+    for _ in 0..50_000 {
+        let ka = (rng.next_u64() % 121) as i32 - 60;
+        let kb = (rng.next_u64() % 121) as i32 - 60;
+        check(
+            rng.scaled_f32(ka),
+            rng.scaled_f32(kb),
+            &mut max_ulp,
+            &mut worst,
+        );
+    }
+
+    // 3) One large array (1000 elems) to exercise the SIMD loop + tail.
+    let a: Vec<f32> = (0..1000)
+        .map(|_| {
+            let k = (rng.next_u64() % 121) as i32 - 60;
+            rng.scaled_f32(k)
+        })
+        .collect();
+    let b: Vec<f32> = (0..1000)
+        .map(|_| {
+            let k = (rng.next_u64() % 121) as i32 - 60;
+            rng.scaled_f32(k)
+        })
+        .collect();
+    let got = lanes::math::f32::hypot(&a, &b).unwrap();
+    for ((x, y), r) in a.iter().zip(b.iter()).zip(got.iter()) {
+        let u = ulp32(*r, x.hypot(*y));
+        if u > max_ulp {
+            max_ulp = u;
+            worst = (*x, *y);
+        }
+    }
+
+    assert!(
+        max_ulp <= 2,
+        "hypot f32 drifted {max_ulp} ulp from std (contract: <= 2), worst at {worst:?}"
+    );
+}
+
+#[test]
+fn hypot_f64_within_2_ulp_of_std() {
+    let mut rng = Lcg(0x0123_4567_89AB_CDEF);
+    let mut max_ulp: i64 = 0;
+    let mut worst = (0.0_f64, 0.0_f64);
+
+    for _ in 0..50_000 {
+        let ka = (rng.next_u64() % 1021) as i32 - 510;
+        let kb = (rng.next_u64() % 1021) as i32 - 510;
+        let a = rng.scaled_f64(ka);
+        let b = rng.scaled_f64(kb);
+        let got = lanes::math::f64::hypot(&[a], &[b]).unwrap()[0];
+        let want = a.hypot(b);
+        let u = ulp64(got, want);
+        if u > max_ulp {
+            max_ulp = u;
+            worst = (a, b);
+        }
+    }
+
+    assert!(
+        max_ulp <= 2,
+        "hypot f64 drifted {max_ulp} ulp from std (contract: <= 2), worst at {worst:?}"
+    );
+}
+
+#[test]
+fn powi_bit_exact_with_std() {
+    let mut rng = Lcg(0xFEED_FACE_DEAD_BEEF);
+    let mut mismatches: Vec<String> = Vec::new();
+
+    for n in -40_i32..=40 {
+        let xs: Vec<f32> = (0..257).map(|_| rng.next_f32() * 3.0).collect();
+        let got = lanes::math::f32::powi(&xs, n);
+        for (x, g) in xs.iter().zip(got.iter()) {
+            let want = x.powi(n);
+            if g.to_bits() != want.to_bits() {
+                mismatches.push(format!("f32 powi({x}, {n}) = {g}, std = {want}"));
+            }
+        }
+
+        let xs64: Vec<f64> = (0..257).map(|_| rng.next_f64() * 3.0).collect();
+        let got64 = lanes::math::f64::powi(&xs64, n);
+        for (x, g) in xs64.iter().zip(got64.iter()) {
+            let want = x.powi(n);
+            if g.to_bits() != want.to_bits() {
+                mismatches.push(format!("f64 powi({x}, {n}) = {g}, std = {want}"));
+            }
+        }
+    }
+
+    // Specials incl. the exponent extremes.
+    for n in [i32::MIN, i32::MIN + 1, -1, 0, 1, 2, i32::MAX - 1, i32::MAX] {
+        for x in [
+            0.0_f32,
+            -0.0,
+            1.0,
+            -1.0,
+            2.0,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+        ] {
+            let got = lanes::math::f32::powi(&[x], n)[0];
+            let want = x.powi(n);
+            if got.to_bits() != want.to_bits() {
+                mismatches.push(format!("f32 powi({x}, {n}) = {got}, std = {want}"));
+            }
+        }
+    }
+
+    assert!(
+        mismatches.is_empty(),
+        "powi not bit-exact with std ({} mismatches), first: {}",
+        mismatches.len(),
+        mismatches.first().map_or("", String::as_str)
+    );
+}
+
+#[test]
+fn squared_distance_within_tree_sum_bound() {
+    let mut rng = Lcg(0xCAFE_D00D_1234_5678);
+    let mut max_rel = 0.0_f64;
+    let mut worst_len = 0usize;
+
+    // Lengths covering lane tails for every backend width (2/4/8/16).
+    for len in [1usize, 3, 4, 5, 7, 8, 9, 15, 16, 17, 100, 1023] {
+        let a: Vec<f32> = (0..len).map(|_| rng.next_f32() * 100.0).collect();
+        let b: Vec<f32> = (0..len).map(|_| rng.next_f32() * 100.0).collect();
+        let got = lanes::distance::f32::squared_distance(&a, &b).unwrap();
+        let naive: f64 = a
+            .iter()
+            .zip(b.iter())
+            .map(|(x, y)| {
+                let d = f64::from(*x) - f64::from(*y);
+                d * d
+            })
+            .sum();
+        let rel = (f64::from(got) - naive).abs() / naive.max(1.0);
+        if rel > max_rel {
+            max_rel = rel;
+            worst_len = len;
+        }
+    }
+
+    assert!(
+        max_rel <= 1e-6,
+        "squared_distance f32 rel err {max_rel:.3e} exceeds 1e-6 bound (worst at len {worst_len})"
+    );
+}
+
+#[test]
+fn abs_sub_bit_exact() {
+    let mut rng = Lcg(0xABCD_EF01_2345_6789);
+    let a: Vec<f32> = (0..997).map(|_| rng.next_f32() * 50.0).collect();
+    let b: Vec<f32> = (0..997).map(|_| rng.next_f32() * 50.0).collect();
+    let got = lanes::math::f32::abs_sub(&a, &b).unwrap();
+
+    let bad: Vec<String> = a
+        .iter()
+        .zip(b.iter())
+        .zip(got.iter())
+        .enumerate()
+        .filter(|(_, ((x, y), r))| r.to_bits() != (**x - **y).abs().to_bits())
+        .map(|(i, ((x, y), r))| format!("lane {i}: |{x} - {y}| = {r}"))
+        .collect();
+
+    assert!(
+        bad.is_empty(),
+        "abs_sub not bit-exact vs (x-y).abs() ({} of 997), first: {}",
+        bad.len(),
+        bad.first().map_or("", String::as_str)
+    );
+}
