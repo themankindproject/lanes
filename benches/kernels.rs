@@ -93,6 +93,32 @@ fn naive_dot_f64(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(&x, &y)| x * y).sum()
 }
 
+fn naive_abs_sub(a: &[f32], b: &[f32]) -> Vec<f32> {
+    a.iter().zip(b).map(|(&x, &y)| (x - y).abs()).collect()
+}
+
+fn naive_hypot(a: &[f32], b: &[f32]) -> Vec<f32> {
+    a.iter().zip(b).map(|(&x, &y)| x.hypot(y)).collect()
+}
+
+fn naive_powi(values: &[f32], n: i32) -> Vec<f32> {
+    values.iter().map(|&x| x.powi(n)).collect()
+}
+
+fn naive_squared_distance(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b)
+        .map(|(&x, &y)| {
+            let d = x - y;
+            d * d
+        })
+        .sum()
+}
+
+fn naive_count_zero(values: &[f32]) -> usize {
+    values.iter().filter(|&&x| x == 0.0).count()
+}
+
 /// Benchmark a sum-family reduction: `lanes` vs naive, across the size ladder.
 fn bench_reduce<T, F, G>(
     c: &mut Criterion,
@@ -232,6 +258,93 @@ fn bench_max(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark a two-input elementwise map: `lanes` vs naive, across the size
+/// ladder.
+fn bench_map2<T, F, G>(
+    c: &mut Criterion,
+    name: &str,
+    make_data: fn(usize, u64) -> Vec<T>,
+    lanes: F,
+    naive: G,
+) where
+    F: Fn(&[T], &[T]) -> Vec<T> + Copy,
+    G: Fn(&[T], &[T]) -> Vec<T> + Copy,
+{
+    let mut group = c.benchmark_group(name);
+    for &size in SIZES {
+        let a = make_data(size, 42);
+        let b = make_data(size, 123);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes(black_box(&a), black_box(&b)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| naive(black_box(&a), black_box(&b)));
+        });
+    }
+    group.finish();
+}
+
+fn bench_abs_sub(c: &mut Criterion) {
+    bench_map2(
+        c,
+        "abs_sub",
+        random_f32_vec,
+        lanes::math::f32::abs_sub,
+        naive_abs_sub,
+    );
+}
+
+fn bench_hypot(c: &mut Criterion) {
+    bench_map2(
+        c,
+        "hypot",
+        random_f32_vec,
+        lanes::math::f32::hypot,
+        naive_hypot,
+    );
+}
+
+fn bench_powi(c: &mut Criterion) {
+    let mut group = c.benchmark_group("powi");
+    for &size in SIZES {
+        let data = random_f32_vec(size, 44);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &data, |b, data| {
+            b.iter(|| lanes::math::f32::powi(black_box(data), black_box(3)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &data, |b, data| {
+            b.iter(|| naive_powi(black_box(data), 3));
+        });
+    }
+    group.finish();
+}
+
+fn bench_squared_distance(c: &mut Criterion) {
+    bench_dot_pair(
+        c,
+        "squared_distance",
+        random_f32_vec,
+        |a, b| lanes::distance::f32::squared_distance(a, b).unwrap(),
+        naive_squared_distance,
+    );
+}
+
+fn bench_count_zero(c: &mut Criterion) {
+    let mut group = c.benchmark_group("count_zero");
+    for &size in SIZES {
+        let data = random_f32_vec(size, 45);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &data, |b, data| {
+            b.iter(|| lanes::stats::f32::count_zero(black_box(data)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &data, |b, data| {
+            b.iter(|| naive_count_zero(black_box(data)));
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_sum,
@@ -240,6 +353,11 @@ criterion_group!(
     bench_min,
     bench_max,
     bench_sum_f64,
-    bench_dot_f64
+    bench_dot_f64,
+    bench_abs_sub,
+    bench_hypot,
+    bench_powi,
+    bench_squared_distance,
+    bench_count_zero
 );
 criterion_main!(benches);
