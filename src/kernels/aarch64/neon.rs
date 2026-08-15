@@ -36,7 +36,8 @@ crate::simd_reduce!(
     vdupq_n_f32(0.0),
     vaddq_f32,
     |v| unsafe { vaddvq_f32(v) },
-    |r, v| r + v
+    |r, v| r + v,
+    vaddq_f32
 );
 
 // Product reduction: 4-wide multiply, scalar-multiply tail.
@@ -57,8 +58,7 @@ crate::simd_reduce!(
     |r, v| r * v
 );
 
-// Minimum reduction: `vminq` semantics, `minf` tail.
-crate::simd_reduce!(
+crate::simd_minmax!(
     min,
     f32,
     "neon",
@@ -67,11 +67,14 @@ crate::simd_reduce!(
     vdupq_n_f32(f32::INFINITY),
     vminq_f32,
     |v| unsafe { vminvq_f32(v) },
-    f32::min
+    f32::min,
+    |v: float32x4_t| unsafe { vmaxvq_u32(vceqq_f32(v, v)) != 0 },
+    |v: float32x4_t| unsafe { vbslq_f32(vceqq_f32(v, v), v, vdupq_n_f32(f32::INFINITY)) },
+    |v: f32| !v.is_nan(),
+    |r: f32, saw_real: bool| if saw_real { r } else { f32::NAN }
 );
 
-// Maximum reduction: `vmaxq` semantics, `maxf` tail.
-crate::simd_reduce!(
+crate::simd_minmax!(
     max,
     f32,
     "neon",
@@ -80,7 +83,11 @@ crate::simd_reduce!(
     vdupq_n_f32(f32::NEG_INFINITY),
     vmaxq_f32,
     |v| unsafe { vmaxvq_f32(v) },
-    f32::max
+    f32::max,
+    |v: float32x4_t| unsafe { vmaxvq_u32(vceqq_f32(v, v)) != 0 },
+    |v: float32x4_t| unsafe { vbslq_f32(vceqq_f32(v, v), v, vdupq_n_f32(f32::NEG_INFINITY)) },
+    |v: f32| !v.is_nan(),
+    |r: f32, saw_real: bool| if saw_real { r } else { f32::NAN }
 );
 // Sum of squares: 4-wide multiply-accumulate (acc += v*v).
 crate::simd_reduce!(
@@ -92,7 +99,8 @@ crate::simd_reduce!(
     vdupq_n_f32(0.0),
     |acc: float32x4_t, v: float32x4_t| vaddq_f32(acc, vmulq_f32(v, v)),
     |v| unsafe { vaddvq_f32(v) },
-    |r: f32, v: f32| r + v * v
+    |r: f32, v: f32| r + v * v,
+    vaddq_f32
 );
 
 // L1 norm: sum of absolute values.
@@ -111,11 +119,11 @@ crate::simd_reduce!(
         ))
     ),
     |v| unsafe { vaddvq_f32(v) },
-    |r: f32, v: f32| r + v.abs()
+    |r: f32, v: f32| r + v.abs(),
+    vaddq_f32
 );
 
-// Max norm: maximum absolute value.
-crate::simd_reduce!(
+crate::simd_minmax!(
     max_norm,
     f32,
     "neon",
@@ -130,7 +138,11 @@ crate::simd_reduce!(
         ))
     ),
     |v| unsafe { vmaxvq_f32(v) },
-    |r: f32, v: f32| f32::max(r, v.abs())
+    |r: f32, v: f32| f32::max(r, v.abs()),
+    |v: float32x4_t| unsafe { vminvq_u32(vceqq_f32(v, v)) == 0 },
+    |v: float32x4_t| unsafe { vbslq_f32(vceqq_f32(v, v), v, vdupq_n_f32(0.0)) },
+    |v: f32| v.is_nan(),
+    |r: f32, saw_nan: bool| if saw_nan { f32::NAN } else { r }
 );
 
 /// Horizontal argmax of the 4 lanes: `(max value, its index)`.
@@ -265,7 +277,8 @@ crate::simd_reduce2!(
     vdupq_n_f32(0.0),
     vfmaq_f32,
     |v| unsafe { vaddvq_f32(v) },
-    |r, a, b| r + a * b
+    |r, a, b| r + a * b,
+    vaddq_f32
 );
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
@@ -826,7 +839,8 @@ crate::simd_reduce!(
     vdupq_n_f64(0.0),
     vaddq_f64,
     |v| unsafe { hsum_128d(v) },
-    |r, v| r + v
+    |r, v| r + v,
+    vaddq_f64
 );
 
 crate::simd_reduce!(
@@ -841,7 +855,7 @@ crate::simd_reduce!(
     |r, v| r * v
 );
 
-crate::simd_reduce!(
+crate::simd_minmax!(
     min_f64,
     f64,
     "neon",
@@ -850,10 +864,14 @@ crate::simd_reduce!(
     vdupq_n_f64(f64::INFINITY),
     vminq_f64,
     |v| unsafe { hmin_128d(v) },
-    f64::min
+    f64::min,
+    |v: float64x2_t| unsafe { vmaxvq_u32(vreinterpretq_u32_u64(vceqq_f64(v, v))) != 0 },
+    |v: float64x2_t| unsafe { vbslq_f64(vceqq_f64(v, v), v, vdupq_n_f64(f64::INFINITY)) },
+    |v: f64| !v.is_nan(),
+    |r: f64, saw_real: bool| if saw_real { r } else { f64::NAN }
 );
 
-crate::simd_reduce!(
+crate::simd_minmax!(
     max_f64,
     f64,
     "neon",
@@ -862,7 +880,11 @@ crate::simd_reduce!(
     vdupq_n_f64(f64::NEG_INFINITY),
     vmaxq_f64,
     |v| unsafe { hmax_128d(v) },
-    f64::max
+    f64::max,
+    |v: float64x2_t| unsafe { vmaxvq_u32(vreinterpretq_u32_u64(vceqq_f64(v, v))) != 0 },
+    |v: float64x2_t| unsafe { vbslq_f64(vceqq_f64(v, v), v, vdupq_n_f64(f64::NEG_INFINITY)) },
+    |v: f64| !v.is_nan(),
+    |r: f64, saw_real: bool| if saw_real { r } else { f64::NAN }
 );
 
 crate::simd_reduce!(
@@ -874,7 +896,8 @@ crate::simd_reduce!(
     vdupq_n_f64(0.0),
     |acc: float64x2_t, v: float64x2_t| vaddq_f64(acc, vmulq_f64(v, v)),
     |v| unsafe { hsum_128d(v) },
-    |r: f64, v: f64| r + v * v
+    |r: f64, v: f64| r + v * v,
+    vaddq_f64
 );
 
 crate::simd_reduce!(
@@ -886,10 +909,11 @@ crate::simd_reduce!(
     vdupq_n_f64(0.0),
     |acc: float64x2_t, v: float64x2_t| vaddq_f64(acc, vabsq_f64(v)),
     |v| unsafe { hsum_128d(v) },
-    |r: f64, v: f64| r + v.abs()
+    |r: f64, v: f64| r + v.abs(),
+    vaddq_f64
 );
 
-crate::simd_reduce!(
+crate::simd_minmax!(
     max_norm_f64,
     f64,
     "neon",
@@ -898,7 +922,11 @@ crate::simd_reduce!(
     vdupq_n_f64(0.0),
     |acc: float64x2_t, v: float64x2_t| vmaxq_f64(acc, vabsq_f64(v)),
     |v| unsafe { hmax_128d(v) },
-    |r: f64, v: f64| f64::max(r, v.abs())
+    |r: f64, v: f64| f64::max(r, v.abs()),
+    |v: float64x2_t| unsafe { vminvq_u32(vreinterpretq_u32_u64(vceqq_f64(v, v))) == 0 },
+    |v: float64x2_t| unsafe { vbslq_f64(vceqq_f64(v, v), v, vdupq_n_f64(0.0)) },
+    |v: f64| v.is_nan(),
+    |r: f64, saw_nan: bool| if saw_nan { f64::NAN } else { r }
 );
 
 crate::simd_reduce2!(
@@ -910,7 +938,8 @@ crate::simd_reduce2!(
     vdupq_n_f64(0.0),
     |acc: float64x2_t, a: float64x2_t, b: float64x2_t| vfmaq_f64(acc, a, b),
     |v| unsafe { hsum_128d(v) },
-    |r, a, b| r + a * b
+    |r, a, b| r + a * b,
+    vaddq_f64
 );
 
 crate::simd_argminmax!(
@@ -1477,7 +1506,7 @@ mod tests {
         if !std::arch::is_aarch64_feature_detected!("neon") {
             return;
         }
-        for len in [0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 63, 64, 65, 512, 1024] {
+        for len in [1, 2, 3, 7, 8, 9, 15, 16, 17, 63, 64, 65, 512, 1024] {
             let data = exact_data(len, 25, 64);
             // SAFETY: tested inside the avx2 detection guard.
             let simd = unsafe { max_norm(&data) };

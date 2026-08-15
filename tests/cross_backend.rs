@@ -504,3 +504,132 @@ fn cross_layer_norm_into_agrees_with_vec() {
         }
     }
 }
+
+// ===========================================================================
+// NaN parity: min/max/max_norm must match the scalar reference semantics
+// on every backend (minNum/maxNum for min/max, total_cmp for max_norm),
+// regardless of where the NaN sits relative to the vector chunk boundaries.
+// ===========================================================================
+
+/// Bit-exact Option comparison (NaN == NaN by bits, ±0 distinguished).
+fn opt_bits_eq(a: Option<f32>, b: Option<f32>) -> bool {
+    match (a, b) {
+        (Some(x), Some(y)) => x.to_bits() == y.to_bits(),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn scalar_min(v: &[f32]) -> Option<f32> {
+    v.iter().copied().reduce(f32::min)
+}
+fn scalar_max(v: &[f32]) -> Option<f32> {
+    v.iter().copied().reduce(f32::max)
+}
+fn scalar_max_norm(v: &[f32]) -> Option<f32> {
+    v.iter().copied().map(f32::abs).max_by(f32::total_cmp)
+}
+
+/// NaN at every position for lengths around each chunk boundary: the SIMD
+/// result must equal the scalar reference (NaN ignored unless all-NaN).
+#[test]
+fn min_max_nan_parity_all_positions() {
+    let nan = f32::NAN;
+    for len in [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33] {
+        for pos in 0..len {
+            let mut data: Vec<f32> = (0..len).map(|i| (i as f32) + 1.0).collect();
+            data[pos] = nan;
+            assert!(
+                opt_bits_eq(min(&data), scalar_min(&data)),
+                "min NaN parity broken: len {len}, nan at {pos}"
+            );
+            assert!(
+                opt_bits_eq(max(&data), scalar_max(&data)),
+                "max NaN parity broken: len {len}, nan at {pos}"
+            );
+            assert!(
+                opt_bits_eq(
+                    lanes::distance::f32::max_norm(&data),
+                    scalar_max_norm(&data)
+                ),
+                "max_norm NaN parity broken: len {len}, nan at {pos}"
+            );
+        }
+    }
+}
+
+/// All-NaN inputs of every length: min/max must return NaN (not the ±inf
+/// seed), max_norm must return NaN.
+#[test]
+fn min_max_all_nan_returns_nan() {
+    let nan = f32::NAN;
+    for len in [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64] {
+        let data = vec![nan; len];
+        assert!(
+            min(&data).is_some_and(f32::is_nan),
+            "min(all-NaN len {len}) must be NaN"
+        );
+        assert!(
+            max(&data).is_some_and(f32::is_nan),
+            "max(all-NaN len {len}) must be NaN"
+        );
+        assert!(
+            lanes::distance::f32::max_norm(&data).is_some_and(f32::is_nan),
+            "max_norm(all-NaN len {len}) must be NaN"
+        );
+    }
+}
+
+/// NaN in a full chunk followed by real values (and vice versa): the NaN
+/// chunk must not poison the result for min/max, and must poison max_norm.
+#[test]
+fn min_max_nan_chunk_isolation() {
+    let nan = f32::NAN;
+    let mut data = vec![nan; 16];
+    data.extend_from_slice(&[5.0, 3.0, 8.0]);
+    assert_eq!(min(&data), Some(3.0));
+    assert_eq!(max(&data), Some(8.0));
+    assert!(lanes::distance::f32::max_norm(&data).is_some_and(f32::is_nan));
+
+    let mut data = vec![5.0, 3.0, 8.0];
+    data.extend_from_slice(&[nan; 16]);
+    assert_eq!(min(&data), Some(3.0));
+    assert_eq!(max(&data), Some(8.0));
+    assert!(lanes::distance::f32::max_norm(&data).is_some_and(f32::is_nan));
+}
+
+/// f64 twins of the NaN-parity checks (2/4/8-lane chunks).
+#[test]
+fn min_max_nan_parity_f64() {
+    let nan = f64::NAN;
+    let s_min = |v: &[f64]| v.iter().copied().reduce(f64::min);
+    let s_max = |v: &[f64]| v.iter().copied().reduce(f64::max);
+    let bits_eq = |a: Option<f64>, b: Option<f64>| match (a, b) {
+        (Some(x), Some(y)) => x.to_bits() == y.to_bits(),
+        (None, None) => true,
+        _ => false,
+    };
+    for len in [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17] {
+        for pos in 0..len {
+            let mut data: Vec<f64> = (0..len).map(|i| (i as f64) + 1.0).collect();
+            data[pos] = nan;
+            assert!(
+                bits_eq(lanes::stats::f64::min(&data), s_min(&data)),
+                "f64 min NaN parity broken: len {len}, nan at {pos}"
+            );
+            assert!(
+                bits_eq(lanes::stats::f64::max(&data), s_max(&data)),
+                "f64 max NaN parity broken: len {len}, nan at {pos}"
+            );
+        }
+        let all_nan = vec![nan; len];
+        assert!(
+            lanes::stats::f64::min(&all_nan).is_some_and(f64::is_nan),
+            "f64 min(all-NaN len {len}) must be NaN"
+        );
+        assert!(
+            lanes::stats::f64::max(&all_nan).is_some_and(f64::is_nan),
+            "f64 max(all-NaN len {len}) must be NaN"
+        );
+    }
+}

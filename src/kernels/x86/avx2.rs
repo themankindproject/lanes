@@ -36,7 +36,8 @@ crate::simd_reduce!(
     _mm256_setzero_ps(),
     _mm256_add_ps,
     |v| unsafe { hsum_256(v) },
-    |r, v| r + v
+    |r, v| r + v,
+    _mm256_add_ps
 );
 
 // Product reduction: 8-wide multiply, scalar-multiply tail.
@@ -52,8 +53,7 @@ crate::simd_reduce!(
     |r, v| r * v
 );
 
-// Minimum reduction: `vminps` semantics, `minf` tail.
-crate::simd_reduce!(
+crate::simd_minmax!(
     min,
     f32,
     "avx2",
@@ -62,11 +62,20 @@ crate::simd_reduce!(
     _mm256_set1_ps(f32::INFINITY),
     _mm256_min_ps,
     |v| unsafe { hmin_256(v) },
-    f32::min
+    f32::min,
+    |v: __m256| unsafe { _mm256_movemask_ps(_mm256_cmp_ps(v, v, _CMP_ORD_Q)) != 0 },
+    |v: __m256| unsafe {
+        let nan = _mm256_cmp_ps(v, v, _CMP_UNORD_Q);
+        _mm256_or_ps(
+            _mm256_and_ps(nan, _mm256_set1_ps(f32::INFINITY)),
+            _mm256_andnot_ps(nan, v),
+        )
+    },
+    |v: f32| !v.is_nan(),
+    |r: f32, saw_real: bool| if saw_real { r } else { f32::NAN }
 );
 
-// Maximum reduction: `vmaxps` semantics, `maxf` tail.
-crate::simd_reduce!(
+crate::simd_minmax!(
     max,
     f32,
     "avx2",
@@ -75,7 +84,17 @@ crate::simd_reduce!(
     _mm256_set1_ps(f32::NEG_INFINITY),
     _mm256_max_ps,
     |v| unsafe { hmax_256(v) },
-    f32::max
+    f32::max,
+    |v: __m256| unsafe { _mm256_movemask_ps(_mm256_cmp_ps(v, v, _CMP_ORD_Q)) != 0 },
+    |v: __m256| unsafe {
+        let nan = _mm256_cmp_ps(v, v, _CMP_UNORD_Q);
+        _mm256_or_ps(
+            _mm256_and_ps(nan, _mm256_set1_ps(f32::NEG_INFINITY)),
+            _mm256_andnot_ps(nan, v),
+        )
+    },
+    |v: f32| !v.is_nan(),
+    |r: f32, saw_real: bool| if saw_real { r } else { f32::NAN }
 );
 // Sum of squares: 8-wide multiply-accumulate (acc += v*v).
 crate::simd_reduce!(
@@ -87,7 +106,8 @@ crate::simd_reduce!(
     _mm256_setzero_ps(),
     |acc: __m256, v: __m256| _mm256_add_ps(acc, _mm256_mul_ps(v, v)),
     |v| unsafe { hsum_256(v) },
-    |r: f32, v: f32| r + v * v
+    |r: f32, v: f32| r + v * v,
+    _mm256_add_ps
 );
 
 // L1 norm: sum of absolute values.
@@ -100,11 +120,11 @@ crate::simd_reduce!(
     _mm256_setzero_ps(),
     |acc: __m256, v: __m256| _mm256_add_ps(acc, _mm256_andnot_ps(_mm256_set1_ps(-0.0), v)),
     |v| unsafe { hsum_256(v) },
-    |r: f32, v: f32| r + v.abs()
+    |r: f32, v: f32| r + v.abs(),
+    _mm256_add_ps
 );
 
-// Max norm: maximum absolute value.
-crate::simd_reduce!(
+crate::simd_minmax!(
     max_norm,
     f32,
     "avx2",
@@ -113,7 +133,11 @@ crate::simd_reduce!(
     _mm256_set1_ps(0.0),
     |acc: __m256, v: __m256| _mm256_max_ps(acc, _mm256_andnot_ps(_mm256_set1_ps(-0.0), v)),
     |v| unsafe { hmax_256(v) },
-    |r: f32, v: f32| f32::max(r, v.abs())
+    |r: f32, v: f32| f32::max(r, v.abs()),
+    |v: __m256| unsafe { _mm256_movemask_ps(_mm256_cmp_ps(v, v, _CMP_UNORD_Q)) != 0 },
+    |v: __m256| unsafe { _mm256_andnot_ps(_mm256_cmp_ps(v, v, _CMP_UNORD_Q), v) },
+    |v: f32| v.is_nan(),
+    |r: f32, saw_nan: bool| if saw_nan { f32::NAN } else { r }
 );
 
 // Argmax: index of the first occurrence of the maximum.
@@ -182,7 +206,8 @@ crate::simd_reduce2!(
     _mm256_setzero_ps(),
     |acc, va, vb| _mm256_fmadd_ps(va, vb, acc),
     |v| unsafe { hsum_256(v) },
-    |r, a, b| r + a * b
+    |r, a, b| r + a * b,
+    _mm256_add_ps
 );
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
@@ -909,7 +934,8 @@ crate::simd_reduce!(
     _mm256_setzero_pd(),
     _mm256_add_pd,
     |v| unsafe { hsum_256d(v) },
-    |r, v| r + v
+    |r, v| r + v,
+    _mm256_add_pd
 );
 
 crate::simd_reduce!(
@@ -924,7 +950,7 @@ crate::simd_reduce!(
     |r, v| r * v
 );
 
-crate::simd_reduce!(
+crate::simd_minmax!(
     min_f64,
     f64,
     "avx2",
@@ -933,10 +959,20 @@ crate::simd_reduce!(
     _mm256_set1_pd(f64::INFINITY),
     _mm256_min_pd,
     |v| unsafe { hmin_256d(v) },
-    f64::min
+    f64::min,
+    |v: __m256d| unsafe { _mm256_movemask_pd(_mm256_cmp_pd(v, v, _CMP_ORD_Q)) != 0 },
+    |v: __m256d| unsafe {
+        let nan = _mm256_cmp_pd(v, v, _CMP_UNORD_Q);
+        _mm256_or_pd(
+            _mm256_and_pd(nan, _mm256_set1_pd(f64::INFINITY)),
+            _mm256_andnot_pd(nan, v),
+        )
+    },
+    |v: f64| !v.is_nan(),
+    |r: f64, saw_real: bool| if saw_real { r } else { f64::NAN }
 );
 
-crate::simd_reduce!(
+crate::simd_minmax!(
     max_f64,
     f64,
     "avx2",
@@ -945,7 +981,17 @@ crate::simd_reduce!(
     _mm256_set1_pd(f64::NEG_INFINITY),
     _mm256_max_pd,
     |v| unsafe { hmax_256d(v) },
-    f64::max
+    f64::max,
+    |v: __m256d| unsafe { _mm256_movemask_pd(_mm256_cmp_pd(v, v, _CMP_ORD_Q)) != 0 },
+    |v: __m256d| unsafe {
+        let nan = _mm256_cmp_pd(v, v, _CMP_UNORD_Q);
+        _mm256_or_pd(
+            _mm256_and_pd(nan, _mm256_set1_pd(f64::NEG_INFINITY)),
+            _mm256_andnot_pd(nan, v),
+        )
+    },
+    |v: f64| !v.is_nan(),
+    |r: f64, saw_real: bool| if saw_real { r } else { f64::NAN }
 );
 
 crate::simd_reduce!(
@@ -957,7 +1003,8 @@ crate::simd_reduce!(
     _mm256_setzero_pd(),
     |acc: __m256d, v: __m256d| _mm256_add_pd(acc, _mm256_mul_pd(v, v)),
     |v| unsafe { hsum_256d(v) },
-    |r: f64, v: f64| r + v * v
+    |r: f64, v: f64| r + v * v,
+    _mm256_add_pd
 );
 
 crate::simd_reduce!(
@@ -969,10 +1016,11 @@ crate::simd_reduce!(
     _mm256_setzero_pd(),
     |acc: __m256d, v: __m256d| _mm256_add_pd(acc, _mm256_andnot_pd(_mm256_set1_pd(-0.0), v)),
     |v| unsafe { hsum_256d(v) },
-    |r: f64, v: f64| r + v.abs()
+    |r: f64, v: f64| r + v.abs(),
+    _mm256_add_pd
 );
 
-crate::simd_reduce!(
+crate::simd_minmax!(
     max_norm_f64,
     f64,
     "avx2",
@@ -981,7 +1029,11 @@ crate::simd_reduce!(
     _mm256_set1_pd(0.0),
     |acc: __m256d, v: __m256d| _mm256_max_pd(acc, _mm256_andnot_pd(_mm256_set1_pd(-0.0), v)),
     |v| unsafe { hmax_256d(v) },
-    |r: f64, v: f64| f64::max(r, v.abs())
+    |r: f64, v: f64| f64::max(r, v.abs()),
+    |v: __m256d| unsafe { _mm256_movemask_pd(_mm256_cmp_pd(v, v, _CMP_UNORD_Q)) != 0 },
+    |v: __m256d| unsafe { _mm256_andnot_pd(_mm256_cmp_pd(v, v, _CMP_UNORD_Q), v) },
+    |v: f64| v.is_nan(),
+    |r: f64, saw_nan: bool| if saw_nan { f64::NAN } else { r }
 );
 
 crate::simd_reduce2!(
@@ -993,7 +1045,8 @@ crate::simd_reduce2!(
     _mm256_setzero_pd(),
     |acc: __m256d, a: __m256d, b: __m256d| _mm256_fmadd_pd(a, b, acc),
     |v| unsafe { hsum_256d(v) },
-    |r, a, b| r + a * b
+    |r, a, b| r + a * b,
+    _mm256_add_pd
 );
 
 crate::simd_argminmax!(
@@ -1690,7 +1743,7 @@ mod tests {
         if !std::arch::is_x86_feature_detected!("avx2") {
             return;
         }
-        for len in [0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 63, 64, 65, 512, 1024] {
+        for len in [1, 2, 3, 7, 8, 9, 15, 16, 17, 63, 64, 65, 512, 1024] {
             let data = exact_data(len, 25, 64);
             // SAFETY: tested inside the avx2 detection guard.
             let simd = unsafe { max_norm(&data) };

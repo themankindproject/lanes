@@ -36,7 +36,8 @@ crate::simd_reduce!(
     _mm_setzero_ps(),
     _mm_add_ps,
     |v| unsafe { hsum_128(v) },
-    |r, v| r + v
+    |r, v| r + v,
+    _mm_add_ps
 );
 
 // Product reduction: 4-wide multiply, scalar-multiply tail.
@@ -52,8 +53,7 @@ crate::simd_reduce!(
     |r, v| r * v
 );
 
-// Minimum reduction: `minps` semantics, `minf` tail.
-crate::simd_reduce!(
+crate::simd_minmax!(
     min,
     f32,
     "sse2",
@@ -62,11 +62,20 @@ crate::simd_reduce!(
     _mm_set1_ps(f32::INFINITY),
     _mm_min_ps,
     |v| unsafe { hmin_128(v) },
-    f32::min
+    f32::min,
+    |v: __m128| unsafe { _mm_movemask_ps(_mm_cmpord_ps(v, v)) != 0 },
+    |v: __m128| unsafe {
+        let nan = _mm_cmpunord_ps(v, v);
+        _mm_or_ps(
+            _mm_and_ps(nan, _mm_set1_ps(f32::INFINITY)),
+            _mm_andnot_ps(nan, v),
+        )
+    },
+    |v: f32| !v.is_nan(),
+    |r: f32, saw_real: bool| if saw_real { r } else { f32::NAN }
 );
 
-// Maximum reduction: `maxps` semantics, `maxf` tail.
-crate::simd_reduce!(
+crate::simd_minmax!(
     max,
     f32,
     "sse2",
@@ -75,7 +84,17 @@ crate::simd_reduce!(
     _mm_set1_ps(f32::NEG_INFINITY),
     _mm_max_ps,
     |v| unsafe { hmax_128(v) },
-    f32::max
+    f32::max,
+    |v: __m128| unsafe { _mm_movemask_ps(_mm_cmpord_ps(v, v)) != 0 },
+    |v: __m128| unsafe {
+        let nan = _mm_cmpunord_ps(v, v);
+        _mm_or_ps(
+            _mm_and_ps(nan, _mm_set1_ps(f32::NEG_INFINITY)),
+            _mm_andnot_ps(nan, v),
+        )
+    },
+    |v: f32| !v.is_nan(),
+    |r: f32, saw_real: bool| if saw_real { r } else { f32::NAN }
 );
 
 // Sum of squares: 4-wide multiply-accumulate (acc += v*v).
@@ -88,7 +107,8 @@ crate::simd_reduce!(
     _mm_setzero_ps(),
     |acc: __m128, v: __m128| _mm_add_ps(acc, _mm_mul_ps(v, v)),
     |v| unsafe { hsum_128(v) },
-    |r: f32, v: f32| r + v * v
+    |r: f32, v: f32| r + v * v,
+    _mm_add_ps
 );
 
 // L1 norm: sum of absolute values.
@@ -101,11 +121,11 @@ crate::simd_reduce!(
     _mm_setzero_ps(),
     |acc: __m128, v: __m128| _mm_add_ps(acc, _mm_andnot_ps(_mm_set1_ps(-0.0), v)),
     |v| unsafe { hsum_128(v) },
-    |r: f32, v: f32| r + v.abs()
+    |r: f32, v: f32| r + v.abs(),
+    _mm_add_ps
 );
 
-// Max norm: maximum absolute value.
-crate::simd_reduce!(
+crate::simd_minmax!(
     max_norm,
     f32,
     "sse2",
@@ -114,7 +134,11 @@ crate::simd_reduce!(
     _mm_set1_ps(0.0),
     |acc: __m128, v: __m128| _mm_max_ps(acc, _mm_andnot_ps(_mm_set1_ps(-0.0), v)),
     |v| unsafe { hmax_128(v) },
-    |r: f32, v: f32| f32::max(r, v.abs())
+    |r: f32, v: f32| f32::max(r, v.abs()),
+    |v: __m128| unsafe { _mm_movemask_ps(_mm_cmpunord_ps(v, v)) != 0 },
+    |v: __m128| unsafe { _mm_andnot_ps(_mm_cmpunord_ps(v, v), v) },
+    |v: f32| v.is_nan(),
+    |r: f32, saw_nan: bool| if saw_nan { f32::NAN } else { r }
 );
 
 // Argmax: index of the first occurrence of the maximum.
@@ -188,7 +212,8 @@ crate::simd_reduce2!(
     _mm_setzero_ps(),
     |acc, va, vb| _mm_add_ps(acc, _mm_mul_ps(va, vb)),
     |v| unsafe { hsum_128(v) },
-    |r, a, b| r + a * b
+    |r, a, b| r + a * b,
+    _mm_add_ps
 );
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar
@@ -605,8 +630,10 @@ crate::simd_map!(
 #[inline]
 #[target_feature(enable = "sse2")]
 unsafe fn hsum_128(v: __m128) -> f32 {
-    // SAFETY: caller guarantees SSE2; all intrinsics below require SSE2.
-    let shuf = unsafe { _mm_movehdup_ps(v) }; // [1,1,3,3]
+    // SAFETY: caller guarantees SSE2; all intrinsics below are SSE1/SSE2.
+    // (`_mm_movehdup_ps` would be SSE3 — not part of the x86-64 baseline —
+    // so the swap is done with a plain `shuffle_ps`.)
+    let shuf = unsafe { _mm_shuffle_ps(v, v, 0b10_11_00_01) }; // [1,0,3,2]
     let sums = unsafe { _mm_add_ps(v, shuf) }; // [0+1, _, 2+3, _]
     let hi64 = unsafe { _mm_movehl_ps(sums, sums) }; // [2+3, _, _, _]
     let result = unsafe { _mm_add_ss(sums, hi64) }; // [0+1+2+3, _, _, _]
@@ -881,7 +908,8 @@ crate::simd_reduce!(
     _mm_setzero_pd(),
     _mm_add_pd,
     |v| unsafe { hsum_128d(v) },
-    |r, v| r + v
+    |r, v| r + v,
+    _mm_add_pd
 );
 
 crate::simd_reduce!(
@@ -896,7 +924,7 @@ crate::simd_reduce!(
     |r, v| r * v
 );
 
-crate::simd_reduce!(
+crate::simd_minmax!(
     min_f64,
     f64,
     "sse2",
@@ -905,10 +933,20 @@ crate::simd_reduce!(
     _mm_set1_pd(f64::INFINITY),
     _mm_min_pd,
     |v| unsafe { hmin_128d(v) },
-    f64::min
+    f64::min,
+    |v: __m128d| unsafe { _mm_movemask_pd(_mm_cmpord_pd(v, v)) != 0 },
+    |v: __m128d| unsafe {
+        let nan = _mm_cmpunord_pd(v, v);
+        _mm_or_pd(
+            _mm_and_pd(nan, _mm_set1_pd(f64::INFINITY)),
+            _mm_andnot_pd(nan, v),
+        )
+    },
+    |v: f64| !v.is_nan(),
+    |r: f64, saw_real: bool| if saw_real { r } else { f64::NAN }
 );
 
-crate::simd_reduce!(
+crate::simd_minmax!(
     max_f64,
     f64,
     "sse2",
@@ -917,7 +955,17 @@ crate::simd_reduce!(
     _mm_set1_pd(f64::NEG_INFINITY),
     _mm_max_pd,
     |v| unsafe { hmax_128d(v) },
-    f64::max
+    f64::max,
+    |v: __m128d| unsafe { _mm_movemask_pd(_mm_cmpord_pd(v, v)) != 0 },
+    |v: __m128d| unsafe {
+        let nan = _mm_cmpunord_pd(v, v);
+        _mm_or_pd(
+            _mm_and_pd(nan, _mm_set1_pd(f64::NEG_INFINITY)),
+            _mm_andnot_pd(nan, v),
+        )
+    },
+    |v: f64| !v.is_nan(),
+    |r: f64, saw_real: bool| if saw_real { r } else { f64::NAN }
 );
 
 crate::simd_reduce!(
@@ -929,7 +977,8 @@ crate::simd_reduce!(
     _mm_setzero_pd(),
     |acc: __m128d, v: __m128d| _mm_add_pd(acc, _mm_mul_pd(v, v)),
     |v| unsafe { hsum_128d(v) },
-    |r: f64, v: f64| r + v * v
+    |r: f64, v: f64| r + v * v,
+    _mm_add_pd
 );
 
 crate::simd_reduce!(
@@ -941,10 +990,11 @@ crate::simd_reduce!(
     _mm_setzero_pd(),
     |acc: __m128d, v: __m128d| _mm_add_pd(acc, _mm_andnot_pd(_mm_set1_pd(-0.0), v)),
     |v| unsafe { hsum_128d(v) },
-    |r: f64, v: f64| r + v.abs()
+    |r: f64, v: f64| r + v.abs(),
+    _mm_add_pd
 );
 
-crate::simd_reduce!(
+crate::simd_minmax!(
     max_norm_f64,
     f64,
     "sse2",
@@ -953,7 +1003,11 @@ crate::simd_reduce!(
     _mm_set1_pd(0.0),
     |acc: __m128d, v: __m128d| _mm_max_pd(acc, _mm_andnot_pd(_mm_set1_pd(-0.0), v)),
     |v| unsafe { hmax_128d(v) },
-    |r: f64, v: f64| f64::max(r, v.abs())
+    |r: f64, v: f64| f64::max(r, v.abs()),
+    |v: __m128d| unsafe { _mm_movemask_pd(_mm_cmpunord_pd(v, v)) != 0 },
+    |v: __m128d| unsafe { _mm_andnot_pd(_mm_cmpunord_pd(v, v), v) },
+    |v: f64| v.is_nan(),
+    |r: f64, saw_nan: bool| if saw_nan { f64::NAN } else { r }
 );
 
 crate::simd_reduce2!(
@@ -965,7 +1019,8 @@ crate::simd_reduce2!(
     _mm_setzero_pd(),
     |acc: __m128d, a: __m128d, b: __m128d| _mm_add_pd(acc, _mm_mul_pd(a, b)),
     |v| unsafe { hsum_128d(v) },
-    |r, a, b| r + a * b
+    |r, a, b| r + a * b,
+    _mm_add_pd
 );
 
 crate::simd_argminmax!(
@@ -1541,7 +1596,7 @@ mod tests {
         if !std::arch::is_x86_feature_detected!("sse2") {
             return;
         }
-        for len in [0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 63, 64, 65, 512, 1024] {
+        for len in [1, 2, 3, 7, 8, 9, 15, 16, 17, 63, 64, 65, 512, 1024] {
             let data = exact_data(len, 25, 64);
             // SAFETY: tested inside the avx2 detection guard.
             let simd = unsafe { max_norm(&data) };

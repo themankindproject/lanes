@@ -26,6 +26,93 @@
 #[allow(clippy::wildcard_imports)]
 use core::arch::x86_64::*;
 
+// Bitwise ops on float vectors, routed through the integer domain:
+// `_mm512_and_ps` / `_mm512_or_ps` / `_mm512_xor_ps` / `_mm512_andnot_ps`
+// (and the `_pd` twins) are AVX-512DQ, not AVX-512F. Dispatch gates this
+// backend on `avx512f` alone (see `platform::supports`), so the DQ forms
+// would SIGILL on F-only parts (e.g. Knights Landing). The `_si512`
+// integer versions are AVX-512F.
+#[cfg(feature = "alloc")]
+#[inline]
+fn and_ps(a: __m512, b: __m512) -> __m512 {
+    unsafe {
+        _mm512_castsi512_ps(_mm512_and_si512(
+            _mm512_castps_si512(a),
+            _mm512_castps_si512(b),
+        ))
+    }
+}
+#[cfg(feature = "alloc")]
+#[inline]
+fn or_ps(a: __m512, b: __m512) -> __m512 {
+    unsafe {
+        _mm512_castsi512_ps(_mm512_or_si512(
+            _mm512_castps_si512(a),
+            _mm512_castps_si512(b),
+        ))
+    }
+}
+#[cfg(feature = "alloc")]
+#[inline]
+fn xor_ps(a: __m512, b: __m512) -> __m512 {
+    unsafe {
+        _mm512_castsi512_ps(_mm512_xor_si512(
+            _mm512_castps_si512(a),
+            _mm512_castps_si512(b),
+        ))
+    }
+}
+#[cfg(feature = "alloc")]
+#[inline]
+fn andnot_ps(a: __m512, b: __m512) -> __m512 {
+    unsafe {
+        _mm512_castsi512_ps(_mm512_andnot_si512(
+            _mm512_castps_si512(a),
+            _mm512_castps_si512(b),
+        ))
+    }
+}
+#[cfg(feature = "alloc")]
+#[inline]
+fn and_pd(a: __m512d, b: __m512d) -> __m512d {
+    unsafe {
+        _mm512_castsi512_pd(_mm512_and_si512(
+            _mm512_castpd_si512(a),
+            _mm512_castpd_si512(b),
+        ))
+    }
+}
+#[cfg(feature = "alloc")]
+#[inline]
+fn or_pd(a: __m512d, b: __m512d) -> __m512d {
+    unsafe {
+        _mm512_castsi512_pd(_mm512_or_si512(
+            _mm512_castpd_si512(a),
+            _mm512_castpd_si512(b),
+        ))
+    }
+}
+#[cfg(feature = "alloc")]
+#[inline]
+fn xor_pd(a: __m512d, b: __m512d) -> __m512d {
+    unsafe {
+        _mm512_castsi512_pd(_mm512_xor_si512(
+            _mm512_castpd_si512(a),
+            _mm512_castpd_si512(b),
+        ))
+    }
+}
+#[cfg(feature = "alloc")]
+#[inline]
+fn andnot_pd(a: __m512d, b: __m512d) -> __m512d {
+    unsafe {
+        _mm512_castsi512_pd(_mm512_andnot_si512(
+            _mm512_castpd_si512(a),
+            _mm512_castpd_si512(b),
+        ))
+    }
+}
+
 // Sum reduction: accumulate 16-wide, horizontal-sum, scalar tail.
 crate::simd_reduce!(
     sum,
@@ -36,7 +123,8 @@ crate::simd_reduce!(
     _mm512_setzero_ps(),
     _mm512_add_ps,
     |v| unsafe { _mm512_reduce_add_ps(v) },
-    |r, v| r + v
+    |r, v| r + v,
+    _mm512_add_ps
 );
 
 // Product reduction: 16-wide multiply, scalar-multiply tail.
@@ -52,8 +140,7 @@ crate::simd_reduce!(
     |r, v| r * v
 );
 
-// Minimum reduction: `vminps` semantics, `minf` tail.
-crate::simd_reduce!(
+crate::simd_minmax!(
     min,
     f32,
     "avx512f",
@@ -62,11 +149,17 @@ crate::simd_reduce!(
     _mm512_set1_ps(f32::INFINITY),
     _mm512_min_ps,
     |v| unsafe { _mm512_reduce_min_ps(v) },
-    f32::min
+    f32::min,
+    |v: __m512| unsafe { _mm512_cmp_ps_mask(v, v, _CMP_ORD_Q) != 0 },
+    |v: __m512| unsafe {
+        let nan = _mm512_cmp_ps_mask(v, v, _CMP_UNORD_Q);
+        _mm512_mask_blend_ps(nan, v, _mm512_set1_ps(f32::INFINITY))
+    },
+    |v: f32| !v.is_nan(),
+    |r: f32, saw_real: bool| if saw_real { r } else { f32::NAN }
 );
 
-// Maximum reduction: `vmaxps` semantics, `maxf` tail.
-crate::simd_reduce!(
+crate::simd_minmax!(
     max,
     f32,
     "avx512f",
@@ -75,7 +168,14 @@ crate::simd_reduce!(
     _mm512_set1_ps(f32::NEG_INFINITY),
     _mm512_max_ps,
     |v| unsafe { _mm512_reduce_max_ps(v) },
-    f32::max
+    f32::max,
+    |v: __m512| unsafe { _mm512_cmp_ps_mask(v, v, _CMP_ORD_Q) != 0 },
+    |v: __m512| unsafe {
+        let nan = _mm512_cmp_ps_mask(v, v, _CMP_UNORD_Q);
+        _mm512_mask_blend_ps(nan, v, _mm512_set1_ps(f32::NEG_INFINITY))
+    },
+    |v: f32| !v.is_nan(),
+    |r: f32, saw_real: bool| if saw_real { r } else { f32::NAN }
 );
 // Sum of squares: 16-wide multiply-accumulate (acc += v*v).
 crate::simd_reduce!(
@@ -87,7 +187,8 @@ crate::simd_reduce!(
     _mm512_setzero_ps(),
     |acc: __m512, v: __m512| _mm512_add_ps(acc, _mm512_mul_ps(v, v)),
     |v| unsafe { _mm512_reduce_add_ps(v) },
-    |r: f32, v: f32| r + v * v
+    |r: f32, v: f32| r + v * v,
+    _mm512_add_ps
 );
 
 // L1 norm: sum of absolute values.
@@ -100,11 +201,11 @@ crate::simd_reduce!(
     _mm512_setzero_ps(),
     |acc: __m512, v: __m512| unsafe { _mm512_add_ps(acc, _mm512_abs_ps(v)) },
     |v| unsafe { _mm512_reduce_add_ps(v) },
-    |r: f32, v: f32| r + v.abs()
+    |r: f32, v: f32| r + v.abs(),
+    _mm512_add_ps
 );
 
-// Max norm: maximum absolute value.
-crate::simd_reduce!(
+crate::simd_minmax!(
     max_norm,
     f32,
     "avx512f",
@@ -113,7 +214,14 @@ crate::simd_reduce!(
     _mm512_set1_ps(0.0),
     |acc: __m512, v: __m512| unsafe { _mm512_max_ps(acc, _mm512_abs_ps(v)) },
     |v| unsafe { _mm512_reduce_max_ps(v) },
-    |r: f32, v: f32| f32::max(r, v.abs())
+    |r: f32, v: f32| f32::max(r, v.abs()),
+    |v: __m512| unsafe { _mm512_cmp_ps_mask(v, v, _CMP_UNORD_Q) != 0 },
+    |v: __m512| unsafe {
+        let nan = _mm512_cmp_ps_mask(v, v, _CMP_UNORD_Q);
+        _mm512_mask_blend_ps(nan, v, _mm512_setzero_ps())
+    },
+    |v: f32| v.is_nan(),
+    |r: f32, saw_nan: bool| if saw_nan { f32::NAN } else { r }
 );
 
 // Dot product: 16-wide multiply-accumulate (mul+add; AVX-512F has no FMA).
@@ -126,7 +234,8 @@ crate::simd_reduce2!(
     _mm512_setzero_ps(),
     |acc, va, vb| _mm512_add_ps(acc, _mm512_mul_ps(va, vb)),
     |v| unsafe { _mm512_reduce_add_ps(v) },
-    |r, a, b| r + a * b
+    |r, a, b| r + a * b,
+    _mm512_add_ps
 );
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
@@ -220,10 +329,7 @@ crate::simd_map!(
             _mm512_set1_ps(1.0),
             _mm512_add_ps(
                 _mm512_set1_ps(1.0),
-                vexp_512(_mm512_xor_ps(
-                    v,
-                    _mm512_castsi512_ps(_mm512_set1_epi32(i32::MIN)),
-                )),
+                vexp_512(xor_ps(v, _mm512_castsi512_ps(_mm512_set1_epi32(i32::MIN)))),
             ),
         )
     },
@@ -255,10 +361,7 @@ crate::simd_map!(
             v,
             _mm512_add_ps(
                 _mm512_set1_ps(1.0),
-                vexp_512(_mm512_xor_ps(
-                    v,
-                    _mm512_castsi512_ps(_mm512_set1_epi32(i32::MIN)),
-                )),
+                vexp_512(xor_ps(v, _mm512_castsi512_ps(_mm512_set1_epi32(i32::MIN)))),
             ),
         )
     },
@@ -334,12 +437,12 @@ crate::simd_map!(
     |p| unsafe { _mm512_loadu_ps(p) },
     |p, v| unsafe { _mm512_storeu_ps(p, v) },
     |v| unsafe {
-        let a = _mm512_andnot_ps(_mm512_set1_ps(-0.0), v);
+        let a = andnot_ps(_mm512_set1_ps(-0.0), v);
         // ±1 for |x| > 9.011, x for |x| < 2e-4, series for |x| < 0.1,
         // ratio (e-1)/(e+1) beyond (Sterbenz-exact, clamped for overflow).
         let big_mask = _mm512_cmp_ps_mask(a, _mm512_set1_ps(9.011), _CMP_GT_OQ);
         if big_mask == 0xFFFF {
-            return _mm512_or_ps(_mm512_set1_ps(1.0), _mm512_and_ps(_mm512_set1_ps(-0.0), v));
+            return or_ps(_mm512_set1_ps(1.0), and_ps(_mm512_set1_ps(-0.0), v));
         }
         let x2 = _mm512_mul_ps(v, v);
         let x4 = _mm512_mul_ps(x2, x2);
@@ -353,7 +456,7 @@ crate::simd_map!(
             _mm512_sub_ps(em, _mm512_set1_ps(1.0)),
             _mm512_add_ps(em, _mm512_set1_ps(1.0)),
         );
-        let big = _mm512_or_ps(ratio, _mm512_and_ps(_mm512_set1_ps(-0.0), v));
+        let big = or_ps(ratio, and_ps(_mm512_set1_ps(-0.0), v));
         let ser_mask = _mm512_cmp_ps_mask(a, _mm512_set1_ps(0.1), _CMP_LT_OQ);
         let small_mask = _mm512_cmp_ps_mask(a, _mm512_set1_ps(2e-4), _CMP_LT_OQ);
         let mid = _mm512_mask_blend_ps(ser_mask, big, series);
@@ -361,7 +464,7 @@ crate::simd_map!(
         _mm512_mask_blend_ps(
             big_mask,
             result,
-            _mm512_or_ps(_mm512_set1_ps(1.0), _mm512_and_ps(_mm512_set1_ps(-0.0), v)),
+            or_ps(_mm512_set1_ps(1.0), and_ps(_mm512_set1_ps(-0.0), v)),
         )
     },
     |x: f32| {
@@ -468,9 +571,9 @@ crate::simd_ln!(
             _mm512_set1_epi32(-1),
         ))
     },
-    |a, b| unsafe { _mm512_and_ps(a, b) },
-    |a, b| unsafe { _mm512_andnot_ps(a, b) },
-    |a, b| unsafe { _mm512_or_ps(a, b) }
+    |a, b| unsafe { and_ps(a, b) },
+    |a, b| unsafe { andnot_ps(a, b) },
+    |a, b| unsafe { or_ps(a, b) }
 );
 // Ln: one-pass map; the register kernel handles normal x, the scalar tail
 // covers special cases (x <= 0, inf, NaN, subnormal).
@@ -499,7 +602,7 @@ crate::simd_map!(
     |p, v| unsafe { _mm512_storeu_ps(p, v) },
     |v| unsafe {
         let zero = _mm512_setzero_ps();
-        let a = _mm512_andnot_ps(_mm512_castsi512_ps(_mm512_set1_epi32(i32::MIN)), v);
+        let a = andnot_ps(_mm512_castsi512_ps(_mm512_set1_epi32(i32::MIN)), v);
         let z = vexp_512(_mm512_sub_ps(zero, a));
         let u = _mm512_add_ps(_mm512_set1_ps(1.0), z);
         let ln_u = vln_512(u);
@@ -511,7 +614,7 @@ crate::simd_map!(
             _mm512_cmp_ps_mask(u, _mm512_set1_ps(1.0), _CMP_EQ_OQ),
             _mm512_set1_epi32(-1),
         ));
-        let lp = _mm512_or_ps(_mm512_and_ps(one, z), _mm512_andnot_ps(one, lp));
+        let lp = or_ps(and_ps(one, z), andnot_ps(one, lp));
         _mm512_add_ps(_mm512_max_ps(v, zero), lp)
     },
     |x: f32| {
@@ -544,9 +647,9 @@ crate::simd_exp!(
     |a, b| unsafe { _mm512_mul_ps(a, b) },
     |a, b| unsafe { _mm512_add_ps(a, b) },
     |a, b| unsafe { _mm512_sub_ps(a, b) },
-    |a, b| unsafe { _mm512_and_ps(a, b) },
-    |a, b| unsafe { _mm512_andnot_ps(a, b) },
-    |a, b| unsafe { _mm512_or_ps(a, b) },
+    |a, b| unsafe { and_ps(a, b) },
+    |a, b| unsafe { andnot_ps(a, b) },
+    |a, b| unsafe { or_ps(a, b) },
     |a, b| unsafe {
         // cmp returns a u16 mask; expand to a full-width float mask vector.
         _mm512_maskz_mov_ps(_mm512_cmp_ps_mask(a, b, _CMP_GT_OQ), _mm512_set1_ps(-1.0))
@@ -754,7 +857,8 @@ crate::simd_reduce!(
     _mm512_setzero_pd(),
     _mm512_add_pd,
     |v| unsafe { _mm512_reduce_add_pd(v) },
-    |r, v| r + v
+    |r, v| r + v,
+    _mm512_add_pd
 );
 
 crate::simd_reduce!(
@@ -769,7 +873,7 @@ crate::simd_reduce!(
     |r, v| r * v
 );
 
-crate::simd_reduce!(
+crate::simd_minmax!(
     min_f64,
     f64,
     "avx512f",
@@ -778,10 +882,17 @@ crate::simd_reduce!(
     _mm512_set1_pd(f64::INFINITY),
     _mm512_min_pd,
     |v| unsafe { _mm512_reduce_min_pd(v) },
-    f64::min
+    f64::min,
+    |v: __m512d| unsafe { _mm512_cmp_pd_mask(v, v, _CMP_ORD_Q) != 0 },
+    |v: __m512d| unsafe {
+        let nan = _mm512_cmp_pd_mask(v, v, _CMP_UNORD_Q);
+        _mm512_mask_blend_pd(nan, v, _mm512_set1_pd(f64::INFINITY))
+    },
+    |v: f64| !v.is_nan(),
+    |r: f64, saw_real: bool| if saw_real { r } else { f64::NAN }
 );
 
-crate::simd_reduce!(
+crate::simd_minmax!(
     max_f64,
     f64,
     "avx512f",
@@ -790,7 +901,14 @@ crate::simd_reduce!(
     _mm512_set1_pd(f64::NEG_INFINITY),
     _mm512_max_pd,
     |v| unsafe { _mm512_reduce_max_pd(v) },
-    f64::max
+    f64::max,
+    |v: __m512d| unsafe { _mm512_cmp_pd_mask(v, v, _CMP_ORD_Q) != 0 },
+    |v: __m512d| unsafe {
+        let nan = _mm512_cmp_pd_mask(v, v, _CMP_UNORD_Q);
+        _mm512_mask_blend_pd(nan, v, _mm512_set1_pd(f64::NEG_INFINITY))
+    },
+    |v: f64| !v.is_nan(),
+    |r: f64, saw_real: bool| if saw_real { r } else { f64::NAN }
 );
 
 crate::simd_reduce!(
@@ -802,7 +920,8 @@ crate::simd_reduce!(
     _mm512_setzero_pd(),
     |acc: __m512d, v: __m512d| _mm512_add_pd(acc, _mm512_mul_pd(v, v)),
     |v| unsafe { _mm512_reduce_add_pd(v) },
-    |r: f64, v: f64| r + v * v
+    |r: f64, v: f64| r + v * v,
+    _mm512_add_pd
 );
 
 crate::simd_reduce!(
@@ -814,10 +933,11 @@ crate::simd_reduce!(
     _mm512_setzero_pd(),
     |acc: __m512d, v: __m512d| unsafe { _mm512_add_pd(acc, _mm512_abs_pd(v)) },
     |v| unsafe { _mm512_reduce_add_pd(v) },
-    |r: f64, v: f64| r + v.abs()
+    |r: f64, v: f64| r + v.abs(),
+    _mm512_add_pd
 );
 
-crate::simd_reduce!(
+crate::simd_minmax!(
     max_norm_f64,
     f64,
     "avx512f",
@@ -826,7 +946,14 @@ crate::simd_reduce!(
     _mm512_set1_pd(0.0),
     |acc: __m512d, v: __m512d| unsafe { _mm512_max_pd(acc, _mm512_abs_pd(v)) },
     |v| unsafe { _mm512_reduce_max_pd(v) },
-    |r: f64, v: f64| f64::max(r, v.abs())
+    |r: f64, v: f64| f64::max(r, v.abs()),
+    |v: __m512d| unsafe { _mm512_cmp_pd_mask(v, v, _CMP_UNORD_Q) != 0 },
+    |v: __m512d| unsafe {
+        let nan = _mm512_cmp_pd_mask(v, v, _CMP_UNORD_Q);
+        _mm512_mask_blend_pd(nan, v, _mm512_setzero_pd())
+    },
+    |v: f64| v.is_nan(),
+    |r: f64, saw_nan: bool| if saw_nan { f64::NAN } else { r }
 );
 
 crate::simd_reduce2!(
@@ -838,7 +965,8 @@ crate::simd_reduce2!(
     _mm512_setzero_pd(),
     |acc: __m512d, a: __m512d, b: __m512d| _mm512_fmadd_pd(a, b, acc),
     |v| unsafe { _mm512_reduce_add_pd(v) },
-    |r, a, b| r + a * b
+    |r, a, b| r + a * b,
+    _mm512_add_pd
 );
 
 crate::simd_argminmax!(
@@ -947,13 +1075,22 @@ crate::simd_exp_f64!(
     |a, b| unsafe { _mm512_sub_pd(a, b) },
     |v| unsafe { _mm512_castsi512_pd(v) },
     |v| unsafe { _mm512_castpd_si512(v) },
-    // Round-to-nearest: trunc(v + copysign(0.5, v)) (round-half-away-from-zero).
+    // Round-to-nearest: trunc(v + copysign(0.5, v)) in f64, converted to
+    // i32 (|n| ≤ 1024 fits i32), then sign-extended to i64.
+    // `_mm512_cvttpd_epi64` is AVX-512DQ, not AVX-512F — using it here
+    // SIGILLs on AVX-512F CPUs without DQ (e.g. Knights Landing).
     |v| unsafe {
-        let sign = _mm512_and_pd(v, _mm512_castsi512_pd(_mm512_set1_epi64(i64::MIN)));
-        let half = _mm512_or_pd(sign, _mm512_set1_pd(0.5));
-        _mm512_cvttpd_epi64(_mm512_add_pd(v, half))
+        let sign = and_pd(v, _mm512_castsi512_pd(_mm512_set1_epi64(i64::MIN)));
+        let half = or_pd(sign, _mm512_set1_pd(0.5));
+        let n32 = _mm512_cvttpd_epi32(_mm512_add_pd(v, half));
+        _mm512_cvtepi32_epi64(n32)
     },
-    |v| unsafe { _mm512_cvtepi64_pd(v) },
+    |v| unsafe {
+        // Reverse: pack the low i32 of each i64 lane (values fit) and
+        // convert i32 → f64. `_mm512_cvtepi64_pd` is AVX-512DQ, not F.
+        let packed = _mm512_cvtepi64_epi32(v);
+        _mm512_cvtepi32_pd(packed)
+    },
     |v| unsafe { _mm512_slli_epi64(v, 52) },
     |a, b| unsafe { _mm512_add_epi64(a, b) },
     |a, b| unsafe { _mm512_maskz_mov_epi64(_mm512_cmpgt_epi64_mask(a, b), _mm512_set1_epi64(-1)) },
@@ -998,9 +1135,9 @@ crate::simd_ln_f64!(
             _mm512_set1_epi64(-1),
         ))
     },
-    |a, b| unsafe { _mm512_and_pd(a, b) },
-    |a, b| unsafe { _mm512_andnot_pd(a, b) },
-    |a, b| unsafe { _mm512_or_pd(a, b) }
+    |a, b| unsafe { and_pd(a, b) },
+    |a, b| unsafe { andnot_pd(a, b) },
+    |a, b| unsafe { or_pd(a, b) }
 );
 // Ln (f64): one-pass map; the register kernel handles normal x.
 crate::simd_map!(
@@ -1023,7 +1160,7 @@ crate::simd_map!(
     |p, v| unsafe { _mm512_storeu_pd(p, v) },
     |v| unsafe {
         let zero = _mm512_setzero_pd();
-        let a = _mm512_andnot_pd(_mm512_castsi512_pd(_mm512_set1_epi64(i64::MIN)), v);
+        let a = andnot_pd(_mm512_castsi512_pd(_mm512_set1_epi64(i64::MIN)), v);
         let z = vexp_512d(_mm512_sub_pd(zero, a));
         let u = _mm512_add_pd(_mm512_set1_pd(1.0), z);
         let ln_u = vln_512d(u);
@@ -1035,7 +1172,7 @@ crate::simd_map!(
             _mm512_cmp_pd_mask(u, _mm512_set1_pd(1.0), _CMP_EQ_OQ),
             _mm512_set1_epi64(-1),
         ));
-        let lp = _mm512_or_pd(_mm512_and_pd(one, z), _mm512_andnot_pd(one, lp));
+        let lp = or_pd(and_pd(one, z), andnot_pd(one, lp));
         _mm512_add_pd(_mm512_max_pd(v, zero), lp)
     },
     |x: f64| {
@@ -1145,10 +1282,7 @@ crate::simd_map!(
             _mm512_set1_pd(1.0),
             _mm512_add_pd(
                 _mm512_set1_pd(1.0),
-                vexp_512d(_mm512_xor_pd(
-                    v,
-                    _mm512_castsi512_pd(_mm512_set1_epi64(i64::MIN)),
-                )),
+                vexp_512d(xor_pd(v, _mm512_castsi512_pd(_mm512_set1_epi64(i64::MIN)))),
             ),
         )
     },
@@ -1181,10 +1315,7 @@ crate::simd_map!(
             v,
             _mm512_add_pd(
                 _mm512_set1_pd(1.0),
-                vexp_512d(_mm512_xor_pd(
-                    v,
-                    _mm512_castsi512_pd(_mm512_set1_epi64(i64::MIN)),
-                )),
+                vexp_512d(xor_pd(v, _mm512_castsi512_pd(_mm512_set1_epi64(i64::MIN)))),
             ),
         )
     },
@@ -1262,12 +1393,12 @@ crate::simd_map!(
     |p| unsafe { _mm512_loadu_pd(p) },
     |p, v| unsafe { _mm512_storeu_pd(p, v) },
     |v: __m512d| unsafe {
-        let a = _mm512_andnot_pd(_mm512_set1_pd(-0.0), v);
+        let a = andnot_pd(_mm512_set1_pd(-0.0), v);
         // ±1 for |x| > 19.062, x for |x| < 5e-8, series for |x| < 0.1,
         // ratio (e-1)/(e+1) beyond (Sterbenz-exact, clamped for overflow).
         let big_mask = _mm512_cmp_pd_mask(a, _mm512_set1_pd(19.062), _CMP_GT_OQ);
         if big_mask == 0xFF {
-            return _mm512_or_pd(_mm512_set1_pd(1.0), _mm512_and_pd(_mm512_set1_pd(-0.0), v));
+            return or_pd(_mm512_set1_pd(1.0), and_pd(_mm512_set1_pd(-0.0), v));
         }
         let y = _mm512_mul_pd(v, v);
         let p = _mm512_set1_pd(0.003_592_128_572_437_055);
@@ -1295,7 +1426,7 @@ crate::simd_map!(
             _mm512_sub_pd(em, _mm512_set1_pd(1.0)),
             _mm512_add_pd(em, _mm512_set1_pd(1.0)),
         );
-        let big = _mm512_or_pd(ratio, _mm512_and_pd(_mm512_set1_pd(-0.0), v));
+        let big = or_pd(ratio, and_pd(_mm512_set1_pd(-0.0), v));
         let ser_mask = _mm512_cmp_pd_mask(a, _mm512_set1_pd(0.1), _CMP_LT_OQ);
         let small_mask = _mm512_cmp_pd_mask(a, _mm512_set1_pd(2e-8), _CMP_LT_OQ);
         let mid = _mm512_mask_blend_pd(ser_mask, big, series);
@@ -1303,7 +1434,7 @@ crate::simd_map!(
         _mm512_mask_blend_pd(
             big_mask,
             result,
-            _mm512_or_pd(_mm512_set1_pd(1.0), _mm512_and_pd(_mm512_set1_pd(-0.0), v)),
+            or_pd(_mm512_set1_pd(1.0), and_pd(_mm512_set1_pd(-0.0), v)),
         )
     },
     |x: f64| {
@@ -1434,7 +1565,7 @@ mod tests {
         if !std::arch::is_x86_feature_detected!("avx512f") {
             return;
         }
-        for len in [0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 63, 64, 65, 512, 1024] {
+        for len in [1, 2, 3, 7, 8, 9, 15, 16, 17, 63, 64, 65, 512, 1024] {
             let data = exact_data(len, 25, 64);
             // SAFETY: tested inside the avx2 detection guard.
             let simd = unsafe { max_norm(&data) };

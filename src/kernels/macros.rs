@@ -35,6 +35,68 @@
 #[macro_export]
 #[doc(hidden)]
 macro_rules! simd_reduce {
+    // Unrolled variant: four independent accumulator chains hide the combine
+    // latency (e.g. the 4-cycle `vaddps`) so the loop sustains one combine
+    // per cycle — load bandwidth instead of latency-bound. `$merge` combines
+    // two partial accumulators (plain vector add for the sum-family kernels).
+    //
+    // The final reduction order differs from the single-chain form, which is
+    // fine for sum-family reductions (documented as backend-dependent) but
+    // rules out `prod` (tested for exact equality) and gains nothing for
+    // `min`/`max` (1-cycle latency); those keep the single-chain arm below.
+    ($name:ident, $t:ty, $feat:literal, $lanes:expr, $load:expr, $acc_ident:expr, $combine:expr, $reduce:expr, $tail:expr, $merge:expr) => {
+        /// SIMD reduction kernel (4-way unrolled). See the enclosing module
+        /// for semantics.
+        ///
+        /// # Safety
+        /// Caller must guarantee the CPU feature is available.
+        #[target_feature(enable = $feat)]
+        pub(crate) unsafe fn $name(values: &[$t]) -> $t {
+            let len = values.len();
+            let ptr = values.as_ptr();
+            let chunks = len / $lanes;
+            let remainder = len % $lanes;
+
+            // Four independent chains: each is latency-bound on `$combine`,
+            // but with four in flight the scheduler issues one combine per
+            // cycle. Inputs shorter than 4 chunks take the single-acc path.
+            let mut acc0 = $acc_ident;
+            let mut acc1 = $acc_ident;
+            let mut acc2 = $acc_ident;
+            let mut acc3 = $acc_ident;
+            let quads = chunks / 4;
+            for i in 0..quads {
+                let base = i * 4 * $lanes;
+                // SAFETY: base + 4*$lanes - 1 < quads*4*$lanes <= len.
+                let v0 = $load(unsafe { ptr.add(base) });
+                let v1 = $load(unsafe { ptr.add(base + $lanes) });
+                let v2 = $load(unsafe { ptr.add(base + 2 * $lanes) });
+                let v3 = $load(unsafe { ptr.add(base + 3 * $lanes) });
+                acc0 = $combine(acc0, v0);
+                acc1 = $combine(acc1, v1);
+                acc2 = $combine(acc2, v2);
+                acc3 = $combine(acc3, v3);
+            }
+            // Balanced merge tree: the two inner merges run in parallel.
+            let mut acc = $merge($merge(acc0, acc1), $merge(acc2, acc3));
+            for i in (quads * 4)..chunks {
+                // SAFETY: i * $lanes + ($lanes - 1) < chunks * $lanes <= len.
+                let v = $load(unsafe { ptr.add(i * $lanes) });
+                acc = $combine(acc, v);
+            }
+
+            let mut result = $reduce(acc);
+
+            let tail_start = chunks * $lanes;
+            for i in 0..remainder {
+                // SAFETY: tail_start + i < len, so the read is in bounds.
+                let v = unsafe { *values.get_unchecked(tail_start + i) };
+                result = $tail(result, v);
+            }
+            result
+        }
+    };
+
     ($name:ident, $t:ty, $feat:literal, $lanes:expr, $load:expr, $acc_ident:expr, $combine:expr, $reduce:expr, $tail:expr) => {
         /// SIMD reduction kernel. See the enclosing module for semantics.
         ///
@@ -176,6 +238,71 @@ macro_rules! simd_softmax {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! simd_reduce2 {
+    // Unrolled variant: four independent FMA/accumulate chains hide the
+    // combine latency (4-cycle `vfmadd` on most cores). Same rationale and
+    // ordering caveat as the unrolled `simd_reduce!` arm; dot is tested with
+    // a Higham tolerance, so the changed reduction order is acceptable.
+    ($name:ident, $t:ty, [$( $feat:literal ),+], $lanes:expr, $load:expr, $acc_ident:expr, $combine:expr, $reduce:expr, $tail:expr, $merge:expr) => {
+        /// SIMD two-input reduction kernel (4-way unrolled). See the
+        /// enclosing module for semantics.
+        ///
+        /// # Safety
+        /// Caller must guarantee the CPU features are available and that
+        /// `a` and `b` have equal lengths.
+        #[target_feature($(enable = $feat),*)]
+        pub(crate) unsafe fn $name(a: &[$t], b: &[$t]) -> $t {
+            debug_assert_eq!(a.len(), b.len());
+            let len = a.len();
+            let a_ptr = a.as_ptr();
+            let b_ptr = b.as_ptr();
+            let chunks = len / $lanes;
+            let remainder = len % $lanes;
+
+            let mut acc0 = $acc_ident;
+            let mut acc1 = $acc_ident;
+            let mut acc2 = $acc_ident;
+            let mut acc3 = $acc_ident;
+            let quads = chunks / 4;
+            for i in 0..quads {
+                let base = i * 4 * $lanes;
+                // SAFETY: base + 4*$lanes - 1 < quads*4*$lanes <= len, so
+                // both pointers are in bounds.
+                let a0 = $load(unsafe { a_ptr.add(base) });
+                let a1 = $load(unsafe { a_ptr.add(base + $lanes) });
+                let a2 = $load(unsafe { a_ptr.add(base + 2 * $lanes) });
+                let a3 = $load(unsafe { a_ptr.add(base + 3 * $lanes) });
+                let b0 = $load(unsafe { b_ptr.add(base) });
+                let b1 = $load(unsafe { b_ptr.add(base + $lanes) });
+                let b2 = $load(unsafe { b_ptr.add(base + 2 * $lanes) });
+                let b3 = $load(unsafe { b_ptr.add(base + 3 * $lanes) });
+                acc0 = $combine(acc0, a0, b0);
+                acc1 = $combine(acc1, a1, b1);
+                acc2 = $combine(acc2, a2, b2);
+                acc3 = $combine(acc3, a3, b3);
+            }
+            // Balanced merge tree: the two inner merges run in parallel.
+            let mut acc = $merge($merge(acc0, acc1), $merge(acc2, acc3));
+            for i in (quads * 4)..chunks {
+                // SAFETY: i * $lanes + ($lanes - 1) < chunks * $lanes <= len,
+                // so both pointers are in bounds.
+                let va = $load(unsafe { a_ptr.add(i * $lanes) });
+                let vb = $load(unsafe { b_ptr.add(i * $lanes) });
+                acc = $combine(acc, va, vb);
+            }
+
+            let mut result = $reduce(acc);
+
+            let tail_start = chunks * $lanes;
+            for i in 0..remainder {
+                // SAFETY: tail_start + i < len, so both reads are in bounds.
+                let va = unsafe { *a.get_unchecked(tail_start + i) };
+                let vb = unsafe { *b.get_unchecked(tail_start + i) };
+                result = $tail(result, va, vb);
+            }
+            result
+        }
+    };
+
     ($name:ident, $t:ty, [$( $feat:literal ),+], $lanes:expr, $load:expr, $acc_ident:expr, $combine:expr, $reduce:expr, $tail:expr) => {
         /// SIMD two-input reduction kernel. See the enclosing module for semantics.
         ///
@@ -211,6 +338,96 @@ macro_rules! simd_reduce2 {
             }
 
             result
+        }
+    };
+}
+
+/// Generate a NaN-parity reduction kernel for the min/max family (`min`,
+/// `max`, `max_norm`).
+///
+/// Hardware `minps`/`vminq`-style ops have NaN semantics that differ from
+/// the scalar reference (`f32::min`/`f32::max` minNum/maxNum semantics, and
+/// `total_cmp` for `max_norm`) and are even position-dependent between
+/// backends. This skeleton restores parity:
+///
+/// * every loaded chunk is passed through `$clean`, which replaces NaN
+///   lanes with the reduction identity (neutral under `$combine`), so the
+///   vector loop and horizontal reduce never see a NaN;
+/// * a boolean flag is accumulated across chunks (`$detect`) and the scalar
+///   tail (`$tail_flag`);
+/// * `$finish` maps `(result, flag)` to the final value, encoding the
+///   per-op NaN rule:
+///   * `min`/`max` — flag = "a non-NaN element was seen"; if false (input
+///     non-empty but all NaN) the result is NaN, matching
+///     `reduce(f32::min)` / `reduce(f32::max)`;
+///   * `max_norm` — flag = "a NaN element was seen"; if true the result is
+///     NaN, matching `map(abs).max_by(total_cmp)` (NaN sorts above all).
+///
+/// For NaN-free inputs this is the same chunked loop as [`simd_reduce!`]
+/// (the clean/detect ops are cheap masks), so performance on the common
+/// path is essentially unchanged.
+///
+/// # Parameters
+///
+/// * `$name` — function name.
+/// * `$t` — scalar element type (`f32` or `f64`).
+/// * `$feat` — `target_feature` string.
+/// * `$lanes` — vector width in `$t` elements.
+/// * `$load` — `fn(*const $t) -> V`.
+/// * `$acc_ident` — identity accumulator (e.g. `+inf` for `min`).
+/// * `$combine` — `fn(V, V) -> V` elementwise combine.
+/// * `$reduce` — `fn(V) -> $t` horizontal reduction.
+/// * `$tail` — `fn($t, $t) -> $t` scalar tail combine (`f32::min`/`f32::max`
+///   already ignore NaN, so the tail needs no cleaning).
+/// * `$detect` — `fn(V) -> bool`, true if the chunk sets the flag.
+/// * `$clean` — `fn(V) -> V`, NaN lanes replaced with the identity.
+/// * `$tail_flag` — `fn($t) -> bool`, per-element flag for the tail.
+/// * `$finish` — `fn($t, bool) -> $t`, final NaN-rule application.
+///
+/// # Safety
+/// The generated function is `unsafe fn` with `#[target_feature]`; the
+/// caller must verify the CPU feature and that `values` is non-empty.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! simd_minmax {
+    (
+        $name:ident, $t:ty, $feat:literal, $lanes:expr, $load:expr,
+        $acc_ident:expr, $combine:expr, $reduce:expr, $tail:expr,
+        $detect:expr, $clean:expr, $tail_flag:expr, $finish:expr
+    ) => {
+        /// SIMD min/max-family reduction with scalar NaN parity. See the
+        /// enclosing module for semantics.
+        ///
+        /// # Safety
+        /// Caller must guarantee the CPU feature is available and that
+        /// `values` is non-empty.
+        #[target_feature(enable = $feat)]
+        pub(crate) unsafe fn $name(values: &[$t]) -> $t {
+            let len = values.len();
+            debug_assert!(len > 0);
+            let ptr = values.as_ptr();
+            let chunks = len / $lanes;
+            let remainder = len % $lanes;
+
+            let mut acc = $acc_ident;
+            let mut flagged = false;
+            for i in 0..chunks {
+                // SAFETY: i * $lanes + ($lanes - 1) < chunks * $lanes <= len.
+                let v = $load(unsafe { ptr.add(i * $lanes) });
+                flagged |= $detect(v);
+                acc = $combine(acc, $clean(v));
+            }
+
+            let mut result = $reduce(acc);
+
+            let tail_start = chunks * $lanes;
+            for i in 0..remainder {
+                // SAFETY: tail_start + i < len, so the read is in bounds.
+                let v = unsafe { *values.get_unchecked(tail_start + i) };
+                flagged |= $tail_flag(v);
+                result = $tail(result, v);
+            }
+            $finish(result, flagged)
         }
     };
 }
