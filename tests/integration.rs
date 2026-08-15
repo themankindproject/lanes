@@ -835,12 +835,11 @@ fn cosine_similarity_known_cases() {
     // Identical vectors → 1.0.
     assert_eq!(
         lanes::ml::f32::cosine_similarity(&[1.0_f32, 2.0], &[1.0_f32, 2.0]),
-        Ok(Some(1.0))
+        Ok(1.0)
     );
     // Orthogonal → 0.0.
     assert!(
         lanes::ml::f32::cosine_similarity(&[1.0_f32, 0.0], &[0.0_f32, 1.0])
-            .unwrap()
             .unwrap()
             .abs()
             < 1e-6
@@ -848,41 +847,43 @@ fn cosine_similarity_known_cases() {
     // Opposite → -1.0.
     assert_eq!(
         lanes::ml::f32::cosine_similarity(&[1.0_f32], &[-1.0_f32]),
-        Ok(Some(-1.0))
+        Ok(-1.0)
     );
     // Length mismatch → error.
     assert!(lanes::ml::f32::cosine_similarity(&[1.0_f32], &[1.0_f32, 2.0]).is_err());
-    // Empty → None.
-    assert_eq!(lanes::ml::f32::cosine_similarity(&[], &[]), Ok(None));
-    // Zero vector → None.
+    // Empty → EmptyInput error.
+    assert_eq!(
+        lanes::ml::f32::cosine_similarity(&[], &[]),
+        Err(lanes::Error::EmptyInput)
+    );
+    // Zero vector → 0.0 (no direction to share).
     assert_eq!(
         lanes::ml::f32::cosine_similarity(&[0.0_f32], &[1.0_f32]),
-        Ok(None)
+        Ok(0.0)
     );
 
     assert!(
-        (lanes::ml::f64::cosine_similarity(&[1.0_f64, 2.0], &[1.0_f64, 2.0])
-            .unwrap()
-            .unwrap()
-            - 1.0)
-            .abs()
+        (lanes::ml::f64::cosine_similarity(&[1.0_f64, 2.0], &[1.0_f64, 2.0]).unwrap() - 1.0).abs()
             < 1e-12
     );
     assert!(
         lanes::ml::f64::cosine_similarity(&[1.0_f64, 0.0], &[0.0_f64, 1.0])
-            .unwrap()
             .unwrap()
             .abs()
             < 1e-12
     );
     assert_eq!(
         lanes::ml::f64::cosine_similarity(&[1.0_f64], &[-1.0_f64]),
-        Ok(Some(-1.0))
+        Ok(-1.0)
     );
     assert!(lanes::ml::f64::cosine_similarity(&[1.0_f64], &[1.0_f64, 2.0]).is_err());
     assert_eq!(
         lanes::ml::f64::cosine_similarity(&[0.0_f64], &[1.0_f64]),
-        Ok(None)
+        Ok(0.0)
+    );
+    assert_eq!(
+        lanes::ml::f64::cosine_similarity(&[], &[]),
+        Err(lanes::Error::EmptyInput)
     );
 }
 

@@ -9,6 +9,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Error::EmptyInput` variant, returned by `cosine_similarity` when both
+  input slices are empty (the angle between empty vectors is undefined).
+- Allocation-free `_into` variants for every map-style op, in both `f32`
+  and `f64`: `softmax_into`, `sigmoid_into`, `softplus_into`, `silu_into`,
+  `gelu_into`, `relu_into`, `rms_norm_into` (`ml`) and `sqrt_into`,
+  `clip_into`, `rsqrt_into`, `tanh_into`, `exp_into`, `ln_into` (`math`).
+  Each writes into a caller-provided buffer (length-checked with an
+  always-on assertion) so hot loops can reuse one allocation; the
+  allocating forms are now thin wrappers around them.
+- `no_std` builds now select the architecture-guaranteed SIMD tier
+  statically instead of always falling back to scalar: SSE2 on x86-64
+  and NEON on aarch64 (both are mandatory baselines, so no runtime CPU
+  probing is needed). Other targets still use scalar.
+
+### Changed
+
+- **Breaking:** `cosine_similarity` now returns `Result<f32, Error>` /
+  `Result<f64, Error>` instead of `Result<Option<f32>, Error>`. Empty
+  inputs return `Err(Error::EmptyInput)` (previously `Ok(None)`), and a
+  zero-norm vector now yields `Ok(0.0)` (previously `Ok(None)`) — a zero
+  vector has no direction, so it shares none with the other, matching the
+  scikit-learn convention.
+- **Performance:** the add-based reductions (`sum`, `sum_sq`, `l1_norm`,
+  `dot` — f32 and f64, all backends) now use four independent accumulator
+  chains in the chunked loop, hiding the vector-add/FMA latency and
+  sustaining one combine per cycle instead of one per latency window.
+  `prod`/`min`/`max` keep the single-chain form (prod is exact-equality
+  tested; min/max have 1-cycle latency). Reduction order is
+  backend-dependent and documented as such.
+- The `algorithms` layer is now `#![forbid(unsafe_code)]`, making the
+  "all unsafe lives in the kernel layer" boundary compiler-enforced.
+
+### Fixed
+
+- **Correctness:** `min`, `max`, and `max_norm` now have identical NaN
+  semantics on every backend (previously the SIMD backends followed raw
+  hardware `minps`/`vminq` semantics, which are position-dependent and
+  differ from the scalar reference). `min`/`max` use IEEE 754
+  `minNum`/`maxNum` (a NaN is ignored unless every input is NaN, in which
+  case the result is NaN); `max_norm` returns NaN if any input is NaN
+  (matching the scalar `total_cmp` reference). Previously a NaN in the
+  last lane of a vector chunk could poison the SIMD result while the
+  scalar path ignored it, and an all-NaN input shorter than one chunk
+  returned `±inf` instead of NaN.
+- **Soundness:** the SSE2 backend's horizontal sum used `_mm_movehdup_ps`,
+  an SSE3 intrinsic, inside code gated only on SSE2 — undefined behavior
+  (SIGILL) on CPUs without SSE3. Replaced with an SSE1/SSE2-only shuffle
+  reduction.
+- **Soundness:** the AVX-512 backend used AVX-512DQ-only intrinsics while
+  dispatch gates it on AVX-512F alone — SIGILL on F-only parts (e.g.
+  Knights Landing). The float bitwise ops (`_mm512_and/or/xor/andnot_ps`
+  and `_pd` twins) now route through AVX-512F integer-domain `_si512`
+  ops, and the f64 `exp` rounding detours through i32 conversions
+  (AVX-512F) instead of `_mm512_cvttpd_epi64`/`_mm512_cvtepi64_pd`
+  (AVX-512DQ), matching the existing SSE2/AVX2 pattern.
+
 - `log_softmax_into` and `layer_norm_into` (`ml`) in both `f32` and
   `f64` — allocation-free variants that write into a caller-provided
   buffer. Dedicated SIMD kernels on every backend (scalar, SSE2, AVX2,

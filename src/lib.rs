@@ -71,12 +71,14 @@
 //!   combine the chunk results. For inputs whose intermediate values exceed
 //!   the range of exact representation, results may differ in the last ulp.
 //! * **`sum`/`dot` propagate NaN** — any NaN input yields a NaN result.
-//! * **`min`/`max` use IEEE 754 `minNum`/`maxNum` semantics in the scalar
-//!   kernel** (NaN inputs are ignored except when every input is NaN; read
-//!   [`f32::min`] for the exact rules). SIMD kernels follow the corresponding
-//!   hardware instruction semantics, which may propagate a NaN present in a
-//!   vector. For NaN-free inputs all backends agree exactly.
-//! * Signed zero: `min` follows `minNum` semantics for `-0.0`/`+0.0`.
+//! * **`min`/`max` have identical NaN semantics on every backend** (IEEE 754
+//!   `minNum`/`maxNum`, matching [`f32::min`]/[`f32::max`]): a NaN input is
+//!   ignored unless every input is NaN, in which case the result is NaN.
+//! * **`max_norm` returns NaN if any input is NaN** on every backend
+//!   (matching the scalar `total_cmp` reference, where NaN sorts above all).
+//! * Signed zero: for `min`/`max` inputs containing both `-0.0` and `+0.0`
+//!   as the extremum, the sign of the result is backend-dependent (the
+//!   values compare equal; the sign follows the backend's combine order).
 //!
 //! Do not assume bit-identical results across backends for arbitrary
 //! floating-point input; assume determinism *within* a backend for the
@@ -132,19 +134,23 @@ pub mod distance {
 }
 
 /// Elementwise math functions (per-element maps): `sqrt`, `clip`, `rsqrt`,
-/// `exp`, `ln`, `tanh`. Precision is selected via the [`f32`] or [`f64`]
-/// submodule.
+/// `exp`, `ln`, `tanh`. Each also has an allocation-free `_into` variant
+/// (e.g. [`math::f32::exp_into`]) that writes into a caller-provided
+/// buffer — prefer those in hot loops. Precision is selected via the
+/// [`f32`] or [`f64`] submodule.
 #[cfg(feature = "alloc")]
 pub mod math {
     pub use crate::algorithms::math::{f32, f64};
 }
 
-/// ML kernels built on the `lanes` core (`softmax`, `log_softmax` (plus
-/// `log_softmax_into`), `sigmoid`, `silu`, `gelu`, `relu`, `softplus`,
-/// `rms_norm`, `layer_norm` (plus `layer_norm_into`), `cosine_similarity`,
-/// `logsumexp`). Available on any target with an allocator: built with
-/// `std`, or with `no_std` + the `alloc` feature. Precision is selected
-/// via the [`f32`] or [`f64`] submodule.
+/// ML kernels built on the `lanes` core (`softmax`, `log_softmax`,
+/// `sigmoid`, `silu`, `gelu`, `relu`, `softplus`, `rms_norm`, `layer_norm`,
+/// `cosine_similarity`, `logsumexp`). Every map-style op also has an
+/// allocation-free `_into` variant (e.g. [`ml::f32::softmax_into`],
+/// [`ml::f32::layer_norm_into`]) that writes into a caller-provided buffer
+/// — prefer those in hot loops. Available on any target with an allocator:
+/// built with `std`, or with `no_std` + the `alloc` feature. Precision is
+/// selected via the [`f32`] or [`f64`] submodule.
 #[cfg(feature = "alloc")]
 pub mod ml {
     pub use crate::algorithms::ml::{f32, f64};

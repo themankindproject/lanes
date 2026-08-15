@@ -12,6 +12,10 @@ pub enum Error {
         /// The actual length (from the second operand).
         actual: usize,
     },
+    /// An input slice was empty but the operation requires at least one
+    /// element (e.g. `cosine_similarity`, which has no defined value for
+    /// empty vectors).
+    EmptyInput,
 }
 
 impl fmt::Display for Error {
@@ -19,6 +23,9 @@ impl fmt::Display for Error {
         match self {
             Self::LengthMismatch { expected, actual } => {
                 write!(f, "length mismatch: expected {expected}, got {actual}")
+            }
+            Self::EmptyInput => {
+                write!(f, "empty input: operation requires at least one element")
             }
         }
     }

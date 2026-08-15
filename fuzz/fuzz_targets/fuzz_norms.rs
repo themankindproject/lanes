@@ -3,7 +3,8 @@
 //!
 //! Verifies no panics on arbitrary input, the rms_norm scale-invariance
 //! invariant, and the cosine_similarity contract (error on length
-//! mismatch, None for zero vectors, [-1, 1] output for finite input).
+//! mismatch, EmptyInput on empty input, 0.0 for zero-norm vectors,
+//! [-1, 1] output for finite input).
 //!
 //! Run with: `cargo +nightly fuzz run fuzz_norms`
 
@@ -79,34 +80,26 @@ fuzz_target!(|input: NormsInput| {
     }
 
     match lanes::ml::f32::cosine_similarity(a, b) {
-        Ok(None) => {
-            // None requires equal lengths and a zero computed norm. Tiny
-            // values whose squares underflow to 0 in f32 also legitimately
-            // yield None.
-            assert_eq!(a.len(), b.len());
-            let na = lanes::stats::f32::sum_sq(a);
-            let nb = lanes::stats::f32::sum_sq(b);
-            assert!(
-                a.is_empty() || na == 0.0 || nb == 0.0,
-                "cosine None but non-zero norms, a={a:?} b={b:?}"
-            );
-        }
-        Ok(Some(s)) => {
+        Ok(s) => {
             assert_eq!(a.len(), b.len());
             assert!(!a.is_empty());
-            // [-1, 1] only holds when no intermediate overflows AND both
-            // norms stay out of the denormal zone (sqrt/dot rounding at
-            // 1e-45-magnitude norms legitimately breaks the bound; the
-            // f64 reference gives exactly 1.0 there).
             let na = lanes::stats::f32::sum_sq(a);
             let nb = lanes::stats::f32::sum_sq(b);
-            if a.iter().all(|x| x.is_finite())
+            if na == 0.0 || nb == 0.0 {
+                // Zero norm (including tiny values whose squares underflow
+                // to 0 in f32) → 0.0 by convention.
+                assert_eq!(s, 0.0, "cosine zero-norm must be 0.0, a={a:?} b={b:?}");
+            } else if a.iter().all(|x| x.is_finite())
                 && b.iter().all(|x| x.is_finite())
                 && na.is_finite()
                 && nb.is_finite()
                 && na > 1e-30
                 && nb > 1e-30
             {
+                // [-1, 1] only holds when no intermediate overflows AND both
+                // norms stay out of the denormal zone (sqrt/dot rounding at
+                // 1e-45-magnitude norms legitimately breaks the bound; the
+                // f64 reference gives exactly 1.0 there).
                 assert!(
                     (-1.0 - 1e-4..=1.0 + 1e-4).contains(&s),
                     "cosine {s} out of [-1, 1], a={a:?} b={b:?} na={na} nb={nb}"
@@ -118,6 +111,9 @@ fuzz_target!(|input: NormsInput| {
             assert_eq!(expected, a.len());
             assert_eq!(actual, b.len());
             assert_ne!(a.len(), b.len());
+        }
+        Err(lanes::Error::EmptyInput) => {
+            assert!(a.is_empty() && b.is_empty());
         }
     }
 

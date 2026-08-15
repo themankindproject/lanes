@@ -43,7 +43,9 @@ pub mod f32 {
 
     /// Compute the maximum absolute value (max norm) of a slice.
     ///
-    /// Returns [`None`] if the slice is empty.
+    /// Returns [`None`] if the slice is empty. If any input is NaN the
+    /// result is NaN (matching the scalar `total_cmp` reference, where
+    /// NaN sorts above all values). All backends agree.
     ///
     /// # Example
     /// ```
@@ -99,7 +101,9 @@ pub mod f64 {
 
     /// Compute the maximum absolute value (max norm) of a slice.
     ///
-    /// Returns [`None`] if the slice is empty.
+    /// Returns [`None`] if the slice is empty. If any input is NaN the
+    /// result is NaN (matching the scalar `total_cmp` reference, where
+    /// NaN sorts above all values). All backends agree.
     ///
     /// # Example
     /// ```

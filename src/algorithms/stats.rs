@@ -44,7 +44,9 @@ pub mod f32 {
 
     /// Find the minimum element in a slice.
     ///
-    /// Returns [`None`] if the slice is empty.
+    /// Returns [`None`] if the slice is empty. NaN inputs are ignored
+    /// unless every input is NaN (IEEE 754 `minNum` semantics, matching
+    /// [`f32::min`]); the result is then NaN. All backends agree.
     ///
     /// # Example
     /// ```
@@ -61,7 +63,9 @@ pub mod f32 {
 
     /// Find the maximum element in a slice.
     ///
-    /// Returns [`None`] if the slice is empty.
+    /// Returns [`None`] if the slice is empty. NaN inputs are ignored
+    /// unless every input is NaN (IEEE 754 `maxNum` semantics, matching
+    /// [`f32::max`]); the result is then NaN. All backends agree.
     ///
     /// # Example
     /// ```
@@ -290,7 +294,9 @@ pub mod f64 {
 
     /// Find the minimum element in a slice.
     ///
-    /// Returns [`None`] if the slice is empty.
+    /// Returns [`None`] if the slice is empty. NaN inputs are ignored
+    /// unless every input is NaN (IEEE 754 `minNum` semantics, matching
+    /// [`f64::min`]); the result is then NaN. All backends agree.
     ///
     /// # Example
     /// ```
@@ -307,7 +313,9 @@ pub mod f64 {
 
     /// Find the maximum element in a slice.
     ///
-    /// Returns [`None`] if the slice is empty.
+    /// Returns [`None`] if the slice is empty. NaN inputs are ignored
+    /// unless every input is NaN (IEEE 754 `maxNum` semantics, matching
+    /// [`f64::max`]); the result is then NaN. All backends agree.
     ///
     /// # Example
     /// ```

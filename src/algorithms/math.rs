@@ -14,6 +14,34 @@ pub mod f32 {
     use crate::kernels;
     use alloc::vec::Vec;
 
+    /// Elementwise square root, written into `out` (allocation-free variant of [`sqrt`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`sqrt`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [1.0_f32, 4.0, 9.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::math::f32::sqrt_into(&v, &mut out);
+    /// for (got, want) in out.iter().zip([1.0, 2.0, 3.0]) {
+    ///     assert!((got - want).abs() < 1e-6);
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn sqrt_into(values: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_sqrt(backend, values, out);
+    }
+
     /// Elementwise square root over a slice.
     ///
     /// Returns a new `Vec` of the same length; an empty slice yields an empty
@@ -21,6 +49,9 @@ pub mod f32 {
     /// (IEEE 754).
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// Convenience wrapper around [`sqrt_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -33,9 +64,34 @@ pub mod f32 {
     #[must_use]
     pub fn sqrt(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_sqrt(backend, values, &mut out);
+        sqrt_into(values, &mut out);
         out
+    }
+
+    /// Elementwise clip (`clamp(x, lo, hi)`), written into `out` (allocation-free variant of [`clip`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`clip`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [-5.0_f32, 0.5, 3.0, 10.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::math::f32::clip_into(&v, -1.0, 2.0, &mut out);
+    /// assert_eq!(out, [-1.0, 0.5, 2.0, 2.0]);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn clip_into(values: &[f32], lo: f32, hi: f32, out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_clip(backend, values, lo, hi, out);
     }
 
     /// Elementwise clip over a slice: `clamp(x, lo, hi)` per element.
@@ -46,6 +102,9 @@ pub mod f32 {
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
     ///
+    /// Convenience wrapper around [`clip_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
+    ///
     /// # Example
     /// ```
     /// let v = lanes::math::f32::clip(&[-5.0_f32, 0.5, 3.0, 10.0], -1.0, 2.0);
@@ -55,9 +114,36 @@ pub mod f32 {
     #[must_use]
     pub fn clip(values: &[f32], lo: f32, hi: f32) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_clip(backend, values, lo, hi, &mut out);
+        clip_into(values, lo, hi, &mut out);
         out
+    }
+
+    /// Elementwise reciprocal square root, written into `out` (allocation-free variant of [`rsqrt`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`rsqrt`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [1.0_f32, 4.0, 16.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::math::f32::rsqrt_into(&v, &mut out);
+    /// for (got, want) in out.iter().zip([1.0, 0.5, 0.25]) {
+    ///     assert!((got - want).abs() < 1e-6);
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn rsqrt_into(values: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_rsqrt(backend, values, out);
     }
 
     /// Elementwise reciprocal square root over a slice: `1/sqrt(x)` per
@@ -68,6 +154,9 @@ pub mod f32 {
     /// `rsqrt(inf) = 0` (IEEE semantics of the underlying sqrt).
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// Convenience wrapper around [`rsqrt_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -80,9 +169,35 @@ pub mod f32 {
     #[must_use]
     pub fn rsqrt(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_rsqrt(backend, values, &mut out);
+        rsqrt_into(values, &mut out);
         out
+    }
+
+    /// Elementwise hyperbolic tangent, written into `out` (allocation-free variant of [`tanh`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`tanh`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [0.0_f32, 10.0, -10.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::math::f32::tanh_into(&v, &mut out);
+    /// assert!(out[0].abs() < 1e-6);
+    /// assert!((out[1] - 1.0).abs() < 1e-6);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn tanh_into(values: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_tanh(backend, values, out);
     }
 
     /// Elementwise hyperbolic tangent: `tanh(x) = 1 - 2/(e^(2x) + 1)`.
@@ -92,6 +207,9 @@ pub mod f32 {
     /// Accuracy follows the crate's `exp` kernel (≤ 2 ulp).
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// Convenience wrapper around [`tanh_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -104,9 +222,34 @@ pub mod f32 {
     #[must_use]
     pub fn tanh(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_tanh(backend, values, &mut out);
+        tanh_into(values, &mut out);
         out
+    }
+
+    /// Elementwise exponential, written into `out` (allocation-free variant of [`exp`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`exp`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [0.0_f32, 1.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::math::f32::exp_into(&v, &mut out);
+    /// assert!((out[0] - 1.0).abs() < 1e-6);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn exp_into(values: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_exp(backend, values, out);
     }
 
     /// Elementwise exponential over a slice: `e^x` per element.
@@ -116,6 +259,9 @@ pub mod f32 {
     /// `x ≈ 88.7` (IEEE); NaN propagates. Accuracy: ≤ 2 ulp vs `f32::exp`.
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// Convenience wrapper around [`exp_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -127,9 +273,35 @@ pub mod f32 {
     #[must_use]
     pub fn exp(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_exp(backend, values, &mut out);
+        exp_into(values, &mut out);
         out
+    }
+
+    /// Elementwise natural logarithm, written into `out` (allocation-free variant of [`ln`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`ln`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [1.0_f32, std::f32::consts::E];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::math::f32::ln_into(&v, &mut out);
+    /// assert!(out[0].abs() < 1e-6);
+    /// assert!((out[1] - 1.0).abs() < 1e-6);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn ln_into(values: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_ln(backend, values, out);
     }
 
     /// Elementwise natural logarithm over a slice: `ln(x)` per element.
@@ -141,6 +313,9 @@ pub mod f32 {
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
     ///
+    /// Convenience wrapper around [`ln_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
+    ///
     /// # Example
     /// ```
     /// let v = lanes::math::f32::ln(&[1.0_f32, std::f32::consts::E]);
@@ -151,8 +326,7 @@ pub mod f32 {
     #[must_use]
     pub fn ln(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_ln(backend, values, &mut out);
+        ln_into(values, &mut out);
         out
     }
 }
@@ -164,6 +338,34 @@ pub mod f64 {
     use crate::kernels;
     use alloc::vec::Vec;
 
+    /// Elementwise square root, written into `out` (allocation-free variant of [`sqrt`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`sqrt`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [1.0_f64, 4.0, 9.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::math::f64::sqrt_into(&v, &mut out);
+    /// for (got, want) in out.iter().zip([1.0, 2.0, 3.0]) {
+    ///     assert!((got - want).abs() < 1e-12);
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn sqrt_into(values: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_sqrt_f64(backend, values, out);
+    }
+
     /// Elementwise square root over a slice.
     ///
     /// Returns a new `Vec` of the same length; an empty slice yields an empty
@@ -171,6 +373,9 @@ pub mod f64 {
     /// (IEEE 754).
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// Convenience wrapper around [`sqrt_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -183,9 +388,34 @@ pub mod f64 {
     #[must_use]
     pub fn sqrt(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_sqrt_f64(backend, values, &mut out);
+        sqrt_into(values, &mut out);
         out
+    }
+
+    /// Elementwise clip (`clamp(x, lo, hi)`), written into `out` (allocation-free variant of [`clip`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`clip`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [-5.0_f64, 0.5, 3.0, 10.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::math::f64::clip_into(&v, -1.0, 2.0, &mut out);
+    /// assert_eq!(out, [-1.0, 0.5, 2.0, 2.0]);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn clip_into(values: &[f64], lo: f64, hi: f64, out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_clip_f64(backend, values, lo, hi, out);
     }
 
     /// Elementwise clip over a slice: `clamp(x, lo, hi)` per element.
@@ -196,6 +426,9 @@ pub mod f64 {
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
     ///
+    /// Convenience wrapper around [`clip_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
+    ///
     /// # Example
     /// ```
     /// let v = lanes::math::f64::clip(&[-5.0_f64, 0.5, 3.0, 10.0], -1.0, 2.0);
@@ -205,9 +438,36 @@ pub mod f64 {
     #[must_use]
     pub fn clip(values: &[f64], lo: f64, hi: f64) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_clip_f64(backend, values, lo, hi, &mut out);
+        clip_into(values, lo, hi, &mut out);
         out
+    }
+
+    /// Elementwise reciprocal square root, written into `out` (allocation-free variant of [`rsqrt`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`rsqrt`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [1.0_f64, 4.0, 16.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::math::f64::rsqrt_into(&v, &mut out);
+    /// for (got, want) in out.iter().zip([1.0, 0.5, 0.25]) {
+    ///     assert!((got - want).abs() < 1e-12);
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn rsqrt_into(values: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_rsqrt_f64(backend, values, out);
     }
 
     /// Elementwise reciprocal square root over a slice: `1/sqrt(x)` per
@@ -218,6 +478,9 @@ pub mod f64 {
     /// `rsqrt(inf) = 0` (IEEE semantics of the underlying sqrt).
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// Convenience wrapper around [`rsqrt_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -230,9 +493,34 @@ pub mod f64 {
     #[must_use]
     pub fn rsqrt(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_rsqrt_f64(backend, values, &mut out);
+        rsqrt_into(values, &mut out);
         out
+    }
+
+    /// Elementwise exponential, written into `out` (allocation-free variant of [`exp`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`exp`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [0.0_f64, 1.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::math::f64::exp_into(&v, &mut out);
+    /// assert!((out[0] - 1.0).abs() < 1e-12);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn exp_into(values: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_exp_f64(backend, values, out);
     }
 
     /// Elementwise exponential over a slice: `e^x` per element.
@@ -242,6 +530,9 @@ pub mod f64 {
     /// `x ≈ 709.8` (IEEE); NaN propagates. Accuracy: ≤ 1 ulp vs `f64::exp`.
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// Convenience wrapper around [`exp_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -253,9 +544,35 @@ pub mod f64 {
     #[must_use]
     pub fn exp(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_exp_f64(backend, values, &mut out);
+        exp_into(values, &mut out);
         out
+    }
+
+    /// Elementwise natural logarithm, written into `out` (allocation-free variant of [`ln`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`ln`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [1.0_f64, std::f64::consts::E];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::math::f64::ln_into(&v, &mut out);
+    /// assert!(out[0].abs() < 1e-12);
+    /// assert!((out[1] - 1.0).abs() < 1e-12);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn ln_into(values: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_ln_f64(backend, values, out);
     }
 
     /// Elementwise natural logarithm over a slice: `ln(x)` per element.
@@ -267,6 +584,9 @@ pub mod f64 {
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
     ///
+    /// Convenience wrapper around [`ln_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
+    ///
     /// # Example
     /// ```
     /// let v = lanes::math::f64::ln(&[1.0_f64, std::f64::consts::E]);
@@ -277,9 +597,36 @@ pub mod f64 {
     #[must_use]
     pub fn ln(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_ln_f64(backend, values, &mut out);
+        ln_into(values, &mut out);
         out
+    }
+
+    /// Elementwise hyperbolic tangent, written into `out` (allocation-free variant of [`tanh`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`tanh`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [0.0_f64, 20.0, -20.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::math::f64::tanh_into(&v, &mut out);
+    /// assert!(out[0].abs() < 1e-12);
+    /// assert!((out[1] - 1.0).abs() < 1e-12);
+    /// assert!((out[2] + 1.0).abs() < 1e-12);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn tanh_into(values: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_tanh_f64(backend, values, out);
     }
 
     /// Elementwise hyperbolic tangent: `tanh(x) = 1 - 2/(e^(2x) + 1)`.
@@ -288,6 +635,9 @@ pub mod f64 {
     /// `Vec`. Saturates to ±1 (via exp overflow/underflow); NaN propagates.
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
+    ///
+    /// Convenience wrapper around [`tanh_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -300,8 +650,7 @@ pub mod f64 {
     #[must_use]
     pub fn tanh(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_tanh_f64(backend, values, &mut out);
+        tanh_into(values, &mut out);
         out
     }
 }

@@ -17,11 +17,41 @@ pub mod f32 {
     use crate::kernels;
     use alloc::vec::Vec;
 
+    /// Numerically-stable softmax, written into `out` (allocation-free variant of [`softmax`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`softmax`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [1.0_f32, 2.0, 3.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::ml::f32::softmax_into(&v, &mut out);
+    /// let s: f32 = out.iter().sum();
+    /// assert!((s - 1.0).abs() < 1e-6);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn softmax_into(values: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_softmax(backend, values, out);
+    }
+
     /// Numerically-stable softmax over a slice.
     ///
     /// Computes `softmax(x)_i = exp(x_i - max(x)) / sum_j exp(x_j - max(x))`.
     /// The max subtraction prevents overflow for large inputs. Returns a new
     /// `Vec` of the same length; an empty slice yields an empty `Vec`.
+    ///
+    /// Convenience wrapper around [`softmax_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -32,9 +62,34 @@ pub mod f32 {
     #[must_use]
     pub fn softmax(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_softmax(backend, values, &mut out);
+        softmax_into(values, &mut out);
         out
+    }
+
+    /// Sigmoid activation, written into `out` (allocation-free variant of [`sigmoid`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`sigmoid`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [0.0_f32, 1.0, -1.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::ml::f32::sigmoid_into(&v, &mut out);
+    /// assert!((out[0] - 0.5).abs() < 1e-6);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn sigmoid_into(values: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_sigmoid(backend, values, out);
     }
 
     /// Sigmoid activation over a slice.
@@ -44,6 +99,9 @@ pub mod f32 {
     /// saturate to 1.0, large negative to 0.0 (via the exp saturation — no
     /// overflow). Returns a new `Vec` of the same length; an empty slice
     /// yields an empty `Vec`.
+    ///
+    /// Convenience wrapper around [`sigmoid_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -55,9 +113,34 @@ pub mod f32 {
     #[must_use]
     pub fn sigmoid(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_sigmoid(backend, values, &mut out);
+        sigmoid_into(values, &mut out);
         out
+    }
+
+    /// Softplus activation (`ln(1 + e^x)`), written into `out` (allocation-free variant of [`softplus`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`softplus`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [0.0_f32, 1.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::ml::f32::softplus_into(&v, &mut out);
+    /// assert!((out[0] - std::f32::consts::LN_2).abs() < 1e-6);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn softplus_into(values: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_softplus(backend, values, out);
     }
 
     /// Softplus activation over a slice: `ln(1 + e^x)` elementwise.
@@ -74,6 +157,9 @@ pub mod f32 {
     /// (<https://www.netlib.org/fdlibm>); see also the CUDA softplus
     /// optimization guide (<https://www.rightnowai.co/guides/cuda-operations/softplus>).
     ///
+    /// Convenience wrapper around [`softplus_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
+    ///
     /// # Example
     /// ```
     /// let v = lanes::ml::f32::softplus(&[0.0_f32, 1.0, -1.0, 100.0]);
@@ -85,8 +171,7 @@ pub mod f32 {
     #[must_use]
     pub fn softplus(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_softplus(backend, values, &mut out);
+        softplus_into(values, &mut out);
         out
     }
 
@@ -97,7 +182,7 @@ pub mod f32 {
     /// max(x)))`. This is the primitive `PyTorch`'s [`nn.LogSoftmax`] computes
     /// (paired with [`nn.NLLLoss`] it forms [`nn.CrossEntropyLoss`]).
     /// Allocation-free: `out` must have the same length as `values` (checked
-    /// with a debug assertion); reuse it across calls to avoid per-call
+    /// with an always-on assertion); reuse it across calls to avoid per-call
     /// allocation in hot loops. An empty slice leaves `out` untouched.
     ///
     /// Reference: the max-subtraction trick and the fused
@@ -143,12 +228,42 @@ pub mod f32 {
         out
     }
 
+    /// `SiLU` (`Swish`) activation, written into `out` (allocation-free variant of [`silu`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`silu`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [0.0_f32, 1.0, -1.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::ml::f32::silu_into(&v, &mut out);
+    /// assert!(out[0].abs() < 1e-6);
+    /// assert!((out[1] - 0.731_058_6).abs() < 1e-6);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn silu_into(values: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_silu(backend, values, out);
+    }
+
     /// `SiLU` (`Swish`) activation over a slice.
     ///
     /// Computes `silu(x)_i = x_i / (1 + exp(-x_i))` elementwise — the smooth
     /// LLM activation (Llama, Qwen, etc.). Saturates to `x` for large positive
     /// x, to 0 for large negative x; minimum ≈ −0.278 at x ≈ −1.28. Returns a
     /// new `Vec` of the same length; an empty slice yields an empty `Vec`.
+    ///
+    /// Convenience wrapper around [`silu_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -160,9 +275,35 @@ pub mod f32 {
     #[must_use]
     pub fn silu(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_silu(backend, values, &mut out);
+        silu_into(values, &mut out);
         out
+    }
+
+    /// GELU activation (tanh approximation), written into `out` (allocation-free variant of [`gelu`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`gelu`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [0.0_f32, 1.0, -1.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::ml::f32::gelu_into(&v, &mut out);
+    /// assert!(out[0].abs() < 1e-6);
+    /// assert!((out[1] - 0.84119).abs() < 2e-4);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn gelu_into(values: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_gelu(backend, values, out);
     }
 
     /// GELU activation over a slice.
@@ -172,6 +313,9 @@ pub mod f32 {
     /// production LLM activation (GPT-2 etc.), accurate to ~1e-3 of exact
     /// GELU. `tanh` is derived from `exp`, so no extra transcendental. Returns
     /// a new `Vec` of the same length; an empty slice yields an empty `Vec`.
+    ///
+    /// Convenience wrapper around [`gelu_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -183,15 +327,43 @@ pub mod f32 {
     #[must_use]
     pub fn gelu(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_gelu(backend, values, &mut out);
+        gelu_into(values, &mut out);
         out
+    }
+
+    /// `ReLU` activation, written into `out` (allocation-free variant of [`relu`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`relu`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [-3.0_f32, 0.0, 5.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::ml::f32::relu_into(&v, &mut out);
+    /// assert_eq!(out, [0.0, 0.0, 5.0]);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn relu_into(values: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_relu(backend, values, out);
     }
 
     /// `ReLU` activation over a slice.
     ///
     /// Computes `relu(x)_i = max(x_i, 0)` elementwise. Returns a new `Vec` of
     /// the same length; an empty slice yields an empty `Vec`.
+    ///
+    /// Convenience wrapper around [`relu_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -201,9 +373,36 @@ pub mod f32 {
     #[must_use]
     pub fn relu(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_relu(backend, values, &mut out);
+        relu_into(values, &mut out);
         out
+    }
+
+    /// RMS norm (`x_i / sqrt(mean(x²) + eps)`), written into `out` (allocation-free variant of [`rms_norm`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`rms_norm`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [3.0_f32, 4.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::ml::f32::rms_norm_into(&v, 0.0, &mut out);
+    /// let r = 12.5_f32.sqrt(); // sqrt(mean(9, 16))
+    /// assert!((out[0] - 3.0 / r).abs() < 1e-6);
+    /// assert!((out[1] - 4.0 / r).abs() < 1e-6);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn rms_norm_into(values: &[f32], eps: f32, out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_rms_norm(backend, values, eps, out);
     }
 
     /// RMS norm over a slice: `x_i / sqrt(mean(x²) + eps)`.
@@ -212,6 +411,9 @@ pub mod f32 {
     /// division by zero for all-zero input; a typical value is `1e-5`.
     /// Returns a new `Vec` of the same length; an empty slice yields an empty
     /// `Vec`.
+    ///
+    /// Convenience wrapper around [`rms_norm_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -223,27 +425,29 @@ pub mod f32 {
     #[must_use]
     pub fn rms_norm(values: &[f32], eps: f32) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_rms_norm(backend, values, eps, &mut out);
+        rms_norm_into(values, eps, &mut out);
         out
     }
 
     /// Cosine similarity between two equal-length slices:
     /// `dot(a, b) / (|a|·|b|)`.
     ///
-    /// Returns an error if the slices have different lengths. Returns `None`
-    /// if either vector has zero length (so the angle is undefined). The
-    /// result is in `[-1, 1]` up to rounding.
+    /// Returns an error if the slices have different lengths or are empty
+    /// (the angle between empty vectors is undefined). If either vector has
+    /// zero norm the result is `0.0` (a zero vector has no direction, so it
+    /// shares none with the other — the same convention as scikit-learn).
+    /// Otherwise the result is in `[-1, 1]` up to rounding.
     ///
     /// # Errors
-    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`, and
+    /// [`Error::EmptyInput`] if both slices are empty.
     ///
     /// # Example
     /// ```
     /// let s = lanes::ml::f32::cosine_similarity(&[1.0_f32, 0.0], &[1.0_f32, 0.0]);
-    /// assert_eq!(s, Ok(Some(1.0)));
+    /// assert_eq!(s, Ok(1.0));
     /// ```
-    pub fn cosine_similarity(a: &[f32], b: &[f32]) -> Result<Option<f32>, Error> {
+    pub fn cosine_similarity(a: &[f32], b: &[f32]) -> Result<f32, Error> {
         if a.len() != b.len() {
             return Err(Error::LengthMismatch {
                 expected: a.len(),
@@ -251,16 +455,16 @@ pub mod f32 {
             });
         }
         if a.is_empty() {
-            return Ok(None);
+            return Err(Error::EmptyInput);
         }
         let backend = Backend::detect();
         let dot = kernels::dispatch_dot(backend, a, b);
         let na = kernels::sqrt::sqrt(kernels::dispatch_sum_sq(backend, a));
         let nb = kernels::sqrt::sqrt(kernels::dispatch_sum_sq(backend, b));
         if na == 0.0 || nb == 0.0 {
-            return Ok(None);
+            return Ok(0.0);
         }
-        Ok(Some(dot / (na * nb)))
+        Ok(dot / (na * nb))
     }
 
     /// Numerically-stable log-sum-exp: `ln(sum_i exp(x_i))`, the denominator
@@ -286,7 +490,7 @@ pub mod f32 {
     ///
     /// The standard pre-activation norm (complement to [`rms_norm`], which
     /// drops the mean). Allocation-free: `out` must have the same length as
-    /// `values` (checked with a debug assertion); reuse it across calls to
+    /// `values` (checked with an always-on assertion); reuse it across calls to
     /// avoid per-call allocation in hot loops. An empty slice leaves `out`
     /// untouched. NaNs propagate.
     ///
@@ -339,11 +543,41 @@ pub mod f64 {
     use crate::kernels;
     use alloc::vec::Vec;
 
+    /// Numerically-stable softmax, written into `out` (allocation-free variant of [`softmax`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`softmax`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [1.0_f64, 2.0, 3.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::ml::f64::softmax_into(&v, &mut out);
+    /// let s: f64 = out.iter().sum();
+    /// assert!((s - 1.0).abs() < 1e-12);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn softmax_into(values: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_softmax_f64(backend, values, out);
+    }
+
     /// Numerically-stable softmax over a slice.
     ///
     /// Computes `softmax(x)_i = exp(x_i - max(x)) / sum_j exp(x_j - max(x))`.
     /// The max subtraction prevents overflow for large inputs. Returns a new
     /// `Vec` of the same length; an empty slice yields an empty `Vec`.
+    ///
+    /// Convenience wrapper around [`softmax_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -354,9 +588,34 @@ pub mod f64 {
     #[must_use]
     pub fn softmax(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_softmax_f64(backend, values, &mut out);
+        softmax_into(values, &mut out);
         out
+    }
+
+    /// Sigmoid activation, written into `out` (allocation-free variant of [`sigmoid`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`sigmoid`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [0.0_f64, 1.0, -1.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::ml::f64::sigmoid_into(&v, &mut out);
+    /// assert!((out[0] - 0.5).abs() < 1e-12);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn sigmoid_into(values: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_sigmoid_f64(backend, values, out);
     }
 
     /// Sigmoid activation over a slice.
@@ -366,6 +625,9 @@ pub mod f64 {
     /// saturate to 1.0, large negative to 0.0 (via the exp saturation — no
     /// overflow). Returns a new `Vec` of the same length; an empty slice
     /// yields an empty `Vec`.
+    ///
+    /// Convenience wrapper around [`sigmoid_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -377,9 +639,34 @@ pub mod f64 {
     #[must_use]
     pub fn sigmoid(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_sigmoid_f64(backend, values, &mut out);
+        sigmoid_into(values, &mut out);
         out
+    }
+
+    /// Softplus activation (`ln(1 + e^x)`), written into `out` (allocation-free variant of [`softplus`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`softplus`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [0.0_f64, 1.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::ml::f64::softplus_into(&v, &mut out);
+    /// assert!((out[0] - std::f64::consts::LN_2).abs() < 1e-12);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn softplus_into(values: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_softplus_f64(backend, values, out);
     }
 
     /// Softplus activation over a slice: `ln(1 + e^x)` elementwise.
@@ -395,6 +682,9 @@ pub mod f64 {
     /// softplus optimization guide
     /// (<https://www.rightnowai.co/guides/cuda-operations/softplus>).
     ///
+    /// Convenience wrapper around [`softplus_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
+    ///
     /// # Example
     /// ```
     /// let v = lanes::ml::f64::softplus(&[0.0_f64, 1.0, -1.0, 1000.0]);
@@ -406,8 +696,7 @@ pub mod f64 {
     #[must_use]
     pub fn softplus(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_softplus_f64(backend, values, &mut out);
+        softplus_into(values, &mut out);
         out
     }
 
@@ -418,7 +707,7 @@ pub mod f64 {
     /// max(x)))`. This is the primitive `PyTorch`'s [`nn.LogSoftmax`] computes
     /// (paired with [`nn.NLLLoss`] it forms [`nn.CrossEntropyLoss`]).
     /// Allocation-free: `out` must have the same length as `values` (checked
-    /// with a debug assertion); reuse it across calls to avoid per-call
+    /// with an always-on assertion); reuse it across calls to avoid per-call
     /// allocation in hot loops. An empty slice leaves `out` untouched.
     ///
     /// Reference: the max-subtraction trick and the fused
@@ -463,12 +752,42 @@ pub mod f64 {
         out
     }
 
+    /// `SiLU` (`Swish`) activation, written into `out` (allocation-free variant of [`silu`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`silu`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [0.0_f64, 1.0, -1.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::ml::f64::silu_into(&v, &mut out);
+    /// assert!(out[0].abs() < 1e-12);
+    /// assert!((out[1] - 0.731_058_6).abs() < 1e-6);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn silu_into(values: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_silu_f64(backend, values, out);
+    }
+
     /// `SiLU` (`Swish`) activation over a slice.
     ///
     /// Computes `silu(x)_i = x_i / (1 + exp(-x_i))` elementwise — the smooth
     /// LLM activation (Llama, Qwen, etc.). Saturates to `x` for large positive
     /// x, to 0 for large negative x; minimum ≈ −0.278 at x ≈ −1.28. Returns a
     /// new `Vec` of the same length; an empty slice yields an empty `Vec`.
+    ///
+    /// Convenience wrapper around [`silu_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -480,9 +799,35 @@ pub mod f64 {
     #[must_use]
     pub fn silu(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_silu_f64(backend, values, &mut out);
+        silu_into(values, &mut out);
         out
+    }
+
+    /// GELU activation (tanh approximation), written into `out` (allocation-free variant of [`gelu`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`gelu`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [0.0_f64, 1.0, -1.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::ml::f64::gelu_into(&v, &mut out);
+    /// assert!(out[0].abs() < 1e-12);
+    /// assert!((out[1] - 0.84119).abs() < 2e-4);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn gelu_into(values: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_gelu_f64(backend, values, out);
     }
 
     /// GELU activation over a slice.
@@ -492,6 +837,9 @@ pub mod f64 {
     /// production LLM activation (GPT-2 etc.). `tanh` is derived from `exp`,
     /// so no extra transcendental. Returns a new `Vec` of the same length; an
     /// empty slice yields an empty `Vec`.
+    ///
+    /// Convenience wrapper around [`gelu_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -503,15 +851,43 @@ pub mod f64 {
     #[must_use]
     pub fn gelu(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_gelu_f64(backend, values, &mut out);
+        gelu_into(values, &mut out);
         out
+    }
+
+    /// `ReLU` activation, written into `out` (allocation-free variant of [`relu`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`relu`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [-3.0_f64, 0.0, 5.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::ml::f64::relu_into(&v, &mut out);
+    /// assert_eq!(out, [0.0, 0.0, 5.0]);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn relu_into(values: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_relu_f64(backend, values, out);
     }
 
     /// `ReLU` activation over a slice.
     ///
     /// Computes `relu(x)_i = max(x_i, 0)` elementwise. Returns a new `Vec` of
     /// the same length; an empty slice yields an empty `Vec`.
+    ///
+    /// Convenience wrapper around [`relu_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -521,9 +897,36 @@ pub mod f64 {
     #[must_use]
     pub fn relu(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_relu_f64(backend, values, &mut out);
+        relu_into(values, &mut out);
         out
+    }
+
+    /// RMS norm (`x_i / sqrt(mean(x²) + eps)`), written into `out` (allocation-free variant of [`rms_norm`]).
+    ///
+    /// Allocation-free: `out` must have the same length as `values`; reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. See [`rms_norm`] for semantics and
+    /// numerical properties.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [3.0_f64, 4.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::ml::f64::rms_norm_into(&v, 0.0, &mut out);
+    /// let r = 12.5_f64.sqrt(); // sqrt(mean(9, 16))
+    /// assert!((out[0] - 3.0 / r).abs() < 1e-12);
+    /// assert!((out[1] - 4.0 / r).abs() < 1e-12);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn rms_norm_into(values: &[f64], eps: f64, out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_rms_norm_f64(backend, values, eps, out);
     }
 
     /// RMS norm over a slice: `x_i / sqrt(mean(x²) + eps)`.
@@ -532,6 +935,9 @@ pub mod f64 {
     /// division by zero for all-zero input; a typical value is `1e-5`.
     /// Returns a new `Vec` of the same length; an empty slice yields an empty
     /// `Vec`.
+    ///
+    /// Convenience wrapper around [`rms_norm_into`]; prefer the `_into`
+    /// form in hot loops to avoid per-call allocation.
     ///
     /// # Example
     /// ```
@@ -543,27 +949,29 @@ pub mod f64 {
     #[must_use]
     pub fn rms_norm(values: &[f64], eps: f64) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        let backend = Backend::detect();
-        kernels::dispatch_rms_norm_f64(backend, values, eps, &mut out);
+        rms_norm_into(values, eps, &mut out);
         out
     }
 
     /// Cosine similarity between two equal-length slices:
     /// `dot(a, b) / (|a|·|b|)`.
     ///
-    /// Returns an error if the slices have different lengths. Returns `None`
-    /// if either vector has zero length (so the angle is undefined). The
-    /// result is in `[-1, 1]` up to rounding.
+    /// Returns an error if the slices have different lengths or are empty
+    /// (the angle between empty vectors is undefined). If either vector has
+    /// zero norm the result is `0.0` (a zero vector has no direction, so it
+    /// shares none with the other — the same convention as scikit-learn).
+    /// Otherwise the result is in `[-1, 1]` up to rounding.
     ///
     /// # Errors
-    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`, and
+    /// [`Error::EmptyInput`] if both slices are empty.
     ///
     /// # Example
     /// ```
     /// let s = lanes::ml::f64::cosine_similarity(&[1.0_f64, 0.0], &[1.0_f64, 0.0]);
-    /// assert_eq!(s, Ok(Some(1.0)));
+    /// assert_eq!(s, Ok(1.0));
     /// ```
-    pub fn cosine_similarity(a: &[f64], b: &[f64]) -> Result<Option<f64>, Error> {
+    pub fn cosine_similarity(a: &[f64], b: &[f64]) -> Result<f64, Error> {
         if a.len() != b.len() {
             return Err(Error::LengthMismatch {
                 expected: a.len(),
@@ -571,16 +979,16 @@ pub mod f64 {
             });
         }
         if a.is_empty() {
-            return Ok(None);
+            return Err(Error::EmptyInput);
         }
         let backend = Backend::detect();
         let dot = kernels::dispatch_dot_f64(backend, a, b);
         let na = kernels::sqrt::sqrt_f64(kernels::dispatch_sum_sq_f64(backend, a));
         let nb = kernels::sqrt::sqrt_f64(kernels::dispatch_sum_sq_f64(backend, b));
         if na == 0.0 || nb == 0.0 {
-            return Ok(None);
+            return Ok(0.0);
         }
-        Ok(Some(dot / (na * nb)))
+        Ok(dot / (na * nb))
     }
 
     /// Numerically-stable log-sum-exp: `ln(sum_i exp(x_i))`, the denominator
@@ -606,7 +1014,7 @@ pub mod f64 {
     ///
     /// The standard pre-activation norm (complement to [`rms_norm`], which
     /// drops the mean). Allocation-free: `out` must have the same length as
-    /// `values` (checked with a debug assertion); reuse it across calls to
+    /// `values` (checked with an always-on assertion); reuse it across calls to
     /// avoid per-call allocation in hot loops. An empty slice leaves `out`
     /// untouched. NaNs propagate.
     ///

@@ -599,16 +599,22 @@ proptest! {
         // Derive b from a (same pattern as prop_dot_matches_naive): a
         // second filtered strategy rejects too often.
         let b: Vec<f32> = a.iter().map(|x| x * 0.5 + 1.0).collect();
-        let got = lanes::ml::f32::cosine_similarity(&a, &b).unwrap();
+        let got = lanes::ml::f32::cosine_similarity(&a, &b);
         let naive = {
             let dot: f32 = a.iter().zip(&b).map(|(&x, &y)| x * y).sum();
             let na = a.iter().map(|x| x * x).sum::<f32>().sqrt();
             let nb = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-            if na == 0.0 || nb == 0.0 { None } else { Some(dot / (na * nb)) }
+            if a.is_empty() {
+                None // empty → EmptyInput error, not a value
+            } else if na == 0.0 || nb == 0.0 {
+                Some(0.0) // zero norm → 0.0 by convention
+            } else {
+                Some(dot / (na * nb))
+            }
         };
         match (got, naive) {
-            (None, None) => {}
-            (Some(g), Some(w)) => {
+            (Err(lanes::Error::EmptyInput), None) => {}
+            (Ok(g), Some(w)) => {
                 let tol = w.abs() * 2e-6 + 1e-6;
                 prop_assert!((g - w).abs() <= tol, "cos({g}) vs naive {w}");
             }

@@ -43,7 +43,11 @@ impl Backend {
     /// On the first call (with the `std` feature), the result is cached in a
     /// `OnceLock` so subsequent calls are essentially free.
     ///
-    /// Without the `std` feature, this always returns [`Backend::Scalar`].
+    /// Without the `std` feature there is no runtime CPU probing, but the
+    /// architecture baseline still guarantees a SIMD tier on the supported
+    /// targets: SSE2 is mandatory on x86-64 and NEON is mandatory on
+    /// ARMv8-A (aarch64), so those backends are selected statically. All
+    /// other targets fall back to [`Backend::Scalar`].
     #[must_use]
     pub fn detect() -> Self {
         #[cfg(feature = "std")]
@@ -54,7 +58,24 @@ impl Backend {
         }
         #[cfg(not(feature = "std"))]
         {
-            Backend::Scalar
+            static_backend()
         }
     }
+}
+
+/// Best backend guaranteed to be available without runtime CPU probing.
+///
+/// SSE2 is part of the x86-64 baseline and NEON is part of the ARMv8-A
+/// baseline, so on those targets the SIMD tier is a compile-time guarantee
+/// even in `no_std` builds (where `is_x86_feature_detected!` is
+/// unavailable). Everywhere else only the scalar fallback is guaranteed.
+#[cfg(not(feature = "std"))]
+fn static_backend() -> Backend {
+    #[cfg(target_arch = "x86_64")]
+    let backend = Backend::Sse2;
+    #[cfg(target_arch = "aarch64")]
+    let backend = Backend::Neon;
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let backend = Backend::Scalar;
+    backend
 }

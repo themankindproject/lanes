@@ -40,21 +40,28 @@ let s64 = f64::sum(&[1.0, 2.0, 3.0]);  // 6.0
 - **`stats`** — `sum`, `prod`, `min`, `max`, `argmax`, `argmin`, `sum_sq`,
   `mean`, `variance`, `std_dev`, `geometric_mean`, `dot`
 - **`distance`** — `l1_norm`, `l2_norm`, `max_norm`
-- **`math`** — `sqrt`, `clip`, `rsqrt`, `exp`, `ln`, `tanh`
-- **`ml`** — `softmax`, `log_softmax` (+ `log_softmax_into`), `sigmoid`,
-  `silu`, `gelu`, `relu`, `softplus`, `rms_norm`, `layer_norm` (+
-  `layer_norm_into`), `cosine_similarity`, `logsumexp`
+- **`math`** — `sqrt`, `clip`, `rsqrt`, `exp`, `ln`, `tanh` (each also as
+  `*_into`)
+- **`ml`** — `softmax`, `log_softmax`, `sigmoid`, `silu`, `gelu`, `relu`,
+  `softplus`, `rms_norm`, `layer_norm`, `cosine_similarity`, `logsumexp`
+  (every map-style op also as `*_into`)
 
 All reduce to `f32`/`f64` via the `lanes::stats::f32::*`-style paths;
 `math`/`ml` return `Vec`s and need the `alloc` feature. The `_into`
-variants of `log_softmax` and `layer_norm` write into a caller-provided
-buffer instead of allocating — reuse the buffer across calls in hot loops.
+variants write into a caller-provided buffer instead of allocating —
+reuse the buffer across calls in hot loops:
+
+```rust
+let mut buf = vec![0.0_f32; 1024];
+lanes::ml::f32::softmax_into(&a, &mut buf);   // no allocation
+lanes::math::f32::exp_into(&a, &mut buf);     // no allocation
+```
 
 ## Features
 
 | Flag | Default | Effect |
 | --- | --- | --- |
-| `std` | on | Runtime CPU detection, `LANES_BACKEND` override. Off = `no_std` (scalar only). |
+| `std` | on | Runtime CPU detection, `LANES_BACKEND` override. Off = `no_std`: the architecture baseline is picked statically (SSE2 on x86-64, NEON on aarch64, scalar elsewhere). |
 | `alloc` | on (via `std`) | `Vec`-returning families (`math`, `ml`). |
 
 `LANES_BACKEND=scalar|sse2|avx2|avx512|neon` forces a backend for

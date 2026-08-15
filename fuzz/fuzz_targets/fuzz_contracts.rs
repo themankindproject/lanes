@@ -31,6 +31,9 @@ fuzz_target!(|input: ContractsInput| {
             assert_eq!(actual, b.len());
             assert_ne!(a.len(), b.len());
         }
+        Err(lanes::Error::EmptyInput) => {
+            unreachable!("dot never returns EmptyInput (empty dot is 0.0)")
+        }
     }
 
     // sqrt: IEEE contract per element.
