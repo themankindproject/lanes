@@ -1058,6 +1058,61 @@ macro_rules! simd_map2 {
     };
 }
 
+/// Generate a predicate-count reduction kernel (returns the number of lanes
+/// satisfying a predicate, as `usize`).
+///
+/// Each vector chunk is reduced to a lane-mask via `$pred`, counted via
+/// `$count_lanes`; the scalar tail uses the boolean `$tail` predicate. Not
+/// alloc-gated (it is a reduction, not a map).
+///
+/// # Parameters
+///
+/// * `$name` — function name.
+/// * `$t` — scalar element type (`f32` or `f64`).
+/// * `$feat` — `target_feature` string.
+/// * `$lanes` — vector width in `$t` elements.
+/// * `$load` — `fn(*const $t) -> V`.
+/// * `$pred` — `fn(V) -> Mask` per-lane predicate mask.
+/// * `$count_lanes` — `fn(Mask) -> usize` popcount of set lanes.
+/// * `$tail` — `fn($t) -> bool` scalar predicate for the remainder.
+///
+/// # Safety
+/// The generated function is `unsafe fn` with `#[target_feature]`; the
+/// caller must verify the CPU feature.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! simd_count {
+    (
+        $name:ident, $t:ty, $feat:literal, $lanes:expr,
+        $load:expr, $pred:expr, $count_lanes:expr, $tail:expr
+    ) => {
+        /// SIMD predicate-count reduction. See the scalar reference for
+        /// semantics.
+        ///
+        /// # Safety
+        /// Caller must ensure the CPU feature is available.
+        #[inline]
+        #[target_feature(enable = $feat)]
+        pub(crate) unsafe fn $name(values: &[$t]) -> usize {
+            let len = values.len();
+            let chunks = len / $lanes;
+            let rem = len % $lanes;
+            let mut count = 0usize;
+            for i in 0..chunks {
+                let v = $load(unsafe { values.as_ptr().add(i * $lanes) });
+                count += $count_lanes($pred(v));
+            }
+            for i in 0..rem {
+                let x = unsafe { *values.get_unchecked(chunks * $lanes + i) };
+                if $tail(x) {
+                    count += 1;
+                }
+            }
+            count
+        }
+    };
+}
+
 /// Generate an RMS-norm kernel (two-pass: sum of squares → rsqrt → scale).
 ///
 /// Pass 1 reduces `sum(x²)` over vector chunks plus a scalar tail; pass 2

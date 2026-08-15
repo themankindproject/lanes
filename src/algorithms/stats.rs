@@ -255,6 +255,51 @@ pub mod f32 {
         let backend = Backend::detect();
         Ok(kernels::dispatch_dot(backend, a, b))
     }
+
+    /// Count elements equal to `+0.0` or `-0.0`.
+    ///
+    /// Returns `0` for an empty slice.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::stats::f32::count_zero(&[0.0_f32, -0.0, 1.0]), 2);
+    /// ```
+    #[must_use]
+    pub fn count_zero(values: &[f32]) -> usize {
+        let backend = Backend::detect();
+        kernels::dispatch_count_zero(backend, values)
+    }
+
+    /// Count NaN elements.
+    ///
+    /// Returns `0` for an empty slice.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::stats::f32::count_nan(&[f32::NAN, 1.0]), 1);
+    /// ```
+    #[must_use]
+    pub fn count_nan(values: &[f32]) -> usize {
+        let backend = Backend::detect();
+        kernels::dispatch_count_nan(backend, values)
+    }
+
+    /// Count infinite (`+inf`/`-inf`) elements.
+    ///
+    /// Returns `0` for an empty slice.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(
+    ///     lanes::stats::f32::count_infinite(&[f32::INFINITY, f32::NEG_INFINITY, 1.0]),
+    ///     2
+    /// );
+    /// ```
+    #[must_use]
+    pub fn count_infinite(values: &[f32]) -> usize {
+        let backend = Backend::detect();
+        kernels::dispatch_count_infinite(backend, values)
+    }
 }
 
 pub mod f64 {
@@ -504,5 +549,50 @@ pub mod f64 {
         }
         let backend = Backend::detect();
         Ok(kernels::dispatch_dot_f64(backend, a, b))
+    }
+
+    /// Count elements equal to `+0.0` or `-0.0`.
+    ///
+    /// Returns `0` for an empty slice.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::stats::f64::count_zero(&[0.0_f64, -0.0, 1.0]), 2);
+    /// ```
+    #[must_use]
+    pub fn count_zero(values: &[f64]) -> usize {
+        let backend = Backend::detect();
+        kernels::dispatch_count_zero_f64(backend, values)
+    }
+
+    /// Count NaN elements.
+    ///
+    /// Returns `0` for an empty slice.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::stats::f64::count_nan(&[f64::NAN, 1.0]), 1);
+    /// ```
+    #[must_use]
+    pub fn count_nan(values: &[f64]) -> usize {
+        let backend = Backend::detect();
+        kernels::dispatch_count_nan_f64(backend, values)
+    }
+
+    /// Count infinite (`+inf`/`-inf`) elements.
+    ///
+    /// Returns `0` for an empty slice.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(
+    ///     lanes::stats::f64::count_infinite(&[f64::INFINITY, f64::NEG_INFINITY, 1.0]),
+    ///     2
+    /// );
+    /// ```
+    #[must_use]
+    pub fn count_infinite(values: &[f64]) -> usize {
+        let backend = Backend::detect();
+        kernels::dispatch_count_infinite_f64(backend, values)
     }
 }

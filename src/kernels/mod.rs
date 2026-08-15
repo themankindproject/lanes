@@ -218,6 +218,42 @@ dispatch!(
     id
 );
 
+dispatch!(
+    dispatch_count_zero,
+    [values: &[f32]],
+    usize,
+    scalar::count_zero,
+    x86::sse2::count_zero,
+    x86::avx2::count_zero,
+    x86::avx512::count_zero,
+    aarch64::neon::count_zero,
+    id
+);
+
+dispatch!(
+    dispatch_count_nan,
+    [values: &[f32]],
+    usize,
+    scalar::count_nan,
+    x86::sse2::count_nan,
+    x86::avx2::count_nan,
+    x86::avx512::count_nan,
+    aarch64::neon::count_nan,
+    id
+);
+
+dispatch!(
+    dispatch_count_infinite,
+    [values: &[f32]],
+    usize,
+    scalar::count_infinite,
+    x86::sse2::count_infinite,
+    x86::avx2::count_infinite,
+    x86::avx512::count_infinite,
+    aarch64::neon::count_infinite,
+    id
+);
+
 // Dispatch the dot product operation to the appropriate backend.
 // Falls through to scalar for backends that are not available on the
 // current compilation target.
@@ -567,6 +603,42 @@ dispatch!(
     x86::avx2::argmin_f64,
     x86::avx512::argmin_f64,
     aarch64::neon::argmin_f64,
+    id
+);
+
+dispatch!(
+    dispatch_count_zero_f64,
+    [values: &[f64]],
+    usize,
+    scalar::count_zero_f64,
+    x86::sse2::count_zero_f64,
+    x86::avx2::count_zero_f64,
+    x86::avx512::count_zero_f64,
+    aarch64::neon::count_zero_f64,
+    id
+);
+
+dispatch!(
+    dispatch_count_nan_f64,
+    [values: &[f64]],
+    usize,
+    scalar::count_nan_f64,
+    x86::sse2::count_nan_f64,
+    x86::avx2::count_nan_f64,
+    x86::avx512::count_nan_f64,
+    aarch64::neon::count_nan_f64,
+    id
+);
+
+dispatch!(
+    dispatch_count_infinite_f64,
+    [values: &[f64]],
+    usize,
+    scalar::count_infinite_f64,
+    x86::sse2::count_infinite_f64,
+    x86::avx2::count_infinite_f64,
+    x86::avx512::count_infinite_f64,
+    aarch64::neon::count_infinite_f64,
     id
 );
 

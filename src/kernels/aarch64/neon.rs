@@ -267,6 +267,42 @@ crate::simd_argminmax!(
     |v, iv| unsafe { argmin_pair_neon(v, iv) }
 );
 
+// count_nan: lanes where v != v (vceq is all-ones for ordered, so invert).
+crate::simd_count!(
+    count_nan,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |v: float32x4_t| unsafe { vmvnq_u32(vceqq_f32(v, v)) },
+    |m: uint32x4_t| unsafe { vaddvq_u32(vandq_u32(m, vdupq_n_u32(1))) } as usize,
+    |x: f32| x.is_nan()
+);
+
+// count_zero: lanes equal to +/-0.0 (they compare equal).
+crate::simd_count!(
+    count_zero,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |v: float32x4_t| unsafe { vceqq_f32(v, vdupq_n_f32(0.0)) },
+    |m: uint32x4_t| unsafe { vaddvq_u32(vandq_u32(m, vdupq_n_u32(1))) } as usize,
+    |x: f32| x == 0.0
+);
+
+// count_infinite: lanes whose |v| == +inf.
+crate::simd_count!(
+    count_infinite,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |v: float32x4_t| unsafe { vceqq_f32(vabsq_f32(v), vdupq_n_f32(f32::INFINITY)) },
+    |m: uint32x4_t| unsafe { vaddvq_u32(vandq_u32(m, vdupq_n_u32(1))) } as usize,
+    |x: f32| x.is_infinite()
+);
+
 // Dot product: 4-wide fused multiply-accumulate (`vfmaq` is `acc + va*vb`).
 crate::simd_reduce2!(
     dot,
@@ -1005,6 +1041,43 @@ crate::simd_argminmax!(
     |mask: uint64x2_t, a: int64x2_t, b: int64x2_t| unsafe { vbslq_s64(mask, a, b) },
     |a: f64, b: f64| a < b,
     |v, idx| unsafe { argmin_pair_128d(v, idx) }
+);
+
+// count_nan_f64: lanes where v != v (vceq is all-ones for ordered; invert
+// via XOR with all-ones — NEON has no 64-bit `vmvn`).
+crate::simd_count!(
+    count_nan_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |v: float64x2_t| unsafe { veorq_u64(vceqq_f64(v, v), vdupq_n_u64(u64::MAX)) },
+    |m: uint64x2_t| unsafe { vaddvq_u64(vandq_u64(m, vdupq_n_u64(1))) } as usize,
+    |x: f64| x.is_nan()
+);
+
+// count_zero_f64: lanes equal to +/-0.0 (they compare equal).
+crate::simd_count!(
+    count_zero_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |v: float64x2_t| unsafe { vceqq_f64(v, vdupq_n_f64(0.0)) },
+    |m: uint64x2_t| unsafe { vaddvq_u64(vandq_u64(m, vdupq_n_u64(1))) } as usize,
+    |x: f64| x == 0.0
+);
+
+// count_infinite_f64: lanes whose |v| == +inf.
+crate::simd_count!(
+    count_infinite_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |v: float64x2_t| unsafe { vceqq_f64(vabsq_f64(v), vdupq_n_f64(f64::INFINITY)) },
+    |m: uint64x2_t| unsafe { vaddvq_u64(vandq_u64(m, vdupq_n_u64(1))) } as usize,
+    |x: f64| x.is_infinite()
 );
 
 // f64 elementwise maps for NEON (2 lanes).

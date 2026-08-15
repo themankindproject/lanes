@@ -1044,3 +1044,26 @@ fn math_abs_sub_known_and_empty() {
 fn math_abs_sub_panics_on_length_mismatch() {
     let _ = lanes::math::f32::abs_sub(&[1.0, 2.0], &[1.0]);
 }
+
+#[test]
+fn stats_counts_known_and_empty() {
+    let v = [
+        0.0_f32,
+        -0.0,
+        f32::NAN,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        1.5,
+    ];
+    assert_eq!(lanes::stats::f32::count_zero(&v), 2);
+    assert_eq!(lanes::stats::f32::count_nan(&v), 1);
+    assert_eq!(lanes::stats::f32::count_infinite(&v), 2);
+    let empty: [f32; 0] = [];
+    assert_eq!(lanes::stats::f32::count_zero(&empty), 0);
+    assert_eq!(lanes::stats::f32::count_nan(&empty), 0);
+    assert_eq!(lanes::stats::f32::count_infinite(&empty), 0);
+    let v64 = [0.0_f64, -0.0, f64::NAN, f64::INFINITY, 1.5];
+    assert_eq!(lanes::stats::f64::count_zero(&v64), 2);
+    assert_eq!(lanes::stats::f64::count_nan(&v64), 1);
+    assert_eq!(lanes::stats::f64::count_infinite(&v64), 1);
+}

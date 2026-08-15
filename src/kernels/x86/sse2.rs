@@ -202,6 +202,45 @@ crate::simd_argminmax!(
     |v, iv| unsafe { argmin_pair_128(v, iv) }
 );
 
+// count_nan: lanes where v != v.
+crate::simd_count!(
+    count_nan,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    |v: __m128| unsafe { _mm_movemask_ps(_mm_cmpunord_ps(v, v)) },
+    |m: i32| m.count_ones() as usize,
+    |x: f32| x.is_nan()
+);
+
+// count_zero: lanes equal to +/-0.0 (they compare equal).
+crate::simd_count!(
+    count_zero,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    |v: __m128| unsafe { _mm_movemask_ps(_mm_cmpeq_ps(v, _mm_setzero_ps())) },
+    |m: i32| m.count_ones() as usize,
+    |x: f32| x == 0.0
+);
+
+// count_infinite: lanes whose |v| == +inf.
+crate::simd_count!(
+    count_infinite,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    |v: __m128| unsafe {
+        let abs = _mm_andnot_ps(_mm_set1_ps(-0.0), v);
+        _mm_movemask_ps(_mm_cmpeq_ps(abs, _mm_set1_ps(f32::INFINITY)))
+    },
+    |m: i32| m.count_ones() as usize,
+    |x: f32| x.is_infinite()
+);
+
 // Dot product: 4-wide multiply-accumulate (mul+add; SSE2 has no FMA).
 crate::simd_reduce2!(
     dot,
@@ -1089,6 +1128,45 @@ crate::simd_argminmax!(
     },
     |a: f64, b: f64| a < b,
     |v, idx| unsafe { argmin_pair_128d(v, idx) }
+);
+
+// count_nan_f64: lanes where v != v.
+crate::simd_count!(
+    count_nan_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    |v: __m128d| unsafe { _mm_movemask_pd(_mm_cmpunord_pd(v, v)) },
+    |m: i32| m.count_ones() as usize,
+    |x: f64| x.is_nan()
+);
+
+// count_zero_f64: lanes equal to +/-0.0 (they compare equal).
+crate::simd_count!(
+    count_zero_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    |v: __m128d| unsafe { _mm_movemask_pd(_mm_cmpeq_pd(v, _mm_setzero_pd())) },
+    |m: i32| m.count_ones() as usize,
+    |x: f64| x == 0.0
+);
+
+// count_infinite_f64: lanes whose |v| == +inf.
+crate::simd_count!(
+    count_infinite_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    |v: __m128d| unsafe {
+        let abs = _mm_andnot_pd(_mm_set1_pd(-0.0), v);
+        _mm_movemask_pd(_mm_cmpeq_pd(abs, _mm_set1_pd(f64::INFINITY)))
+    },
+    |m: i32| m.count_ones() as usize,
+    |x: f64| x.is_infinite()
 );
 
 // f64 elementwise maps for SSE2 (2 lanes).

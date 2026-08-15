@@ -636,3 +636,21 @@ proptest! {
         }
     }
 }
+
+proptest! {
+    #[test]
+    fn prop_counts_match_naive(values in proptest::collection::vec(any::<f32>(), 0..1000)) {
+        prop_assert_eq!(
+            lanes::stats::f32::count_zero(&values),
+            values.iter().filter(|&&x| x == 0.0).count()
+        );
+        prop_assert_eq!(
+            lanes::stats::f32::count_nan(&values),
+            values.iter().filter(|x| x.is_nan()).count()
+        );
+        prop_assert_eq!(
+            lanes::stats::f32::count_infinite(&values),
+            values.iter().filter(|x| x.is_infinite()).count()
+        );
+    }
+}

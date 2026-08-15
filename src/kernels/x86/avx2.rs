@@ -196,6 +196,49 @@ crate::simd_argminmax!(
     |v, iv| unsafe { argmin_pair_256(v, iv) }
 );
 
+// count_nan: lanes where v != v.
+crate::simd_count!(
+    count_nan,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    |v: __m256| unsafe { _mm256_movemask_ps(_mm256_cmp_ps(v, v, _CMP_UNORD_Q)) },
+    |m: i32| m.count_ones() as usize,
+    |x: f32| x.is_nan()
+);
+
+// count_zero: lanes equal to +/-0.0 (they compare equal).
+crate::simd_count!(
+    count_zero,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    |v: __m256| unsafe { _mm256_movemask_ps(_mm256_cmp_ps(v, _mm256_setzero_ps(), _CMP_EQ_OQ)) },
+    |m: i32| m.count_ones() as usize,
+    |x: f32| x == 0.0
+);
+
+// count_infinite: lanes whose |v| == +inf.
+crate::simd_count!(
+    count_infinite,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    |v: __m256| unsafe {
+        let abs = _mm256_andnot_ps(_mm256_set1_ps(-0.0), v);
+        _mm256_movemask_ps(_mm256_cmp_ps(
+            abs,
+            _mm256_set1_ps(f32::INFINITY),
+            _CMP_EQ_OQ,
+        ))
+    },
+    |m: i32| m.count_ones() as usize,
+    |x: f32| x.is_infinite()
+);
+
 // Dot product: 8-wide fused multiply-accumulate (AVX2 + FMA).
 crate::simd_reduce2!(
     dot,
@@ -1110,6 +1153,49 @@ crate::simd_argminmax!(
     },
     |a: f64, b: f64| a < b,
     |v, idx| unsafe { argmin_pair_256d(v, idx) }
+);
+
+// count_nan_f64: lanes where v != v.
+crate::simd_count!(
+    count_nan_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |v: __m256d| unsafe { _mm256_movemask_pd(_mm256_cmp_pd(v, v, _CMP_UNORD_Q)) },
+    |m: i32| m.count_ones() as usize,
+    |x: f64| x.is_nan()
+);
+
+// count_zero_f64: lanes equal to +/-0.0 (they compare equal).
+crate::simd_count!(
+    count_zero_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |v: __m256d| unsafe { _mm256_movemask_pd(_mm256_cmp_pd(v, _mm256_setzero_pd(), _CMP_EQ_OQ)) },
+    |m: i32| m.count_ones() as usize,
+    |x: f64| x == 0.0
+);
+
+// count_infinite_f64: lanes whose |v| == +inf.
+crate::simd_count!(
+    count_infinite_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |v: __m256d| unsafe {
+        let abs = _mm256_andnot_pd(_mm256_set1_pd(-0.0), v);
+        _mm256_movemask_pd(_mm256_cmp_pd(
+            abs,
+            _mm256_set1_pd(f64::INFINITY),
+            _CMP_EQ_OQ,
+        ))
+    },
+    |m: i32| m.count_ones() as usize,
+    |x: f64| x.is_infinite()
 );
 
 // f64 elementwise maps for AVX2 (4 lanes).

@@ -787,6 +787,44 @@ crate::simd_argminmax!(
     |v, iv| unsafe { argmin_pair_512(v, iv) }
 );
 
+// count_nan: lanes where v != v (mask is already a bitmask).
+crate::simd_count!(
+    count_nan,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    |v: __m512| unsafe { _mm512_cmp_ps_mask(v, v, _CMP_UNORD_Q) },
+    |m: __mmask16| m.count_ones() as usize,
+    |x: f32| x.is_nan()
+);
+
+// count_zero: lanes equal to +/-0.0 (they compare equal).
+crate::simd_count!(
+    count_zero,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    |v: __m512| unsafe { _mm512_cmp_ps_mask(v, _mm512_setzero_ps(), _CMP_EQ_OQ) },
+    |m: __mmask16| m.count_ones() as usize,
+    |x: f32| x == 0.0
+);
+
+// count_infinite: lanes whose |v| == +inf.
+crate::simd_count!(
+    count_infinite,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    |v: __m512| unsafe {
+        _mm512_cmp_ps_mask(_mm512_abs_ps(v), _mm512_set1_ps(f32::INFINITY), _CMP_EQ_OQ)
+    },
+    |m: __mmask16| m.count_ones() as usize,
+    |x: f32| x.is_infinite()
+);
+
 // ===========================================================================
 // f64 (double-precision) kernels. AVX-512F `__m512d` = 8 lanes. Horizontal
 // reductions use the built-in `_mm512_reduce_*_pd`; masks are `__mmask8`.
@@ -1035,6 +1073,44 @@ crate::simd_argminmax!(
     },
     |cand: f64, cur: f64| cand < cur,
     |v, iv| unsafe { argmin_pair_512d(v, iv) }
+);
+
+// count_nan_f64: lanes where v != v (mask is already a bitmask).
+crate::simd_count!(
+    count_nan_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |v: __m512d| unsafe { _mm512_cmp_pd_mask(v, v, _CMP_UNORD_Q) },
+    |m: __mmask8| m.count_ones() as usize,
+    |x: f64| x.is_nan()
+);
+
+// count_zero_f64: lanes equal to +/-0.0 (they compare equal).
+crate::simd_count!(
+    count_zero_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |v: __m512d| unsafe { _mm512_cmp_pd_mask(v, _mm512_setzero_pd(), _CMP_EQ_OQ) },
+    |m: __mmask8| m.count_ones() as usize,
+    |x: f64| x == 0.0
+);
+
+// count_infinite_f64: lanes whose |v| == +inf.
+crate::simd_count!(
+    count_infinite_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |v: __m512d| unsafe {
+        _mm512_cmp_pd_mask(_mm512_abs_pd(v), _mm512_set1_pd(f64::INFINITY), _CMP_EQ_OQ)
+    },
+    |m: __mmask8| m.count_ones() as usize,
+    |x: f64| x.is_infinite()
 );
 
 // f64 elementwise maps for AVX-512F (8 lanes).

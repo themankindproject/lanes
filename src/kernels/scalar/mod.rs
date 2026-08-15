@@ -419,6 +419,24 @@ pub(crate) fn argmin(values: &[f32]) -> (f32, usize) {
     (values[idx], idx)
 }
 
+/// Count elements equal to `+0.0` or `-0.0` (they compare equal).
+#[inline]
+pub(crate) fn count_zero(values: &[f32]) -> usize {
+    values.iter().filter(|&&x| x == 0.0).count()
+}
+
+/// Count NaN elements.
+#[inline]
+pub(crate) fn count_nan(values: &[f32]) -> usize {
+    values.iter().filter(|x| x.is_nan()).count()
+}
+
+/// Count infinite (`+inf`/`-inf`) elements.
+#[inline]
+pub(crate) fn count_infinite(values: &[f32]) -> usize {
+    values.iter().filter(|x| x.is_infinite()).count()
+}
+
 // ===========================================================================
 // f64 kernels (double-precision). Same contracts as the f32 versions above.
 // ===========================================================================
@@ -499,6 +517,24 @@ pub(crate) fn argmin_f64(values: &[f64]) -> (f64, usize) {
         }
     }
     (values[idx], idx)
+}
+
+/// `f64` twin of [`count_zero`].
+#[inline]
+pub(crate) fn count_zero_f64(values: &[f64]) -> usize {
+    values.iter().filter(|&&x| x == 0.0).count()
+}
+
+/// `f64` twin of [`count_nan`].
+#[inline]
+pub(crate) fn count_nan_f64(values: &[f64]) -> usize {
+    values.iter().filter(|x| x.is_nan()).count()
+}
+
+/// `f64` twin of [`count_infinite`].
+#[inline]
+pub(crate) fn count_infinite_f64(values: &[f64]) -> usize {
+    values.iter().filter(|x| x.is_infinite()).count()
 }
 
 /// Elementwise square root into `out` (same length as `values`).
