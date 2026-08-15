@@ -84,6 +84,27 @@
 //! floating-point input; assume determinism *within* a backend for the
 //! same input.
 //!
+//! ## Error handling
+//!
+//! Fallible kernels report failures through [`Error`] instead of panicking,
+//! so callers can branch on the exact failure mode:
+//!
+//! * Two-input operations (`dot`, `squared_distance`, `abs_sub`, `hypot`,
+//!   `cosine_similarity`) return `Err(`[`Error::LengthMismatch`]`)` when
+//!   their operands disagree in length.
+//! * Every `_into` variant returns `Err(`[`Error::LengthMismatch`]`)` when
+//!   the caller-provided output buffer has the wrong length.
+//! * `geometric_mean` returns `Err(`[`Error::EmptyInput`]`)` for an empty
+//!   slice and `Err(`[`Error::NonPositiveInput`]`)` (with the offending
+//!   index) when any value is ≤ 0. NaN inputs are *not* an error: they
+//!   propagate to a NaN result.
+//! * `clip` returns `Err(`[`Error::InvalidBounds`]`)` when `lo > hi` or a
+//!   bound is NaN (mirroring the [`f32::clamp`] precondition).
+//!
+//! Infallible kernels (reductions like `sum`, single-input maps like `exp`)
+//! never fail; NaN inputs propagate to NaN results rather than becoming
+//! errors.
+//!
 //! ## Safety policy
 //!
 //! All `unsafe` code is confined to the kernel layer, behind `pub(crate)`

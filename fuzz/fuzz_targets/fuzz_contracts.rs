@@ -34,6 +34,9 @@ fuzz_target!(|input: ContractsInput| {
         Err(lanes::Error::EmptyInput) => {
             unreachable!("dot never returns EmptyInput (empty dot is 0.0)")
         }
+        Err(lanes::Error::InvalidBounds) | Err(lanes::Error::NonPositiveInput { .. }) => {
+            unreachable!("dot never returns InvalidBounds or NonPositiveInput")
+        }
     }
 
     // sqrt: IEEE contract per element.
@@ -71,12 +74,15 @@ fuzz_target!(|input: ContractsInput| {
 
     // _into variants must agree with the allocating wrappers.
     let mut lsm = vec![0.0_f32; a.len()];
-    lanes::ml::f32::log_softmax_into(a, &mut lsm);
+    lanes::ml::f32::log_softmax_into(a, &mut lsm).unwrap();
     for (x, y) in lsm.iter().zip(ls.iter()) {
         if x == y || (x.is_nan() && y.is_nan()) {
             continue;
         }
-        assert!((x - y).abs() < 1e-4 * y.abs().max(1.0), "log_softmax_into {x} vs {y}");
+        assert!(
+            (x - y).abs() < 1e-4 * y.abs().max(1.0),
+            "log_softmax_into {x} vs {y}"
+        );
     }
 
     // relu: exactly max(x, 0) (bit-exact for the clamp).
@@ -99,7 +105,10 @@ fuzz_target!(|input: ContractsInput| {
         let exp_ok = a.iter().all(|x| (x - max).abs() < 80.0);
         if exp_ok && a.iter().all(|x| x.is_finite()) {
             let sum: f64 = ls.iter().map(|&x| (x as f64).exp()).sum();
-            assert!((sum - 1.0).abs() < 1e-3, "log_softmax exp-sum {sum}, a={a:?}");
+            assert!(
+                (sum - 1.0).abs() < 1e-3,
+                "log_softmax exp-sum {sum}, a={a:?}"
+            );
             assert!(ls.iter().all(|x| x.is_finite() && *x <= 0.0 + 1e-4));
         }
     }
@@ -122,10 +131,10 @@ fuzz_target!(|input: ContractsInput| {
         }
     }
 
-    // abs_sub / hypot / powi: panic on length mismatch by design, so only
-    // exercise them on equal-length inputs.
+    // abs_sub / hypot: Err(LengthMismatch) on unequal lengths; powi is
+    // single-input. Exercise the equal-length path and the error path.
     if a.len() == b.len() {
-        let asub = lanes::math::f32::abs_sub(a, b);
+        let asub = lanes::math::f32::abs_sub(a, b).unwrap();
         assert_eq!(asub.len(), a.len());
         for ((x, y), r) in a.iter().zip(b.iter()).zip(asub.iter()) {
             if x.is_nan() || y.is_nan() {
@@ -135,7 +144,7 @@ fuzz_target!(|input: ContractsInput| {
             }
         }
 
-        let h = lanes::math::f32::hypot(a, b);
+        let h = lanes::math::f32::hypot(a, b).unwrap();
         assert_eq!(h.len(), a.len());
         for (i, ((x, y), r)) in a.iter().zip(b.iter()).zip(h.iter()).enumerate() {
             if x.is_infinite() || y.is_infinite() {
@@ -149,13 +158,31 @@ fuzz_target!(|input: ContractsInput| {
 
         let p = lanes::math::f32::powi(a, 3);
         assert_eq!(p.len(), a.len());
+    } else {
+        assert_eq!(
+            lanes::math::f32::abs_sub(a, b),
+            Err(lanes::Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len()
+            })
+        );
+        assert_eq!(
+            lanes::math::f32::hypot(a, b),
+            Err(lanes::Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len()
+            })
+        );
     }
 
     // squared_distance: Ok iff lengths match; Err(LengthMismatch) otherwise.
     match lanes::distance::f32::squared_distance(a, b) {
         Ok(d) => {
             assert_eq!(a.len(), b.len());
-            assert!(d >= 0.0 || d.is_nan(), "squared distance must be non-negative");
+            assert!(
+                d >= 0.0 || d.is_nan(),
+                "squared distance must be non-negative"
+            );
         }
         Err(lanes::Error::LengthMismatch { expected, actual }) => {
             assert_eq!(expected, a.len());
@@ -164,6 +191,9 @@ fuzz_target!(|input: ContractsInput| {
         }
         Err(lanes::Error::EmptyInput) => {
             unreachable!("squared_distance never returns EmptyInput")
+        }
+        Err(lanes::Error::InvalidBounds) | Err(lanes::Error::NonPositiveInput { .. }) => {
+            unreachable!("squared_distance never returns InvalidBounds or NonPositiveInput")
         }
     }
 });

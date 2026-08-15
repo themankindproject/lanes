@@ -503,7 +503,7 @@ proptest! {
         delta in 0.0_f32..20.0,
     ) {
         let hi = lo + delta; // valid bounds: lo <= hi
-        let got = lanes::math::f32::clip(&values, lo, hi);
+        let got = lanes::math::f32::clip(&values, lo, hi).unwrap();
         let want: Vec<f32> = values.iter().map(|&x| x.clamp(lo, hi)).collect();
         // Exact: clamp is a pure min/max (except NaN, which propagates both
         // sides identically).
@@ -629,7 +629,7 @@ proptest! {
     fn prop_abs_sub_matches_naive(a in mid_f32_vec()) {
         // Build a same-length b by reversing a (deterministic, no extra strategy).
         let b: Vec<f32> = a.iter().rev().copied().collect();
-        let out = lanes::math::f32::abs_sub(&a, &b);
+        let out = lanes::math::f32::abs_sub(&a, &b).unwrap();
         for (i, (got, (x, y))) in out.iter().zip(a.iter().zip(b.iter())).enumerate() {
             let want = (x - y).abs();
             prop_assert_eq!(*got, want, "lane {}: |{} - {}|", i, x, y);
@@ -660,7 +660,7 @@ proptest! {
     #[test]
     fn prop_hypot_matches_std(a in proptest::collection::vec(-1e15_f32..1e15, 0..512)) {
         let b: Vec<f32> = a.iter().rev().copied().collect();
-        let out = lanes::math::f32::hypot(&a, &b);
+        let out = lanes::math::f32::hypot(&a, &b).unwrap();
         for (i, (got, (x, y))) in out.iter().zip(a.iter().zip(b.iter())).enumerate() {
             let want = x.hypot(*y);
             let tol = (want.abs() * 1e-6).max(1e-6);

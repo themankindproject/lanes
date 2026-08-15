@@ -202,9 +202,13 @@ pub mod f32 {
     /// Compute the geometric mean of a slice:
     /// `exp(mean(ln(x)))`, the n-th root of the product.
     ///
-    /// Returns [`None`] if the slice is empty, or if it contains any value
-    /// ≤ 0 (`ln` of a non-positive is `-inf`/NaN and the geometric mean is
-    /// undefined over the reals). NaN propagates.
+    /// # Errors
+    ///
+    /// Returns [`Error::EmptyInput`] for an empty slice, and
+    /// [`Error::NonPositiveInput`] (with the offending index) if any value is
+    /// ≤ 0 — the geometric mean is only defined over strictly positive reals.
+    /// NaN inputs are *not* an error: they propagate to a NaN result, matching
+    /// the crate's reduction semantics.
     ///
     /// Gated on `alloc`: uses the vectorized `ln` map + `exp`.
     ///
@@ -214,20 +218,19 @@ pub mod f32 {
     /// assert!((g - 4.0).abs() < 1e-5);
     /// ```
     #[cfg(feature = "alloc")]
-    #[must_use]
     #[allow(clippy::cast_precision_loss)] // `len as f32` is inherent to the mean
-    pub fn geometric_mean(values: &[f32]) -> Option<f32> {
+    pub fn geometric_mean(values: &[f32]) -> Result<f32, Error> {
         if values.is_empty() {
-            return None;
+            return Err(Error::EmptyInput);
         }
-        if values.iter().any(|&x| x <= 0.0 || x.is_nan()) {
-            return None;
+        if let Some(index) = values.iter().position(|&x| x <= 0.0) {
+            return Err(Error::NonPositiveInput { index });
         }
         let backend = Backend::detect();
         let mut logs = alloc::vec![0.0_f32; values.len()];
         kernels::dispatch_ln(backend, values, &mut logs);
         let mean = kernels::dispatch_sum(backend, &logs) / values.len() as f32;
-        Some(crate::kernels::exp::exp(mean))
+        Ok(crate::kernels::exp::exp(mean))
     }
 
     /// Compute the dot product of two slices (linear algebra, part of the
@@ -497,9 +500,13 @@ pub mod f64 {
     /// Compute the geometric mean of a slice:
     /// `exp(mean(ln(x)))`, the n-th root of the product.
     ///
-    /// Returns [`None`] if the slice is empty, or if it contains any value
-    /// ≤ 0 (`ln` of a non-positive is `-inf`/NaN and the geometric mean is
-    /// undefined over the reals). NaN propagates.
+    /// # Errors
+    ///
+    /// Returns [`Error::EmptyInput`] for an empty slice, and
+    /// [`Error::NonPositiveInput`] (with the offending index) if any value is
+    /// ≤ 0 — the geometric mean is only defined over strictly positive reals.
+    /// NaN inputs are *not* an error: they propagate to a NaN result, matching
+    /// the crate's reduction semantics.
     ///
     /// Gated on `alloc`: uses the vectorized `ln` map + `exp`.
     ///
@@ -509,20 +516,19 @@ pub mod f64 {
     /// assert!((g - 4.0).abs() < 1e-12);
     /// ```
     #[cfg(feature = "alloc")]
-    #[must_use]
     #[allow(clippy::cast_precision_loss)] // `len as f64` is inherent to the mean
-    pub fn geometric_mean(values: &[f64]) -> Option<f64> {
+    pub fn geometric_mean(values: &[f64]) -> Result<f64, Error> {
         if values.is_empty() {
-            return None;
+            return Err(Error::EmptyInput);
         }
-        if values.iter().any(|&x| x <= 0.0 || x.is_nan()) {
-            return None;
+        if let Some(index) = values.iter().position(|&x| x <= 0.0) {
+            return Err(Error::NonPositiveInput { index });
         }
         let backend = Backend::detect();
         let mut logs = alloc::vec![0.0_f64; values.len()];
         kernels::dispatch_ln_f64(backend, values, &mut logs);
         let mean = kernels::dispatch_sum_f64(backend, &logs) / values.len() as f64;
-        Some(crate::kernels::exp::exp_f64(mean))
+        Ok(crate::kernels::exp::exp_f64(mean))
     }
 
     /// Compute the dot product of two slices (double precision, linear

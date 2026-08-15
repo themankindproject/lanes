@@ -290,7 +290,7 @@ fn bench_abs_sub(c: &mut Criterion) {
         c,
         "abs_sub",
         random_f32_vec,
-        lanes::math::f32::abs_sub,
+        |a, b| lanes::math::f32::abs_sub(a, b).unwrap(),
         naive_abs_sub,
     );
 }
@@ -300,7 +300,7 @@ fn bench_hypot(c: &mut Criterion) {
         c,
         "hypot",
         random_f32_vec,
-        lanes::math::f32::hypot,
+        |a, b| lanes::math::f32::hypot(a, b).unwrap(),
         naive_hypot,
     );
 }

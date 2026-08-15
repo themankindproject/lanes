@@ -28,20 +28,24 @@ pub mod f32 {
     /// ```
     /// let v = [1.0_f32, 2.0, 3.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::ml::f32::softmax_into(&v, &mut out);
+    /// lanes::ml::f32::softmax_into(&v, &mut out).unwrap();
     /// let s: f32 = out.iter().sum();
     /// assert!((s - 1.0).abs() < 1e-6);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn softmax_into(values: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn softmax_into(values: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_softmax(backend, values, out);
+        Ok(())
     }
 
     /// Numerically-stable softmax over a slice.
@@ -62,7 +66,7 @@ pub mod f32 {
     #[must_use]
     pub fn softmax(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        softmax_into(values, &mut out);
+        let _ = softmax_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -77,19 +81,23 @@ pub mod f32 {
     /// ```
     /// let v = [0.0_f32, 1.0, -1.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::ml::f32::sigmoid_into(&v, &mut out);
+    /// lanes::ml::f32::sigmoid_into(&v, &mut out).unwrap();
     /// assert!((out[0] - 0.5).abs() < 1e-6);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn sigmoid_into(values: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn sigmoid_into(values: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_sigmoid(backend, values, out);
+        Ok(())
     }
 
     /// Sigmoid activation over a slice.
@@ -113,7 +121,7 @@ pub mod f32 {
     #[must_use]
     pub fn sigmoid(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        sigmoid_into(values, &mut out);
+        let _ = sigmoid_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -128,19 +136,23 @@ pub mod f32 {
     /// ```
     /// let v = [0.0_f32, 1.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::ml::f32::softplus_into(&v, &mut out);
+    /// lanes::ml::f32::softplus_into(&v, &mut out).unwrap();
     /// assert!((out[0] - std::f32::consts::LN_2).abs() < 1e-6);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn softplus_into(values: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn softplus_into(values: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_softplus(backend, values, out);
+        Ok(())
     }
 
     /// Softplus activation over a slice: `ln(1 + e^x)` elementwise.
@@ -171,7 +183,7 @@ pub mod f32 {
     #[must_use]
     pub fn softplus(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        softplus_into(values, &mut out);
+        let _ = softplus_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -181,9 +193,10 @@ pub mod f32 {
     /// Numerically stable via the max-shift: `x_i − max(x) − ln(Σ_j exp(x_j −
     /// max(x)))`. This is the primitive `PyTorch`'s [`nn.LogSoftmax`] computes
     /// (paired with [`nn.NLLLoss`] it forms [`nn.CrossEntropyLoss`]).
-    /// Allocation-free: `out` must have the same length as `values` (checked
-    /// with an always-on assertion); reuse it across calls to avoid per-call
-    /// allocation in hot loops. An empty slice leaves `out` untouched.
+    /// Allocation-free: `out` must have the same length as `values` (a length
+    /// mismatch returns [`Error::LengthMismatch`]); reuse it across calls to
+    /// avoid per-call allocation in hot loops. An empty slice leaves `out`
+    /// untouched.
     ///
     /// Reference: the max-subtraction trick and the fused
     /// log-softmax/NLL/cross-entropy decomposition as documented in
@@ -194,22 +207,26 @@ pub mod f32 {
     /// ```
     /// let v = [1.0_f32, 2.0, 3.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::ml::f32::log_softmax_into(&v, &mut out);
+    /// lanes::ml::f32::log_softmax_into(&v, &mut out).unwrap();
     /// // exp(log_softmax) sums to 1 — it IS softmax, logged.
     /// let s: f32 = out.iter().map(|x| x.exp()).sum();
     /// assert!((s - 1.0).abs() < 1e-6);
     /// assert!(out[2] > out[1] && out[1] > out[0]);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn log_softmax_into(values: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn log_softmax_into(values: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_log_softmax(backend, values, out);
+        Ok(())
     }
 
     /// Log-softmax over a slice, returning a new `Vec`. Convenience wrapper
@@ -224,7 +241,7 @@ pub mod f32 {
     #[must_use]
     pub fn log_softmax(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        log_softmax_into(values, &mut out);
+        let _ = log_softmax_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -239,20 +256,24 @@ pub mod f32 {
     /// ```
     /// let v = [0.0_f32, 1.0, -1.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::ml::f32::silu_into(&v, &mut out);
+    /// lanes::ml::f32::silu_into(&v, &mut out).unwrap();
     /// assert!(out[0].abs() < 1e-6);
     /// assert!((out[1] - 0.731_058_6).abs() < 1e-6);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn silu_into(values: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn silu_into(values: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_silu(backend, values, out);
+        Ok(())
     }
 
     /// `SiLU` (`Swish`) activation over a slice.
@@ -275,7 +296,7 @@ pub mod f32 {
     #[must_use]
     pub fn silu(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        silu_into(values, &mut out);
+        let _ = silu_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -290,20 +311,24 @@ pub mod f32 {
     /// ```
     /// let v = [0.0_f32, 1.0, -1.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::ml::f32::gelu_into(&v, &mut out);
+    /// lanes::ml::f32::gelu_into(&v, &mut out).unwrap();
     /// assert!(out[0].abs() < 1e-6);
     /// assert!((out[1] - 0.84119).abs() < 2e-4);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn gelu_into(values: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn gelu_into(values: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_gelu(backend, values, out);
+        Ok(())
     }
 
     /// GELU activation over a slice.
@@ -327,7 +352,7 @@ pub mod f32 {
     #[must_use]
     pub fn gelu(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        gelu_into(values, &mut out);
+        let _ = gelu_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -342,19 +367,23 @@ pub mod f32 {
     /// ```
     /// let v = [-3.0_f32, 0.0, 5.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::ml::f32::relu_into(&v, &mut out);
+    /// lanes::ml::f32::relu_into(&v, &mut out).unwrap();
     /// assert_eq!(out, [0.0, 0.0, 5.0]);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn relu_into(values: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn relu_into(values: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_relu(backend, values, out);
+        Ok(())
     }
 
     /// `ReLU` activation over a slice.
@@ -373,7 +402,7 @@ pub mod f32 {
     #[must_use]
     pub fn relu(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        relu_into(values, &mut out);
+        let _ = relu_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -388,21 +417,25 @@ pub mod f32 {
     /// ```
     /// let v = [3.0_f32, 4.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::ml::f32::rms_norm_into(&v, 0.0, &mut out);
+    /// lanes::ml::f32::rms_norm_into(&v, 0.0, &mut out).unwrap();
     /// let r = 12.5_f32.sqrt(); // sqrt(mean(9, 16))
     /// assert!((out[0] - 3.0 / r).abs() < 1e-6);
     /// assert!((out[1] - 4.0 / r).abs() < 1e-6);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn rms_norm_into(values: &[f32], eps: f32, out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn rms_norm_into(values: &[f32], eps: f32, out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_rms_norm(backend, values, eps, out);
+        Ok(())
     }
 
     /// RMS norm over a slice: `x_i / sqrt(mean(x²) + eps)`.
@@ -425,7 +458,7 @@ pub mod f32 {
     #[must_use]
     pub fn rms_norm(values: &[f32], eps: f32) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        rms_norm_into(values, eps, &mut out);
+        let _ = rms_norm_into(values, eps, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -490,15 +523,15 @@ pub mod f32 {
     ///
     /// The standard pre-activation norm (complement to [`rms_norm`], which
     /// drops the mean). Allocation-free: `out` must have the same length as
-    /// `values` (checked with an always-on assertion); reuse it across calls to
-    /// avoid per-call allocation in hot loops. An empty slice leaves `out`
-    /// untouched. NaNs propagate.
+    /// `values` (a length mismatch returns [`Error::LengthMismatch`]); reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. NaNs propagate.
     ///
     /// # Example
     /// ```
     /// let v = [1.0_f32, 2.0, 3.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::ml::f32::layer_norm_into(&v, 1e-5, &mut out);
+    /// lanes::ml::f32::layer_norm_into(&v, 1e-5, &mut out).unwrap();
     /// let m: f32 = out.iter().sum::<f32>() / 3.0;
     /// assert!(m.abs() < 1e-6);
     /// // sum of squares after norm is n·var/(var+eps) ≈ 3 for this input.
@@ -506,16 +539,20 @@ pub mod f32 {
     /// assert!((s - 3.0).abs() < 1e-3);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
     #[allow(clippy::cast_precision_loss)] // `len as f32` is inherent to the mean
-    pub fn layer_norm_into(values: &[f32], eps: f32, out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    pub fn layer_norm_into(values: &[f32], eps: f32, out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_layer_norm(backend, values, eps, out);
+        Ok(())
     }
 
     /// Layer normalization, returning a new `Vec`. Convenience wrapper
@@ -530,7 +567,7 @@ pub mod f32 {
     #[must_use]
     pub fn layer_norm(values: &[f32], eps: f32) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        layer_norm_into(values, eps, &mut out);
+        let _ = layer_norm_into(values, eps, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 }
@@ -554,20 +591,24 @@ pub mod f64 {
     /// ```
     /// let v = [1.0_f64, 2.0, 3.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::ml::f64::softmax_into(&v, &mut out);
+    /// lanes::ml::f64::softmax_into(&v, &mut out).unwrap();
     /// let s: f64 = out.iter().sum();
     /// assert!((s - 1.0).abs() < 1e-12);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn softmax_into(values: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn softmax_into(values: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_softmax_f64(backend, values, out);
+        Ok(())
     }
 
     /// Numerically-stable softmax over a slice.
@@ -588,7 +629,7 @@ pub mod f64 {
     #[must_use]
     pub fn softmax(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        softmax_into(values, &mut out);
+        let _ = softmax_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -603,19 +644,23 @@ pub mod f64 {
     /// ```
     /// let v = [0.0_f64, 1.0, -1.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::ml::f64::sigmoid_into(&v, &mut out);
+    /// lanes::ml::f64::sigmoid_into(&v, &mut out).unwrap();
     /// assert!((out[0] - 0.5).abs() < 1e-12);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn sigmoid_into(values: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn sigmoid_into(values: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_sigmoid_f64(backend, values, out);
+        Ok(())
     }
 
     /// Sigmoid activation over a slice.
@@ -639,7 +684,7 @@ pub mod f64 {
     #[must_use]
     pub fn sigmoid(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        sigmoid_into(values, &mut out);
+        let _ = sigmoid_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -654,19 +699,23 @@ pub mod f64 {
     /// ```
     /// let v = [0.0_f64, 1.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::ml::f64::softplus_into(&v, &mut out);
+    /// lanes::ml::f64::softplus_into(&v, &mut out).unwrap();
     /// assert!((out[0] - std::f64::consts::LN_2).abs() < 1e-12);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn softplus_into(values: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn softplus_into(values: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_softplus_f64(backend, values, out);
+        Ok(())
     }
 
     /// Softplus activation over a slice: `ln(1 + e^x)` elementwise.
@@ -696,7 +745,7 @@ pub mod f64 {
     #[must_use]
     pub fn softplus(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        softplus_into(values, &mut out);
+        let _ = softplus_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -706,9 +755,10 @@ pub mod f64 {
     /// Numerically stable via the max-shift: `x_i − max(x) − ln(Σ_j exp(x_j −
     /// max(x)))`. This is the primitive `PyTorch`'s [`nn.LogSoftmax`] computes
     /// (paired with [`nn.NLLLoss`] it forms [`nn.CrossEntropyLoss`]).
-    /// Allocation-free: `out` must have the same length as `values` (checked
-    /// with an always-on assertion); reuse it across calls to avoid per-call
-    /// allocation in hot loops. An empty slice leaves `out` untouched.
+    /// Allocation-free: `out` must have the same length as `values` (a length
+    /// mismatch returns [`Error::LengthMismatch`]); reuse it across calls to
+    /// avoid per-call allocation in hot loops. An empty slice leaves `out`
+    /// untouched.
     ///
     /// Reference: the max-subtraction trick and the fused
     /// log-softmax/NLL/cross-entropy decomposition as documented in
@@ -719,21 +769,25 @@ pub mod f64 {
     /// ```
     /// let v = [1.0_f64, 2.0, 3.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::ml::f64::log_softmax_into(&v, &mut out);
+    /// lanes::ml::f64::log_softmax_into(&v, &mut out).unwrap();
     /// let s: f64 = out.iter().map(|x| x.exp()).sum();
     /// assert!((s - 1.0).abs() < 1e-12);
     /// assert!(out[2] > out[1] && out[1] > out[0]);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn log_softmax_into(values: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn log_softmax_into(values: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_log_softmax_f64(backend, values, out);
+        Ok(())
     }
 
     /// Log-softmax over a slice, returning a new `Vec`. Convenience wrapper
@@ -748,7 +802,7 @@ pub mod f64 {
     #[must_use]
     pub fn log_softmax(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        log_softmax_into(values, &mut out);
+        let _ = log_softmax_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -763,20 +817,24 @@ pub mod f64 {
     /// ```
     /// let v = [0.0_f64, 1.0, -1.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::ml::f64::silu_into(&v, &mut out);
+    /// lanes::ml::f64::silu_into(&v, &mut out).unwrap();
     /// assert!(out[0].abs() < 1e-12);
     /// assert!((out[1] - 0.731_058_6).abs() < 1e-6);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn silu_into(values: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn silu_into(values: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_silu_f64(backend, values, out);
+        Ok(())
     }
 
     /// `SiLU` (`Swish`) activation over a slice.
@@ -799,7 +857,7 @@ pub mod f64 {
     #[must_use]
     pub fn silu(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        silu_into(values, &mut out);
+        let _ = silu_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -814,20 +872,24 @@ pub mod f64 {
     /// ```
     /// let v = [0.0_f64, 1.0, -1.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::ml::f64::gelu_into(&v, &mut out);
+    /// lanes::ml::f64::gelu_into(&v, &mut out).unwrap();
     /// assert!(out[0].abs() < 1e-12);
     /// assert!((out[1] - 0.84119).abs() < 2e-4);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn gelu_into(values: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn gelu_into(values: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_gelu_f64(backend, values, out);
+        Ok(())
     }
 
     /// GELU activation over a slice.
@@ -851,7 +913,7 @@ pub mod f64 {
     #[must_use]
     pub fn gelu(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        gelu_into(values, &mut out);
+        let _ = gelu_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -866,19 +928,23 @@ pub mod f64 {
     /// ```
     /// let v = [-3.0_f64, 0.0, 5.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::ml::f64::relu_into(&v, &mut out);
+    /// lanes::ml::f64::relu_into(&v, &mut out).unwrap();
     /// assert_eq!(out, [0.0, 0.0, 5.0]);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn relu_into(values: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn relu_into(values: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_relu_f64(backend, values, out);
+        Ok(())
     }
 
     /// `ReLU` activation over a slice.
@@ -897,7 +963,7 @@ pub mod f64 {
     #[must_use]
     pub fn relu(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        relu_into(values, &mut out);
+        let _ = relu_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -912,21 +978,25 @@ pub mod f64 {
     /// ```
     /// let v = [3.0_f64, 4.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::ml::f64::rms_norm_into(&v, 0.0, &mut out);
+    /// lanes::ml::f64::rms_norm_into(&v, 0.0, &mut out).unwrap();
     /// let r = 12.5_f64.sqrt(); // sqrt(mean(9, 16))
     /// assert!((out[0] - 3.0 / r).abs() < 1e-12);
     /// assert!((out[1] - 4.0 / r).abs() < 1e-12);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn rms_norm_into(values: &[f64], eps: f64, out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn rms_norm_into(values: &[f64], eps: f64, out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_rms_norm_f64(backend, values, eps, out);
+        Ok(())
     }
 
     /// RMS norm over a slice: `x_i / sqrt(mean(x²) + eps)`.
@@ -949,7 +1019,7 @@ pub mod f64 {
     #[must_use]
     pub fn rms_norm(values: &[f64], eps: f64) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        rms_norm_into(values, eps, &mut out);
+        let _ = rms_norm_into(values, eps, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -1014,15 +1084,15 @@ pub mod f64 {
     ///
     /// The standard pre-activation norm (complement to [`rms_norm`], which
     /// drops the mean). Allocation-free: `out` must have the same length as
-    /// `values` (checked with an always-on assertion); reuse it across calls to
-    /// avoid per-call allocation in hot loops. An empty slice leaves `out`
-    /// untouched. NaNs propagate.
+    /// `values` (a length mismatch returns [`Error::LengthMismatch`]); reuse
+    /// it across calls to avoid per-call allocation in hot loops. An empty
+    /// slice leaves `out` untouched. NaNs propagate.
     ///
     /// # Example
     /// ```
     /// let v = [1.0_f64, 2.0, 3.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::ml::f64::layer_norm_into(&v, 1e-10, &mut out);
+    /// lanes::ml::f64::layer_norm_into(&v, 1e-10, &mut out).unwrap();
     /// let m: f64 = out.iter().sum::<f64>() / 3.0;
     /// assert!(m.abs() < 1e-12);
     /// // sum of squares after norm is n·var/(var+eps) ≈ 3 for this input.
@@ -1030,16 +1100,20 @@ pub mod f64 {
     /// assert!((s - 3.0).abs() < 1e-9);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
     #[allow(clippy::cast_precision_loss)] // `len as f64` is inherent to the mean
-    pub fn layer_norm_into(values: &[f64], eps: f64, out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    pub fn layer_norm_into(values: &[f64], eps: f64, out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_layer_norm_f64(backend, values, eps, out);
+        Ok(())
     }
 
     /// Layer normalization, returning a new `Vec`. Convenience wrapper
@@ -1054,7 +1128,7 @@ pub mod f64 {
     #[must_use]
     pub fn layer_norm(values: &[f64], eps: f64) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        layer_norm_into(values, eps, &mut out);
+        let _ = layer_norm_into(values, eps, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 }

@@ -71,7 +71,9 @@ fuzz_target!(|input: F64Input| {
                 "argmax: index {i} not first occurrence, a={a:?}"
             );
             assert!(
-                a.iter().enumerate().all(|(j, &x)| j == i || x <= a[i] || x.is_nan()),
+                a.iter()
+                    .enumerate()
+                    .all(|(j, &x)| j == i || x <= a[i] || x.is_nan()),
                 "argmax: index {i} value {} not maximal, a={a:?}",
                 a[i]
             );
@@ -112,7 +114,7 @@ fuzz_target!(|input: F64Input| {
         assert!(lse.is_nan(), "logsumexp all-NaN must be NaN");
     }
     let mut ls = vec![0.0_f64; a.len()];
-    lanes::ml::f64::log_softmax_into(a, &mut ls);
+    lanes::ml::f64::log_softmax_into(a, &mut ls).unwrap();
     let ls_alloc = lanes::ml::f64::log_softmax(a);
     for (x, y) in ls.iter().zip(ls_alloc.iter()) {
         if x == y || (x.is_nan() && y.is_nan()) {
@@ -123,17 +125,16 @@ fuzz_target!(|input: F64Input| {
             "log_softmax_into {x} != log_softmax {y} (a={a:?})"
         );
     }
-    if !a.is_empty()
-        && a.iter().all(|x| x.is_finite())
-        && lse.is_finite()
-        && lse < 700.0
-    {
+    if !a.is_empty() && a.iter().all(|x| x.is_finite()) && lse.is_finite() && lse < 700.0 {
         let sum: f64 = ls.iter().map(|&x| x.exp()).sum();
-        assert!((sum - 1.0).abs() < 1e-6, "log_softmax exp-sum {sum}, a={a:?}");
+        assert!(
+            (sum - 1.0).abs() < 1e-6,
+            "log_softmax exp-sum {sum}, a={a:?}"
+        );
     }
     let eps = 1e-9;
     let mut ln = vec![0.0_f64; a.len()];
-    lanes::ml::f64::layer_norm_into(a, eps, &mut ln);
+    lanes::ml::f64::layer_norm_into(a, eps, &mut ln).unwrap();
     let ln_alloc = lanes::ml::f64::layer_norm(a, eps);
     for (x, y) in ln.iter().zip(ln_alloc.iter()) {
         if x == y || (x.is_nan() && y.is_nan()) {

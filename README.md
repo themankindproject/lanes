@@ -54,9 +54,27 @@ reuse the buffer across calls in hot loops:
 
 ```rust
 let mut buf = vec![0.0_f32; 1024];
-lanes::ml::f32::softmax_into(&a, &mut buf);   // no allocation
-lanes::math::f32::exp_into(&a, &mut buf);     // no allocation
+lanes::ml::f32::softmax_into(&a, &mut buf)?;   // no allocation
+lanes::math::f32::exp_into(&a, &mut buf)?;     // no allocation
+# Ok::<(), lanes::Error>(())
 ```
+
+## Error handling
+
+Fallible kernels return `Result<_, lanes::Error>` instead of panicking:
+
+- two-input ops (`dot`, `squared_distance`, `abs_sub`, `hypot`,
+  `cosine_similarity`) → `Err(Error::LengthMismatch { expected, actual })`
+  on unequal operand lengths
+- every `*_into` variant → `Err(Error::LengthMismatch { .. })` when the
+  output buffer has the wrong length
+- `geometric_mean` → `Err(Error::EmptyInput)` on an empty slice,
+  `Err(Error::NonPositiveInput { index })` when a value is ≤ 0 (NaN
+  inputs propagate to a NaN result instead)
+- `clip` → `Err(Error::InvalidBounds)` when `lo > hi` or a bound is NaN
+
+Infallible kernels (reductions like `sum`, single-input maps like `exp`)
+never fail.
 
 ## Features
 

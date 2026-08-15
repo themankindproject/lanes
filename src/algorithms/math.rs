@@ -1,16 +1,24 @@
 //! Elementwise math functions over slices.
 //!
 //! Per-element maps (`f(x)` applied to every lane): `sqrt`, `clip`, `rsqrt`,
-//! `exp`. Each function dispatches to the best available SIMD backend; the
-//! scalar reference is std-free and IEEE-correct within 1 ulp.
+//! `exp`, `ln`, `tanh`, `hypot`, `powi`, `abs_sub`. Each function dispatches
+//! to the best available SIMD backend; the scalar reference is std-free and
+//! IEEE-correct within 1 ulp.
+//!
+//! Every map comes in two forms: the allocating form returns a new `Vec`, and
+//! the allocation-free `_into` form writes into a caller-provided buffer.
+//! Length mismatches are reported as [`Error::LengthMismatch`] — nothing in
+//! this module panics on bad input.
 //!
 //! Precision is selected by the submodule: [`f32`] for single-precision,
 //! [`f64`] for double-precision.
-
+//!
+//! [`Error::LengthMismatch`]: crate::Error::LengthMismatch
 pub mod f32 {
     //! Single-precision (`f32`) elementwise math functions.
 
     use crate::dispatch::Backend;
+    use crate::error::Error;
     use crate::kernels;
     use alloc::vec::Vec;
 
@@ -25,21 +33,25 @@ pub mod f32 {
     /// ```
     /// let v = [1.0_f32, 4.0, 9.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::math::f32::sqrt_into(&v, &mut out);
+    /// lanes::math::f32::sqrt_into(&v, &mut out).unwrap();
     /// for (got, want) in out.iter().zip([1.0, 2.0, 3.0]) {
     ///     assert!((got - want).abs() < 1e-6);
     /// }
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn sqrt_into(values: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn sqrt_into(values: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_sqrt(backend, values, out);
+        Ok(())
     }
 
     /// Elementwise square root over a slice.
@@ -64,7 +76,7 @@ pub mod f32 {
     #[must_use]
     pub fn sqrt(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        sqrt_into(values, &mut out);
+        let _ = sqrt_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -79,26 +91,39 @@ pub mod f32 {
     /// ```
     /// let v = [-5.0_f32, 0.5, 3.0, 10.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::math::f32::clip_into(&v, -1.0, 2.0, &mut out);
+    /// lanes::math::f32::clip_into(&v, -1.0, 2.0, &mut out).unwrap();
     /// assert_eq!(out, [-1.0, 0.5, 2.0, 2.0]);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn clip_into(values: &[f32], lo: f32, hi: f32, out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::InvalidBounds`] if `lo > hi` or either bound is NaN
+    /// (the [`f32::clamp`] precondition), and [`Error::LengthMismatch`] if
+    /// `out.len() != values.len()`.
+    pub fn clip_into(values: &[f32], lo: f32, hi: f32, out: &mut [f32]) -> Result<(), Error> {
+        // Invalid exactly when `lo > hi` or either bound is NaN (i.e. the
+        // bounds are not ordered `lo <= hi`).
+        if !matches!(
+            lo.partial_cmp(&hi),
+            Some(core::cmp::Ordering::Less | core::cmp::Ordering::Equal)
+        ) {
+            return Err(Error::InvalidBounds);
+        }
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_clip(backend, values, lo, hi, out);
+        Ok(())
     }
 
     /// Elementwise clip over a slice: `clamp(x, lo, hi)` per element.
     ///
     /// Returns a new `Vec` of the same length; an empty slice yields an empty
-    /// `Vec`. NaN inputs yield NaN; `lo > hi` is not checked (clamp's behavior
-    /// with inverted bounds is unspecified per [`f32::clamp`]).
+    /// `Vec`. NaN inputs yield NaN.
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
     ///
@@ -107,15 +132,19 @@ pub mod f32 {
     ///
     /// # Example
     /// ```
-    /// let v = lanes::math::f32::clip(&[-5.0_f32, 0.5, 3.0, 10.0], -1.0, 2.0);
+    /// let v = lanes::math::f32::clip(&[-5.0_f32, 0.5, 3.0, 10.0], -1.0, 2.0).unwrap();
     /// assert_eq!(v, [-1.0, 0.5, 2.0, 2.0]);
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidBounds`] if `lo > hi` or either bound is NaN
+    /// (the [`f32::clamp`] precondition).
     #[cfg(feature = "alloc")]
-    #[must_use]
-    pub fn clip(values: &[f32], lo: f32, hi: f32) -> Vec<f32> {
+    pub fn clip(values: &[f32], lo: f32, hi: f32) -> Result<Vec<f32>, Error> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        clip_into(values, lo, hi, &mut out);
-        out
+        clip_into(values, lo, hi, &mut out)?;
+        Ok(out)
     }
 
     /// Elementwise absolute difference `|a[i] - b[i]|`, written into `out`
@@ -129,20 +158,30 @@ pub mod f32 {
     /// let a = [1.0_f32, 5.0, -3.0];
     /// let b = [4.0_f32, 2.0, -8.0];
     /// let mut out = vec![0.0_f32; a.len()];
-    /// lanes::math::f32::abs_sub_into(&a, &b, &mut out);
+    /// lanes::math::f32::abs_sub_into(&a, &b, &mut out).unwrap();
     /// assert_eq!(out, [3.0, 3.0, 5.0]);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a.len() != b.len()` or `out.len() != a.len()`.
-    pub fn abs_sub_into(a: &[f32], b: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` (or mismatched inputs) would be UB.
-        assert_eq!(a.len(), b.len());
-        assert_eq!(a.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()` or
+    /// `out.len() != a.len()`.
+    pub fn abs_sub_into(a: &[f32], b: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if a.len() != b.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len(),
+            });
+        }
+        if a.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_abs_sub(backend, a, b, out);
+        Ok(())
     }
 
     /// Elementwise absolute difference over two slices: `|a[i] - b[i]|`.
@@ -154,20 +193,18 @@ pub mod f32 {
     ///
     /// # Example
     /// ```
-    /// let v = lanes::math::f32::abs_sub(&[1.0_f32, 5.0], &[4.0_f32, 2.0]);
+    /// let v = lanes::math::f32::abs_sub(&[1.0_f32, 5.0], &[4.0_f32, 2.0]).unwrap();
     /// assert_eq!(v, [3.0, 3.0]);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a.len() != b.len()`.
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
     #[cfg(feature = "alloc")]
-    #[must_use]
-    pub fn abs_sub(a: &[f32], b: &[f32]) -> Vec<f32> {
-        assert_eq!(a.len(), b.len());
+    pub fn abs_sub(a: &[f32], b: &[f32]) -> Result<Vec<f32>, Error> {
         let mut out = alloc::vec![0.0_f32; a.len()];
-        abs_sub_into(a, b, &mut out);
-        out
+        abs_sub_into(a, b, &mut out)?;
+        Ok(out)
     }
 
     /// Elementwise overflow-safe hypotenuse `sqrt(a[i]² + b[i]²)`, written
@@ -181,20 +218,30 @@ pub mod f32 {
     /// let a = [3.0_f32];
     /// let b = [4.0_f32];
     /// let mut out = vec![0.0_f32; 1];
-    /// lanes::math::f32::hypot_into(&a, &b, &mut out);
+    /// lanes::math::f32::hypot_into(&a, &b, &mut out).unwrap();
     /// assert!((out[0] - 5.0).abs() < 1e-6);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a.len() != b.len()` or `out.len() != a.len()`.
-    pub fn hypot_into(a: &[f32], b: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` (or mismatched inputs) would be UB.
-        assert_eq!(a.len(), b.len());
-        assert_eq!(a.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()` or
+    /// `out.len() != a.len()`.
+    pub fn hypot_into(a: &[f32], b: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if a.len() != b.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len(),
+            });
+        }
+        if a.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_hypot(backend, a, b, out);
+        Ok(())
     }
 
     /// Elementwise overflow-safe hypotenuse over two slices.
@@ -206,20 +253,18 @@ pub mod f32 {
     ///
     /// # Example
     /// ```
-    /// let v = lanes::math::f32::hypot(&[3.0_f32], &[4.0_f32]);
+    /// let v = lanes::math::f32::hypot(&[3.0_f32], &[4.0_f32]).unwrap();
     /// assert!((v[0] - 5.0).abs() < 1e-6);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a.len() != b.len()`.
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
     #[cfg(feature = "alloc")]
-    #[must_use]
-    pub fn hypot(a: &[f32], b: &[f32]) -> Vec<f32> {
-        assert_eq!(a.len(), b.len());
+    pub fn hypot(a: &[f32], b: &[f32]) -> Result<Vec<f32>, Error> {
         let mut out = alloc::vec![0.0_f32; a.len()];
-        hypot_into(a, b, &mut out);
-        out
+        hypot_into(a, b, &mut out)?;
+        Ok(out)
     }
 
     /// Elementwise integer power `values[i].powi(n)`, written into `out`
@@ -233,19 +278,23 @@ pub mod f32 {
     /// ```
     /// let v = [2.0_f32, 3.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::math::f32::powi_into(&v, 3, &mut out);
+    /// lanes::math::f32::powi_into(&v, 3, &mut out).unwrap();
     /// assert_eq!(out, [8.0, 27.0]);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn powi_into(values: &[f32], n: i32, out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn powi_into(values: &[f32], n: i32, out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_powi(backend, values, n, out);
+        Ok(())
     }
 
     /// Elementwise integer power over a slice: `values[i].powi(n)`.
@@ -263,7 +312,7 @@ pub mod f32 {
     #[must_use]
     pub fn powi(values: &[f32], n: i32) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        powi_into(values, n, &mut out);
+        let _ = powi_into(values, n, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -278,21 +327,25 @@ pub mod f32 {
     /// ```
     /// let v = [1.0_f32, 4.0, 16.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::math::f32::rsqrt_into(&v, &mut out);
+    /// lanes::math::f32::rsqrt_into(&v, &mut out).unwrap();
     /// for (got, want) in out.iter().zip([1.0, 0.5, 0.25]) {
     ///     assert!((got - want).abs() < 1e-6);
     /// }
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn rsqrt_into(values: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn rsqrt_into(values: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_rsqrt(backend, values, out);
+        Ok(())
     }
 
     /// Elementwise reciprocal square root over a slice: `1/sqrt(x)` per
@@ -318,7 +371,7 @@ pub mod f32 {
     #[must_use]
     pub fn rsqrt(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        rsqrt_into(values, &mut out);
+        let _ = rsqrt_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -333,20 +386,24 @@ pub mod f32 {
     /// ```
     /// let v = [0.0_f32, 10.0, -10.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::math::f32::tanh_into(&v, &mut out);
+    /// lanes::math::f32::tanh_into(&v, &mut out).unwrap();
     /// assert!(out[0].abs() < 1e-6);
     /// assert!((out[1] - 1.0).abs() < 1e-6);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn tanh_into(values: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn tanh_into(values: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_tanh(backend, values, out);
+        Ok(())
     }
 
     /// Elementwise hyperbolic tangent: `tanh(x) = 1 - 2/(e^(2x) + 1)`.
@@ -371,7 +428,7 @@ pub mod f32 {
     #[must_use]
     pub fn tanh(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        tanh_into(values, &mut out);
+        let _ = tanh_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -386,19 +443,23 @@ pub mod f32 {
     /// ```
     /// let v = [0.0_f32, 1.0];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::math::f32::exp_into(&v, &mut out);
+    /// lanes::math::f32::exp_into(&v, &mut out).unwrap();
     /// assert!((out[0] - 1.0).abs() < 1e-6);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn exp_into(values: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn exp_into(values: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_exp(backend, values, out);
+        Ok(())
     }
 
     /// Elementwise exponential over a slice: `e^x` per element.
@@ -422,7 +483,7 @@ pub mod f32 {
     #[must_use]
     pub fn exp(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        exp_into(values, &mut out);
+        let _ = exp_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -437,20 +498,24 @@ pub mod f32 {
     /// ```
     /// let v = [1.0_f32, std::f32::consts::E];
     /// let mut out = vec![0.0_f32; v.len()];
-    /// lanes::math::f32::ln_into(&v, &mut out);
+    /// lanes::math::f32::ln_into(&v, &mut out).unwrap();
     /// assert!(out[0].abs() < 1e-6);
     /// assert!((out[1] - 1.0).abs() < 1e-6);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn ln_into(values: &[f32], out: &mut [f32]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn ln_into(values: &[f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_ln(backend, values, out);
+        Ok(())
     }
 
     /// Elementwise natural logarithm over a slice: `ln(x)` per element.
@@ -475,7 +540,7 @@ pub mod f32 {
     #[must_use]
     pub fn ln(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        ln_into(values, &mut out);
+        let _ = ln_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 }
@@ -484,6 +549,7 @@ pub mod f64 {
     //! Double-precision (`f64`) elementwise math functions.
 
     use crate::dispatch::Backend;
+    use crate::error::Error;
     use crate::kernels;
     use alloc::vec::Vec;
 
@@ -498,21 +564,25 @@ pub mod f64 {
     /// ```
     /// let v = [1.0_f64, 4.0, 9.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::math::f64::sqrt_into(&v, &mut out);
+    /// lanes::math::f64::sqrt_into(&v, &mut out).unwrap();
     /// for (got, want) in out.iter().zip([1.0, 2.0, 3.0]) {
     ///     assert!((got - want).abs() < 1e-12);
     /// }
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn sqrt_into(values: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn sqrt_into(values: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_sqrt_f64(backend, values, out);
+        Ok(())
     }
 
     /// Elementwise square root over a slice.
@@ -537,7 +607,7 @@ pub mod f64 {
     #[must_use]
     pub fn sqrt(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        sqrt_into(values, &mut out);
+        let _ = sqrt_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -552,26 +622,39 @@ pub mod f64 {
     /// ```
     /// let v = [-5.0_f64, 0.5, 3.0, 10.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::math::f64::clip_into(&v, -1.0, 2.0, &mut out);
+    /// lanes::math::f64::clip_into(&v, -1.0, 2.0, &mut out).unwrap();
     /// assert_eq!(out, [-1.0, 0.5, 2.0, 2.0]);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn clip_into(values: &[f64], lo: f64, hi: f64, out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::InvalidBounds`] if `lo > hi` or either bound is NaN
+    /// (the [`f64::clamp`] precondition), and [`Error::LengthMismatch`] if
+    /// `out.len() != values.len()`.
+    pub fn clip_into(values: &[f64], lo: f64, hi: f64, out: &mut [f64]) -> Result<(), Error> {
+        // Invalid exactly when `lo > hi` or either bound is NaN (i.e. the
+        // bounds are not ordered `lo <= hi`).
+        if !matches!(
+            lo.partial_cmp(&hi),
+            Some(core::cmp::Ordering::Less | core::cmp::Ordering::Equal)
+        ) {
+            return Err(Error::InvalidBounds);
+        }
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_clip_f64(backend, values, lo, hi, out);
+        Ok(())
     }
 
     /// Elementwise clip over a slice: `clamp(x, lo, hi)` per element.
     ///
     /// Returns a new `Vec` of the same length; an empty slice yields an empty
-    /// `Vec`. NaN inputs yield NaN; `lo > hi` is not checked (clamp's behavior
-    /// with inverted bounds is unspecified per [`f64::clamp`]).
+    /// `Vec`. NaN inputs yield NaN.
     ///
     /// Gated on `alloc`: returns a heap-allocated `Vec`.
     ///
@@ -580,15 +663,19 @@ pub mod f64 {
     ///
     /// # Example
     /// ```
-    /// let v = lanes::math::f64::clip(&[-5.0_f64, 0.5, 3.0, 10.0], -1.0, 2.0);
+    /// let v = lanes::math::f64::clip(&[-5.0_f64, 0.5, 3.0, 10.0], -1.0, 2.0).unwrap();
     /// assert_eq!(v, [-1.0, 0.5, 2.0, 2.0]);
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidBounds`] if `lo > hi` or either bound is NaN
+    /// (the [`f64::clamp`] precondition).
     #[cfg(feature = "alloc")]
-    #[must_use]
-    pub fn clip(values: &[f64], lo: f64, hi: f64) -> Vec<f64> {
+    pub fn clip(values: &[f64], lo: f64, hi: f64) -> Result<Vec<f64>, Error> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        clip_into(values, lo, hi, &mut out);
-        out
+        clip_into(values, lo, hi, &mut out)?;
+        Ok(out)
     }
 
     /// Elementwise absolute difference `|a[i] - b[i]|`, written into `out`
@@ -602,20 +689,30 @@ pub mod f64 {
     /// let a = [1.0_f64, 5.0, -3.0];
     /// let b = [4.0_f64, 2.0, -8.0];
     /// let mut out = vec![0.0_f64; a.len()];
-    /// lanes::math::f64::abs_sub_into(&a, &b, &mut out);
+    /// lanes::math::f64::abs_sub_into(&a, &b, &mut out).unwrap();
     /// assert_eq!(out, [3.0, 3.0, 5.0]);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a.len() != b.len()` or `out.len() != a.len()`.
-    pub fn abs_sub_into(a: &[f64], b: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` (or mismatched inputs) would be UB.
-        assert_eq!(a.len(), b.len());
-        assert_eq!(a.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()` or
+    /// `out.len() != a.len()`.
+    pub fn abs_sub_into(a: &[f64], b: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if a.len() != b.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len(),
+            });
+        }
+        if a.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_abs_sub_f64(backend, a, b, out);
+        Ok(())
     }
 
     /// Elementwise absolute difference over two slices: `|a[i] - b[i]|`.
@@ -627,20 +724,18 @@ pub mod f64 {
     ///
     /// # Example
     /// ```
-    /// let v = lanes::math::f64::abs_sub(&[1.0_f64, 5.0], &[4.0_f64, 2.0]);
+    /// let v = lanes::math::f64::abs_sub(&[1.0_f64, 5.0], &[4.0_f64, 2.0]).unwrap();
     /// assert_eq!(v, [3.0, 3.0]);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a.len() != b.len()`.
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
     #[cfg(feature = "alloc")]
-    #[must_use]
-    pub fn abs_sub(a: &[f64], b: &[f64]) -> Vec<f64> {
-        assert_eq!(a.len(), b.len());
+    pub fn abs_sub(a: &[f64], b: &[f64]) -> Result<Vec<f64>, Error> {
         let mut out = alloc::vec![0.0_f64; a.len()];
-        abs_sub_into(a, b, &mut out);
-        out
+        abs_sub_into(a, b, &mut out)?;
+        Ok(out)
     }
 
     /// Elementwise overflow-safe hypotenuse `sqrt(a[i]² + b[i]²)`, written
@@ -654,20 +749,30 @@ pub mod f64 {
     /// let a = [3.0_f64];
     /// let b = [4.0_f64];
     /// let mut out = vec![0.0_f64; 1];
-    /// lanes::math::f64::hypot_into(&a, &b, &mut out);
+    /// lanes::math::f64::hypot_into(&a, &b, &mut out).unwrap();
     /// assert!((out[0] - 5.0).abs() < 1e-12);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a.len() != b.len()` or `out.len() != a.len()`.
-    pub fn hypot_into(a: &[f64], b: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` (or mismatched inputs) would be UB.
-        assert_eq!(a.len(), b.len());
-        assert_eq!(a.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()` or
+    /// `out.len() != a.len()`.
+    pub fn hypot_into(a: &[f64], b: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if a.len() != b.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len(),
+            });
+        }
+        if a.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_hypot_f64(backend, a, b, out);
+        Ok(())
     }
 
     /// Elementwise overflow-safe hypotenuse over two slices.
@@ -679,20 +784,18 @@ pub mod f64 {
     ///
     /// # Example
     /// ```
-    /// let v = lanes::math::f64::hypot(&[3.0_f64], &[4.0_f64]);
+    /// let v = lanes::math::f64::hypot(&[3.0_f64], &[4.0_f64]).unwrap();
     /// assert!((v[0] - 5.0).abs() < 1e-12);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `a.len() != b.len()`.
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
     #[cfg(feature = "alloc")]
-    #[must_use]
-    pub fn hypot(a: &[f64], b: &[f64]) -> Vec<f64> {
-        assert_eq!(a.len(), b.len());
+    pub fn hypot(a: &[f64], b: &[f64]) -> Result<Vec<f64>, Error> {
         let mut out = alloc::vec![0.0_f64; a.len()];
-        hypot_into(a, b, &mut out);
-        out
+        hypot_into(a, b, &mut out)?;
+        Ok(out)
     }
 
     /// Elementwise integer power `values[i].powi(n)`, written into `out`
@@ -706,19 +809,23 @@ pub mod f64 {
     /// ```
     /// let v = [2.0_f64, 3.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::math::f64::powi_into(&v, 3, &mut out);
+    /// lanes::math::f64::powi_into(&v, 3, &mut out).unwrap();
     /// assert_eq!(out, [8.0, 27.0]);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn powi_into(values: &[f64], n: i32, out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn powi_into(values: &[f64], n: i32, out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_powi_f64(backend, values, n, out);
+        Ok(())
     }
 
     /// Elementwise integer power over a slice: `values[i].powi(n)`.
@@ -736,7 +843,7 @@ pub mod f64 {
     #[must_use]
     pub fn powi(values: &[f64], n: i32) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        powi_into(values, n, &mut out);
+        let _ = powi_into(values, n, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -751,21 +858,25 @@ pub mod f64 {
     /// ```
     /// let v = [1.0_f64, 4.0, 16.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::math::f64::rsqrt_into(&v, &mut out);
+    /// lanes::math::f64::rsqrt_into(&v, &mut out).unwrap();
     /// for (got, want) in out.iter().zip([1.0, 0.5, 0.25]) {
     ///     assert!((got - want).abs() < 1e-12);
     /// }
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn rsqrt_into(values: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn rsqrt_into(values: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_rsqrt_f64(backend, values, out);
+        Ok(())
     }
 
     /// Elementwise reciprocal square root over a slice: `1/sqrt(x)` per
@@ -791,7 +902,7 @@ pub mod f64 {
     #[must_use]
     pub fn rsqrt(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        rsqrt_into(values, &mut out);
+        let _ = rsqrt_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -806,19 +917,23 @@ pub mod f64 {
     /// ```
     /// let v = [0.0_f64, 1.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::math::f64::exp_into(&v, &mut out);
+    /// lanes::math::f64::exp_into(&v, &mut out).unwrap();
     /// assert!((out[0] - 1.0).abs() < 1e-12);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn exp_into(values: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn exp_into(values: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_exp_f64(backend, values, out);
+        Ok(())
     }
 
     /// Elementwise exponential over a slice: `e^x` per element.
@@ -842,7 +957,7 @@ pub mod f64 {
     #[must_use]
     pub fn exp(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        exp_into(values, &mut out);
+        let _ = exp_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -857,20 +972,24 @@ pub mod f64 {
     /// ```
     /// let v = [1.0_f64, std::f64::consts::E];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::math::f64::ln_into(&v, &mut out);
+    /// lanes::math::f64::ln_into(&v, &mut out).unwrap();
     /// assert!(out[0].abs() < 1e-12);
     /// assert!((out[1] - 1.0).abs() < 1e-12);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn ln_into(values: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn ln_into(values: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_ln_f64(backend, values, out);
+        Ok(())
     }
 
     /// Elementwise natural logarithm over a slice: `ln(x)` per element.
@@ -895,7 +1014,7 @@ pub mod f64 {
     #[must_use]
     pub fn ln(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        ln_into(values, &mut out);
+        let _ = ln_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 
@@ -910,21 +1029,25 @@ pub mod f64 {
     /// ```
     /// let v = [0.0_f64, 20.0, -20.0];
     /// let mut out = vec![0.0_f64; v.len()];
-    /// lanes::math::f64::tanh_into(&v, &mut out);
+    /// lanes::math::f64::tanh_into(&v, &mut out).unwrap();
     /// assert!(out[0].abs() < 1e-12);
     /// assert!((out[1] - 1.0).abs() < 1e-12);
     /// assert!((out[2] + 1.0).abs() < 1e-12);
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `out.len() != values.len()`.
-    pub fn tanh_into(values: &[f64], out: &mut [f64]) {
-        // Always-on check: the backend kernels use unchecked writes, so a
-        // short `out` would be UB; panicking here keeps the safe API sound.
-        assert_eq!(values.len(), out.len());
+    /// Returns [`Error::LengthMismatch`] if `out.len() != values.len()`.
+    pub fn tanh_into(values: &[f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != out.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: out.len(),
+            });
+        }
         let backend = Backend::detect();
         kernels::dispatch_tanh_f64(backend, values, out);
+        Ok(())
     }
 
     /// Elementwise hyperbolic tangent: `tanh(x) = 1 - 2/(e^(2x) + 1)`.
@@ -948,7 +1071,7 @@ pub mod f64 {
     #[must_use]
     pub fn tanh(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        tanh_into(values, &mut out);
+        let _ = tanh_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
 }

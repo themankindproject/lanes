@@ -435,7 +435,7 @@ fn cross_log_softmax_into_agrees_with_vec() {
     for n in [1, 3, 7, 9, 15, 17, 31, 33, 63, 65, 127, 129] {
         let data: Vec<f32> = (0..n).map(|i| (i as f32 * 0.3).sin() * 4.0).collect();
         let mut into = vec![0.0_f32; n];
-        lanes::ml::f32::log_softmax_into(&data, &mut into);
+        lanes::ml::f32::log_softmax_into(&data, &mut into).unwrap();
         let alloced = lanes::ml::f32::log_softmax(&data);
         for (a, b) in into.iter().zip(alloced.iter()) {
             assert!(
@@ -450,7 +450,7 @@ fn cross_log_softmax_into_agrees_with_vec() {
     for n in [1, 3, 7, 9, 15, 17, 31, 33, 63, 65, 127, 129] {
         let data: Vec<f64> = (0..n).map(|i| (i as f64 * 0.3).sin() * 4.0).collect();
         let mut into = vec![0.0_f64; n];
-        lanes::ml::f64::log_softmax_into(&data, &mut into);
+        lanes::ml::f64::log_softmax_into(&data, &mut into).unwrap();
         let alloced = lanes::ml::f64::log_softmax(&data);
         for (a, b) in into.iter().zip(alloced.iter()) {
             assert!(
@@ -468,7 +468,7 @@ fn cross_layer_norm_into_agrees_with_vec() {
     for n in [1, 3, 7, 9, 15, 17, 31, 33, 63, 65, 127, 129] {
         let data: Vec<f32> = (0..n).map(|i| (i as f32 * 0.7).cos() * 3.0).collect();
         let mut into = vec![0.0_f32; n];
-        lanes::ml::f32::layer_norm_into(&data, 1e-5, &mut into);
+        lanes::ml::f32::layer_norm_into(&data, 1e-5, &mut into).unwrap();
         let alloced = lanes::ml::f32::layer_norm(&data, 1e-5);
         for (a, b) in into.iter().zip(alloced.iter()) {
             assert!(
@@ -487,7 +487,7 @@ fn cross_layer_norm_into_agrees_with_vec() {
     for n in [1, 3, 7, 9, 15, 17, 31, 33, 63, 65, 127, 129] {
         let data: Vec<f64> = (0..n).map(|i| (i as f64 * 0.7).cos() * 3.0).collect();
         let mut into = vec![0.0_f64; n];
-        lanes::ml::f64::layer_norm_into(&data, 1e-10, &mut into);
+        lanes::ml::f64::layer_norm_into(&data, 1e-10, &mut into).unwrap();
         let alloced = lanes::ml::f64::layer_norm(&data, 1e-10);
         for (a, b) in into.iter().zip(alloced.iter()) {
             assert!(

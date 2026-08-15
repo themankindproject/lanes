@@ -10,14 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `Error::EmptyInput` variant, returned by `cosine_similarity` when both
-  input slices are empty (the angle between empty vectors is undefined).
+  input slices are empty (the angle between empty vectors is undefined)
+  and by `geometric_mean` for an empty slice.
+- `Error::NonPositiveInput { index }` variant, returned by
+  `geometric_mean` when a value is ≤ 0 (with the index of the first
+  offending element).
+- `Error::InvalidBounds` variant, returned by `clip` when `lo > hi` or a
+  bound is NaN (mirroring the `f32::clamp`/`f64::clamp` precondition).
+- `Error` now implements `core::error::Error` unconditionally (stable
+  since Rust 1.81, below the MSRV), so `no_std` users get the standard
+  error trait without the `std` feature.
 - Allocation-free `_into` variants for every map-style op, in both `f32`
   and `f64`: `softmax_into`, `sigmoid_into`, `softplus_into`, `silu_into`,
   `gelu_into`, `relu_into`, `rms_norm_into` (`ml`) and `sqrt_into`,
   `clip_into`, `rsqrt_into`, `tanh_into`, `exp_into`, `ln_into` (`math`).
-  Each writes into a caller-provided buffer (length-checked with an
-  always-on assertion) so hot loops can reuse one allocation; the
-  allocating forms are now thin wrappers around them.
+  Each writes into a caller-provided buffer and returns
+  `Err(Error::LengthMismatch)` when the buffer has the wrong length, so
+  hot loops can reuse one allocation; the allocating forms are now thin
+  wrappers around them.
 - `no_std` builds now select the architecture-guaranteed SIMD tier
   statically instead of always falling back to scalar: SSE2 on x86-64
   and NEON on aarch64 (both are mandatory baselines, so no runtime CPU
@@ -25,6 +35,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `abs_sub` and `hypot` now return `Result<Vec<_>, Error>`
+  instead of panicking on unequal operand lengths, matching `dot`,
+  `squared_distance`, and `cosine_similarity`.
+- **Breaking:** every `_into` variant now returns `Result<(), Error>`
+  instead of panicking when the output buffer has the wrong length
+  (`Err(Error::LengthMismatch { expected, actual })`).
+- **Breaking:** `geometric_mean` now returns `Result<_, Error>` instead
+  of `Option<_>`: `Err(Error::EmptyInput)` for an empty slice and
+  `Err(Error::NonPositiveInput { index })` when a value is ≤ 0. NaN
+  inputs are no longer an error — they propagate to a NaN result,
+  matching the crate's reduction semantics (the previous docs claimed
+  this while the code returned `None`).
+- **Breaking:** `clip` now returns `Result<Vec<_>, Error>` and rejects
+  invalid bounds (`lo > hi` or a NaN bound) with `Err(Error::InvalidBounds)`,
+  mirroring the `f32::clamp`/`f64::clamp` precondition. NaN *values* still
+  propagate.
 - **Breaking:** `cosine_similarity` now returns `Result<f32, Error>` /
   `Result<f64, Error>` instead of `Result<Option<f32>, Error>`. Empty
   inputs return `Err(Error::EmptyInput)` (previously `Ok(None)`), and a

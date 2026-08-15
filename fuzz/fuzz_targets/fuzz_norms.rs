@@ -115,6 +115,9 @@ fuzz_target!(|input: NormsInput| {
         Err(lanes::Error::EmptyInput) => {
             assert!(a.is_empty() && b.is_empty());
         }
+        Err(lanes::Error::InvalidBounds) | Err(lanes::Error::NonPositiveInput { .. }) => {
+            unreachable!("cosine_similarity never returns InvalidBounds or NonPositiveInput")
+        }
     }
 
     // layer_norm: no panic, same length, unit variance on finite, non-empty
@@ -148,7 +151,7 @@ fuzz_target!(|input: NormsInput| {
 
     // layer_norm_into must agree with layer_norm elementwise.
     let mut into = vec![0.0_f32; a.len()];
-    lanes::ml::f32::layer_norm_into(a, eps, &mut into);
+    lanes::ml::f32::layer_norm_into(a, eps, &mut into).unwrap();
     for (x, y) in into.iter().zip(lnorm.iter()) {
         if x == y || (x.is_nan() && y.is_nan()) {
             continue;
@@ -176,7 +179,7 @@ fuzz_target!(|input: NormsInput| {
 
     // log_softmax_into: no panic, same length; agrees with the Vec wrapper.
     let mut lsm = vec![0.0_f32; a.len()];
-    lanes::ml::f32::log_softmax_into(a, &mut lsm);
+    lanes::ml::f32::log_softmax_into(a, &mut lsm).unwrap();
     let ls_alloc = lanes::ml::f32::log_softmax(a);
     for (x, y) in lsm.iter().zip(ls_alloc.iter()) {
         if x == y || (x.is_nan() && y.is_nan()) {
@@ -188,12 +191,17 @@ fuzz_target!(|input: NormsInput| {
         );
     }
 
-    // geometric_mean: None exactly when a value is ≤ 0 or NaN; otherwise
-    // positive (finite inputs may overflow to inf: exp(mean(ln x)) with
-    // mean(ln x) > 88.7 in f32).
+    // geometric_mean: Err(EmptyInput) on empty; Err(NonPositiveInput) exactly
+    // when a value is ≤ 0; NaN propagates to a NaN result; otherwise positive
+    // (finite inputs may overflow to inf: exp(mean(ln x)) with mean(ln x) >
+    // 88.7 in f32).
     let gm = lanes::stats::f32::geometric_mean(a);
-    if a.iter().any(|x| *x <= 0.0 || x.is_nan()) || a.is_empty() {
-        assert!(gm.is_none(), "geometric_mean({a:?}) = {gm:?} should be None");
+    if a.is_empty() {
+        assert_eq!(gm, Err(lanes::Error::EmptyInput));
+    } else if let Some(i) = a.iter().position(|x| *x <= 0.0) {
+        assert_eq!(gm, Err(lanes::Error::NonPositiveInput { index: i }));
+    } else if a.iter().any(|x| x.is_nan()) {
+        assert!(gm.unwrap().is_nan(), "geometric_mean({a:?}) should be NaN");
     } else if a.iter().all(|x| x.is_finite()) {
         let g = gm.unwrap();
         assert!(g > 0.0, "geometric_mean({a:?}) = {g}");

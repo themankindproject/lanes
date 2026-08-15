@@ -234,11 +234,21 @@ fn math_sqrt_known_and_empty() {
 #[cfg(feature = "alloc")]
 #[test]
 fn math_clip_known_and_empty() {
-    let v = lanes::math::f32::clip(&[-5.0_f32, 0.5, 3.0, 10.0], -1.0, 2.0);
+    let v = lanes::math::f32::clip(&[-5.0_f32, 0.5, 3.0, 10.0], -1.0, 2.0).unwrap();
     assert_eq!(v, [-1.0, 0.5, 2.0, 2.0]);
-    assert!(lanes::math::f32::clip(&[], -1.0, 1.0).is_empty());
+    assert!(lanes::math::f32::clip(&[], -1.0, 1.0).unwrap().is_empty());
     // NaN propagates.
-    assert!(lanes::math::f32::clip(&[f32::NAN], -1.0, 1.0)[0].is_nan());
+    assert!(lanes::math::f32::clip(&[f32::NAN], -1.0, 1.0).unwrap()[0].is_nan());
+    // Inverted bounds are rejected.
+    assert_eq!(
+        lanes::math::f32::clip(&[1.0_f32], 2.0, -1.0),
+        Err(lanes::Error::InvalidBounds)
+    );
+    // NaN bounds are rejected.
+    assert_eq!(
+        lanes::math::f32::clip(&[1.0_f32], f32::NAN, 1.0),
+        Err(lanes::Error::InvalidBounds)
+    );
 }
 
 #[cfg(feature = "alloc")]
@@ -703,8 +713,12 @@ fn f64_math_sqrt_clip_rsqrt_exp() {
     assert_eq!(v[3], 0.0);
     assert!(lanes::math::f64::sqrt(&[-1.0_f64])[0].is_nan());
 
-    let c = lanes::math::f64::clip(&[-5.0_f64, 0.5, 3.0, 10.0], -1.0, 2.0);
+    let c = lanes::math::f64::clip(&[-5.0_f64, 0.5, 3.0, 10.0], -1.0, 2.0).unwrap();
     assert_eq!(c, [-1.0, 0.5, 2.0, 2.0]);
+    assert_eq!(
+        lanes::math::f64::clip(&[1.0_f64], 2.0, -1.0),
+        Err(lanes::Error::InvalidBounds)
+    );
 
     let r = lanes::math::f64::rsqrt(&[1.0_f64, 4.0, 16.0]);
     assert!((r[0] - 1.0).abs() < 1e-12);
@@ -965,10 +979,25 @@ fn geometric_mean_matches_product() {
     assert!((g - 4.0).abs() < 1e-5);
     let g = lanes::stats::f64::geometric_mean(&[1.0_f64, 4.0, 16.0]).unwrap();
     assert!((g - 4.0).abs() < 1e-12);
-    assert!(lanes::stats::f32::geometric_mean(&[]).is_none());
-    assert!(lanes::stats::f32::geometric_mean(&[1.0_f32, -1.0]).is_none());
-    assert!(lanes::stats::f32::geometric_mean(&[1.0_f32, 0.0]).is_none());
-    assert!(lanes::stats::f64::geometric_mean(&[1.0_f64, f64::NAN]).is_none());
+    // Distinct failure modes: empty input vs non-positive values.
+    assert_eq!(
+        lanes::stats::f32::geometric_mean(&[]),
+        Err(lanes::Error::EmptyInput)
+    );
+    assert_eq!(
+        lanes::stats::f32::geometric_mean(&[1.0_f32, -1.0]),
+        Err(lanes::Error::NonPositiveInput { index: 1 })
+    );
+    assert_eq!(
+        lanes::stats::f32::geometric_mean(&[1.0_f32, 0.0]),
+        Err(lanes::Error::NonPositiveInput { index: 1 })
+    );
+    // NaN is not an error: it propagates to a NaN result.
+    assert!(
+        lanes::stats::f64::geometric_mean(&[1.0_f64, f64::NAN])
+            .unwrap()
+            .is_nan()
+    );
 }
 
 #[test]
@@ -1015,34 +1044,49 @@ fn log_softmax_exp_sums_to_one() {
 }
 
 #[test]
-#[should_panic(expected = "assertion")]
-fn log_softmax_into_short_buffer_panics() {
+fn log_softmax_into_short_buffer_errors() {
     let mut out = [0.0_f32; 2];
-    lanes::ml::f32::log_softmax_into(&[1.0, 2.0, 3.0], &mut out);
+    assert_eq!(
+        lanes::ml::f32::log_softmax_into(&[1.0, 2.0, 3.0], &mut out),
+        Err(lanes::Error::LengthMismatch {
+            expected: 3,
+            actual: 2
+        })
+    );
 }
 
 #[test]
-#[should_panic(expected = "assertion")]
-fn layer_norm_into_short_buffer_panics() {
+fn layer_norm_into_short_buffer_errors() {
     let mut out = [0.0_f64; 2];
-    lanes::ml::f64::layer_norm_into(&[1.0, 2.0, 3.0], 1e-9, &mut out);
+    assert_eq!(
+        lanes::ml::f64::layer_norm_into(&[1.0, 2.0, 3.0], 1e-9, &mut out),
+        Err(lanes::Error::LengthMismatch {
+            expected: 3,
+            actual: 2
+        })
+    );
 }
 
 #[test]
 fn math_abs_sub_known_and_empty() {
     let a = [1.0_f32, -5.0, 3.0];
     let b = [4.0_f32, -2.0, 3.0];
-    assert_eq!(lanes::math::f32::abs_sub(&a, &b), [3.0, 3.0, 0.0]);
-    assert!(lanes::math::f32::abs_sub(&[], &[]).is_empty());
+    assert_eq!(lanes::math::f32::abs_sub(&a, &b).unwrap(), [3.0, 3.0, 0.0]);
+    assert!(lanes::math::f32::abs_sub(&[], &[]).unwrap().is_empty());
     let a64 = [1.0_f64, -5.0];
     let b64 = [4.0_f64, -2.0];
-    assert_eq!(lanes::math::f64::abs_sub(&a64, &b64), [3.0, 3.0]);
+    assert_eq!(lanes::math::f64::abs_sub(&a64, &b64).unwrap(), [3.0, 3.0]);
 }
 
 #[test]
-#[should_panic(expected = "assertion")]
-fn math_abs_sub_panics_on_length_mismatch() {
-    let _ = lanes::math::f32::abs_sub(&[1.0, 2.0], &[1.0]);
+fn math_abs_sub_errors_on_length_mismatch() {
+    assert_eq!(
+        lanes::math::f32::abs_sub(&[1.0, 2.0], &[1.0]),
+        Err(lanes::Error::LengthMismatch {
+            expected: 2,
+            actual: 1
+        })
+    );
 }
 
 #[test]
@@ -1071,30 +1115,35 @@ fn stats_counts_known_and_empty() {
 #[test]
 fn math_hypot_known_overflow_and_specials() {
     // 3-4-5 triangle.
-    let r = lanes::math::f32::hypot(&[3.0_f32], &[4.0_f32]);
+    let r = lanes::math::f32::hypot(&[3.0_f32], &[4.0_f32]).unwrap();
     assert!((r[0] - 5.0).abs() < 1e-6);
     // Overflow case: naive sqrt(x²+y²) overflows, hypot must not.
     let big = [2.0e19_f32];
-    let r = lanes::math::f32::hypot(&big, &big);
+    let r = lanes::math::f32::hypot(&big, &big).unwrap();
     assert!(r[0].is_finite(), "hypot overflowed: {}", r[0]);
     // Specials: inf wins over NaN.
-    let r = lanes::math::f32::hypot(&[f32::INFINITY], &[f32::NAN]);
+    let r = lanes::math::f32::hypot(&[f32::INFINITY], &[f32::NAN]).unwrap();
     assert_eq!(r[0], f32::INFINITY);
-    let r = lanes::math::f32::hypot(&[f32::NAN], &[1.0]);
+    let r = lanes::math::f32::hypot(&[f32::NAN], &[1.0]).unwrap();
     assert!(r[0].is_nan());
-    let r = lanes::math::f32::hypot(&[5.0], &[0.0]);
+    let r = lanes::math::f32::hypot(&[5.0], &[0.0]).unwrap();
     assert_eq!(r[0], 5.0);
     // f64 twins.
-    let r64 = lanes::math::f64::hypot(&[3.0_f64], &[4.0_f64]);
+    let r64 = lanes::math::f64::hypot(&[3.0_f64], &[4.0_f64]).unwrap();
     assert!((r64[0] - 5.0).abs() < 1e-12);
-    let r64 = lanes::math::f64::hypot(&[f64::INFINITY], &[f64::NAN]);
+    let r64 = lanes::math::f64::hypot(&[f64::INFINITY], &[f64::NAN]).unwrap();
     assert_eq!(r64[0], f64::INFINITY);
 }
 
 #[test]
-#[should_panic(expected = "assertion")]
-fn math_hypot_panics_on_length_mismatch() {
-    let _ = lanes::math::f32::hypot(&[1.0, 2.0], &[1.0]);
+fn math_hypot_errors_on_length_mismatch() {
+    assert_eq!(
+        lanes::math::f32::hypot(&[1.0, 2.0], &[1.0]),
+        Err(lanes::Error::LengthMismatch {
+            expected: 2,
+            actual: 1
+        })
+    );
 }
 
 #[test]
@@ -1112,10 +1161,15 @@ fn math_powi_known_and_specials() {
 }
 
 #[test]
-#[should_panic(expected = "assertion")]
-fn math_powi_panics_on_length_mismatch() {
+fn math_powi_into_errors_on_length_mismatch() {
     let mut out = [0.0_f32; 1];
-    lanes::math::f32::powi_into(&[1.0, 2.0], 2, &mut out);
+    assert_eq!(
+        lanes::math::f32::powi_into(&[1.0, 2.0], 2, &mut out),
+        Err(lanes::Error::LengthMismatch {
+            expected: 2,
+            actual: 1
+        })
+    );
 }
 
 #[test]
