@@ -245,6 +245,45 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_logsumexp,
+    [values: &[f32]],
+    f32,
+    scalar::logsumexp,
+    x86::sse2::logsumexp,
+    x86::avx2::logsumexp,
+    x86::avx512::logsumexp,
+    aarch64::neon::logsumexp,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_log_softmax,
+    [values: &[f32], out: &mut [f32]],
+    (),
+    scalar::log_softmax,
+    x86::sse2::log_softmax,
+    x86::avx2::log_softmax,
+    x86::avx512::log_softmax,
+    aarch64::neon::log_softmax,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_layer_norm,
+    [values: &[f32], eps: f32, out: &mut [f32]],
+    (),
+    scalar::layer_norm,
+    x86::sse2::layer_norm,
+    x86::avx2::layer_norm,
+    x86::avx512::layer_norm,
+    aarch64::neon::layer_norm,
+    id,
+    alloc
+);
+
+dispatch!(
     dispatch_softplus,
     [values: &[f32], out: &mut [f32]],
     (),
@@ -318,19 +357,6 @@ dispatch!(
     x86::avx2::tanh,
     x86::avx512::tanh,
     aarch64::neon::tanh,
-    id,
-    alloc
-);
-
-dispatch!(
-    dispatch_sub_scalar,
-    [values: &[f32], p: f32, p2: f32, out: &mut [f32]],
-    (),
-    scalar::sub_scalar,
-    x86::sse2::sub_scalar,
-    x86::avx2::sub_scalar,
-    x86::avx512::sub_scalar,
-    aarch64::neon::sub_scalar,
     id,
     alloc
 );
@@ -620,6 +646,45 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_logsumexp_f64,
+    [values: &[f64]],
+    f64,
+    scalar::logsumexp_f64,
+    x86::sse2::logsumexp_f64,
+    x86::avx2::logsumexp_f64,
+    x86::avx512::logsumexp_f64,
+    aarch64::neon::logsumexp_f64,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_log_softmax_f64,
+    [values: &[f64], out: &mut [f64]],
+    (),
+    scalar::log_softmax_f64,
+    x86::sse2::log_softmax_f64,
+    x86::avx2::log_softmax_f64,
+    x86::avx512::log_softmax_f64,
+    aarch64::neon::log_softmax_f64,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_layer_norm_f64,
+    [values: &[f64], eps: f64, out: &mut [f64]],
+    (),
+    scalar::layer_norm_f64,
+    x86::sse2::layer_norm_f64,
+    x86::avx2::layer_norm_f64,
+    x86::avx512::layer_norm_f64,
+    aarch64::neon::layer_norm_f64,
+    id,
+    alloc
+);
+
+dispatch!(
     dispatch_softplus_f64,
     [values: &[f64], out: &mut [f64]],
     (),
@@ -693,19 +758,6 @@ dispatch!(
     x86::avx2::tanh_f64,
     x86::avx512::tanh_f64,
     aarch64::neon::tanh_f64,
-    id,
-    alloc
-);
-
-dispatch!(
-    dispatch_sub_scalar_f64,
-    [values: &[f64], p: f64, p2: f64, out: &mut [f64]],
-    (),
-    scalar::sub_scalar_f64,
-    x86::sse2::sub_scalar_f64,
-    x86::avx2::sub_scalar_f64,
-    x86::avx512::sub_scalar_f64,
-    aarch64::neon::sub_scalar_f64,
     id,
     alloc
 );

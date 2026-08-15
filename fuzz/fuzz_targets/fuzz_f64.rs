@@ -104,4 +104,44 @@ fuzz_target!(|input: F64Input| {
             assert_eq!(lanes::stats::f64::std_dev(a), Some(0.0));
         }
     }
+
+    // ML kernels: no panic; `_into` forms agree with the allocating
+    // wrappers; log_softmax exp-sum is ~1 when no exp overflows.
+    let lse = lanes::ml::f64::logsumexp(a);
+    if !a.is_empty() && a.iter().all(|x| x.is_nan()) {
+        assert!(lse.is_nan(), "logsumexp all-NaN must be NaN");
+    }
+    let mut ls = vec![0.0_f64; a.len()];
+    lanes::ml::f64::log_softmax_into(a, &mut ls);
+    let ls_alloc = lanes::ml::f64::log_softmax(a);
+    for (x, y) in ls.iter().zip(ls_alloc.iter()) {
+        if x == y || (x.is_nan() && y.is_nan()) {
+            continue;
+        }
+        assert!(
+            (x - y).abs() < 1e-9 * y.abs().max(1.0),
+            "log_softmax_into {x} != log_softmax {y} (a={a:?})"
+        );
+    }
+    if !a.is_empty()
+        && a.iter().all(|x| x.is_finite())
+        && lse.is_finite()
+        && lse < 700.0
+    {
+        let sum: f64 = ls.iter().map(|&x| x.exp()).sum();
+        assert!((sum - 1.0).abs() < 1e-6, "log_softmax exp-sum {sum}, a={a:?}");
+    }
+    let eps = 1e-9;
+    let mut ln = vec![0.0_f64; a.len()];
+    lanes::ml::f64::layer_norm_into(a, eps, &mut ln);
+    let ln_alloc = lanes::ml::f64::layer_norm(a, eps);
+    for (x, y) in ln.iter().zip(ln_alloc.iter()) {
+        if x == y || (x.is_nan() && y.is_nan()) {
+            continue;
+        }
+        assert!(
+            (x - y).abs() < 1e-9 * y.abs().max(1.0),
+            "layer_norm_into {x} != layer_norm {y} (a={a:?})"
+        );
+    }
 });

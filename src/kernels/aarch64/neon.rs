@@ -288,6 +288,59 @@ crate::simd_softmax!(
     |x: f32| crate::kernels::exp::exp(x)
 );
 
+// Logsumexp: two-pass scalar-returning reduction (max → Σexp → max+ln).
+crate::simd_logsumexp!(
+    logsumexp,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    vmaxq_f32,
+    vsubq_f32,
+    |v| unsafe { vexp_neon(v) },
+    |v| unsafe { vaddvq_f32(v) },
+    |v| unsafe { vmaxvq_f32(v) },
+    |s| unsafe { vdupq_n_f32(s) },
+    |x: f32| crate::kernels::exp::exp(x),
+    crate::kernels::ln::ln
+);
+
+// Log-softmax: three-pass map (max → Σexp → (x-m)-ln(sum)), 0-alloc.
+crate::simd_log_softmax!(
+    log_softmax,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    vmaxq_f32,
+    vsubq_f32,
+    |v| unsafe { vexp_neon(v) },
+    |v| unsafe { vaddvq_f32(v) },
+    |v| unsafe { vmaxvq_f32(v) },
+    |s| unsafe { vdupq_n_f32(s) },
+    |x: f32| crate::kernels::exp::exp(x),
+    crate::kernels::ln::ln
+);
+
+// Layer norm: three-pass (mean → center+Σsq → scale), 0-alloc.
+crate::simd_layer_norm!(
+    layer_norm,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    vaddq_f32,
+    vsubq_f32,
+    vdupq_n_f32(0.0),
+    |acc: float32x4_t, v: float32x4_t| vaddq_f32(acc, vmulq_f32(v, v)),
+    |v| unsafe { vaddvq_f32(v) },
+    |s| unsafe { vdupq_n_f32(s) },
+    |v, inv| vmulq_f32(v, vdupq_n_f32(inv)),
+    crate::kernels::sqrt::sqrt
+);
+
 crate::simd_map!(
     sigmoid,
     f32,
@@ -451,18 +504,6 @@ crate::simd_map!(
 );
 
 // RMS norm: two-pass (sum of squares, then scale by rsqrt).
-// Sub scalar: x - p (used by logsumexp/layer_norm centering).
-crate::simd_map_param!(
-    sub_scalar,
-    f32,
-    "neon",
-    4,
-    |p| unsafe { vld1q_f32(p) },
-    |p, v| unsafe { vst1q_f32(p, v) },
-    |v: float32x4_t, p1: f32, _p2: f32| vsubq_f32(v, vdupq_n_f32(p1)),
-    |x: f32, p1: f32, _p2: f32| x - p1
-);
-
 crate::simd_rms_norm!(
     rms_norm,
     f32,
@@ -1098,6 +1139,59 @@ crate::simd_softmax!(
     |x: f64| crate::kernels::exp::exp_f64(x)
 );
 
+// Logsumexp (f64): two-pass scalar-returning reduction.
+crate::simd_logsumexp!(
+    logsumexp_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |a, b| unsafe { vmaxq_f64(a, b) },
+    |a, b| unsafe { vsubq_f64(a, b) },
+    |v| unsafe { vexp_128d(v) },
+    |v| unsafe { vaddvq_f64(v) },
+    |v| unsafe { vmaxvq_f64(v) },
+    |s| unsafe { vdupq_n_f64(s) },
+    |x: f64| crate::kernels::exp::exp_f64(x),
+    crate::kernels::ln::ln_f64
+);
+
+// Log-softmax (f64): three-pass map, 0-alloc.
+crate::simd_log_softmax!(
+    log_softmax_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    |a, b| unsafe { vmaxq_f64(a, b) },
+    |a, b| unsafe { vsubq_f64(a, b) },
+    |v| unsafe { vexp_128d(v) },
+    |v| unsafe { vaddvq_f64(v) },
+    |v| unsafe { vmaxvq_f64(v) },
+    |s| unsafe { vdupq_n_f64(s) },
+    |x: f64| crate::kernels::exp::exp_f64(x),
+    crate::kernels::ln::ln_f64
+);
+
+// Layer norm (f64): three-pass, 0-alloc.
+crate::simd_layer_norm!(
+    layer_norm_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    |a, b| unsafe { vaddq_f64(a, b) },
+    |a, b| unsafe { vsubq_f64(a, b) },
+    vdupq_n_f64(0.0),
+    |acc: float64x2_t, v: float64x2_t| vaddq_f64(acc, vmulq_f64(v, v)),
+    |v| unsafe { hsum_128d(v) },
+    |s| unsafe { vdupq_n_f64(s) },
+    |v, inv| vmulq_f64(v, vdupq_n_f64(inv)),
+    crate::kernels::sqrt::sqrt_f64
+);
+
 crate::simd_map!(
     sigmoid_f64,
     f64,
@@ -1278,18 +1372,6 @@ crate::simd_map!(
 );
 
 // RMS norm (f64).
-// Sub scalar (f64): x - p.
-crate::simd_map_param!(
-    sub_scalar_f64,
-    f64,
-    "neon",
-    2,
-    |p| unsafe { vld1q_f64(p) },
-    |p, v| unsafe { vst1q_f64(p, v) },
-    |v: float64x2_t, p1: f64, _p2: f64| vsubq_f64(v, vdupq_n_f64(p1)),
-    |x: f64, p1: f64, _p2: f64| x - p1
-);
-
 crate::simd_rms_norm!(
     rms_norm_f64,
     f64,

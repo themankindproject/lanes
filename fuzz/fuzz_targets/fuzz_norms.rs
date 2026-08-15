@@ -151,6 +151,19 @@ fuzz_target!(|input: NormsInput| {
         }
     }
 
+    // layer_norm_into must agree with layer_norm elementwise.
+    let mut into = vec![0.0_f32; a.len()];
+    lanes::ml::f32::layer_norm_into(a, eps, &mut into);
+    for (x, y) in into.iter().zip(lnorm.iter()) {
+        if x == y || (x.is_nan() && y.is_nan()) {
+            continue;
+        }
+        assert!(
+            (x - y).abs() < 1e-4 * y.abs().max(1.0),
+            "layer_norm_into {x} != layer_norm {y} (a={a:?} eps={eps})"
+        );
+    }
+
     // logsumexp: no panic; NaN input → NaN output; finite input → finite
     // output. (Inf input may also NaN: max=inf makes x-max = NaN.)
     let lse = lanes::ml::f32::logsumexp(a);
@@ -164,6 +177,20 @@ fuzz_target!(|input: NormsInput| {
                 "logsumexp({a:?}) = {lse:e} should be finite"
             );
         }
+    }
+
+    // log_softmax_into: no panic, same length; agrees with the Vec wrapper.
+    let mut lsm = vec![0.0_f32; a.len()];
+    lanes::ml::f32::log_softmax_into(a, &mut lsm);
+    let ls_alloc = lanes::ml::f32::log_softmax(a);
+    for (x, y) in lsm.iter().zip(ls_alloc.iter()) {
+        if x == y || (x.is_nan() && y.is_nan()) {
+            continue;
+        }
+        assert!(
+            (x - y).abs() < 1e-4 * y.abs().max(1.0),
+            "log_softmax_into {x} != log_softmax {y} (a={a:?})"
+        );
     }
 
     // geometric_mean: None exactly when a value is ≤ 0 or NaN; otherwise

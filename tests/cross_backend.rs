@@ -396,3 +396,111 @@ fn cross_f64_distance_exact_values() {
         );
     }
 }
+
+#[test]
+fn cross_logsumexp_matches_naive() {
+    // Backends reduce in different orders; the results may differ in the
+    // last ulp, so compare against a tight tolerance instead of bitwise.
+    for n in [1, 3, 7, 9, 15, 17, 31, 33, 63, 65, 127, 129, 255, 257] {
+        let data: Vec<f32> = (0..n).map(|i| (i % 13) as f32 * 0.5 - 2.0).collect();
+        let naive = {
+            let m = data.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let s: f32 = data.iter().map(|x| (x - m).exp()).sum();
+            m + s.ln()
+        };
+        let got = lanes::ml::f32::logsumexp(&data);
+        assert!(
+            (got - naive).abs() < 1e-4 * naive.abs().max(1.0),
+            "logsumexp mismatch for size {n}: got {got}, naive {naive}"
+        );
+    }
+    // f64: same shape, tighter tolerance.
+    for n in [1, 3, 7, 9, 15, 17, 31, 33, 63, 65, 127, 129] {
+        let data: Vec<f64> = (0..n).map(|i| (i % 13) as f64 * 0.5 - 2.0).collect();
+        let naive = {
+            let m = data.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let s: f64 = data.iter().map(|x| (x - m).exp()).sum();
+            m + s.ln()
+        };
+        let got = lanes::ml::f64::logsumexp(&data);
+        assert!(
+            (got - naive).abs() < 1e-9 * naive.abs().max(1.0),
+            "logsumexp f64 mismatch for size {n}: got {got}, naive {naive}"
+        );
+    }
+}
+
+#[test]
+fn cross_log_softmax_into_agrees_with_vec() {
+    for n in [1, 3, 7, 9, 15, 17, 31, 33, 63, 65, 127, 129] {
+        let data: Vec<f32> = (0..n).map(|i| (i as f32 * 0.3).sin() * 4.0).collect();
+        let mut into = vec![0.0_f32; n];
+        lanes::ml::f32::log_softmax_into(&data, &mut into);
+        let alloced = lanes::ml::f32::log_softmax(&data);
+        for (a, b) in into.iter().zip(alloced.iter()) {
+            assert!(
+                (a - b).abs() < 1e-5 * a.abs().max(1.0),
+                "log_softmax mismatch for size {n}"
+            );
+        }
+        // exp of log-softmax must sum to 1 (softmax property).
+        let sum: f32 = into.iter().map(|x| x.exp()).sum();
+        assert!((sum - 1.0).abs() < 1e-3, "exp-sum {sum} for size {n}");
+    }
+    for n in [1, 3, 7, 9, 15, 17, 31, 33, 63, 65, 127, 129] {
+        let data: Vec<f64> = (0..n).map(|i| (i as f64 * 0.3).sin() * 4.0).collect();
+        let mut into = vec![0.0_f64; n];
+        lanes::ml::f64::log_softmax_into(&data, &mut into);
+        let alloced = lanes::ml::f64::log_softmax(&data);
+        for (a, b) in into.iter().zip(alloced.iter()) {
+            assert!(
+                (a - b).abs() < 1e-9 * a.abs().max(1.0),
+                "log_softmax f64 mismatch for size {n}"
+            );
+        }
+        let sum: f64 = into.iter().map(|x| x.exp()).sum();
+        assert!((sum - 1.0).abs() < 1e-6, "exp-sum {sum} for size {n}");
+    }
+}
+
+#[test]
+fn cross_layer_norm_into_agrees_with_vec() {
+    for n in [1, 3, 7, 9, 15, 17, 31, 33, 63, 65, 127, 129] {
+        let data: Vec<f32> = (0..n).map(|i| (i as f32 * 0.7).cos() * 3.0).collect();
+        let mut into = vec![0.0_f32; n];
+        lanes::ml::f32::layer_norm_into(&data, 1e-5, &mut into);
+        let alloced = lanes::ml::f32::layer_norm(&data, 1e-5);
+        for (a, b) in into.iter().zip(alloced.iter()) {
+            assert!(
+                (a - b).abs() < 1e-5 * a.abs().max(1.0),
+                "layer_norm mismatch for size {n}"
+            );
+        }
+        // Unit variance after normalization (population variance). Skip
+        // n == 1: variance of a single element is 0 by definition.
+        if n > 1 {
+            let mean: f32 = into.iter().sum::<f32>() / n as f32;
+            let var: f32 = into.iter().map(|x| (x - mean) * (x - mean)).sum::<f32>() / n as f32;
+            assert!((var - 1.0).abs() < 1e-2, "var {var} for size {n}");
+        }
+    }
+    for n in [1, 3, 7, 9, 15, 17, 31, 33, 63, 65, 127, 129] {
+        let data: Vec<f64> = (0..n).map(|i| (i as f64 * 0.7).cos() * 3.0).collect();
+        let mut into = vec![0.0_f64; n];
+        lanes::ml::f64::layer_norm_into(&data, 1e-10, &mut into);
+        let alloced = lanes::ml::f64::layer_norm(&data, 1e-10);
+        for (a, b) in into.iter().zip(alloced.iter()) {
+            assert!(
+                (a - b).abs() < 1e-9 * a.abs().max(1.0),
+                "layer_norm f64 mismatch for size {n}"
+            );
+        }
+        // Unit variance after normalization (population variance). Skip
+        // n == 1: variance of a single element is 0 by definition.
+        if n > 1 {
+            let mean: f64 = into.iter().sum::<f64>() / n as f64;
+            let var: f64 = into.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / n as f64;
+            assert!((var - 1.0).abs() < 1e-6, "var {var} for size {n}");
+        }
+    }
+}

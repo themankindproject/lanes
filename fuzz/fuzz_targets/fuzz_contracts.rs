@@ -66,6 +66,16 @@ fuzz_target!(|input: ContractsInput| {
     assert_eq!(sp.len(), a.len());
     assert_eq!(ls.len(), a.len());
 
+    // _into variants must agree with the allocating wrappers.
+    let mut lsm = vec![0.0_f32; a.len()];
+    lanes::ml::f32::log_softmax_into(a, &mut lsm);
+    for (x, y) in lsm.iter().zip(ls.iter()) {
+        if x == y || (x.is_nan() && y.is_nan()) {
+            continue;
+        }
+        assert!((x - y).abs() < 1e-4 * y.abs().max(1.0), "log_softmax_into {x} vs {y}");
+    }
+
     // relu: exactly max(x, 0) (bit-exact for the clamp).
     for (x, r) in a.iter().zip(&rl) {
         assert_eq!(*r, x.max(0.0), "relu({x}) = {r}");

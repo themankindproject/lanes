@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `log_softmax_into` and `layer_norm_into` (`ml`) in both `f32` and
+  `f64` — allocation-free variants that write into a caller-provided
+  buffer. Dedicated SIMD kernels on every backend (scalar, SSE2, AVX2,
+  AVX-512F, NEON); `log_softmax`/`layer_norm` are now thin wrappers
+  around them. `logsumexp` also gained a dedicated scalar-returning
+  SIMD kernel (no intermediate buffer or clones).
 - `softplus` and `log_softmax` (`ml`) in both `f32` and `f64`.
   `softplus` gets SIMD kernels on every backend using the overflow-free
   `max(x, 0) + ln1p(e^-|x|)` form (references: musl `s_log1pf.c` /
@@ -65,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** the public API now requires a precision submodule
   (`lanes::stats::f32::sum`, not `lanes::stats::sum`). Update imports to
   the `f32` family for the previous behavior.
+- `log_softmax`/`layer_norm` now delegate to the new `_into` kernels;
+  the internal `sub_scalar` kernels were removed (dead after the
+  restructure).
 
 ### Fixed
 

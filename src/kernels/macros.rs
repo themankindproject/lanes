@@ -938,3 +938,275 @@ macro_rules! simd_argminmax {
         }
     };
 }
+
+/// Generate a two-pass `logsumexp` reduction kernel: `max + ln(Σ exp(x − max))`.
+///
+/// Returns the log-sum-exp as a scalar — no output buffer. Pass 1 reduces
+/// the max (vector chunks + scalar tail); pass 2 reduces `Σ exp(x − max)`
+/// without storing anything; the result is `max + ln(sum)`.
+///
+/// # Parameters
+///
+/// * `$name` — function name.
+/// * `$t` — scalar element type (`f32` or `f64`).
+/// * `$feat` — `target_feature` string.
+/// * `$lanes` — vector width in `$t` elements.
+/// * `$load` — `fn(*const $t) -> V`.
+/// * `$max` — `fn(V, V) -> V` elementwise max.
+/// * `$sub` — `fn(V, V) -> V` elementwise sub.
+/// * `$exp` — `fn(V) -> V` elementwise exp.
+/// * `$reduce` — `fn(V) -> $t` horizontal sum.
+/// * `$max_reduce` — `fn(V) -> $t` horizontal max.
+/// * `$set1` — `fn($t) -> V` broadcast.
+/// * `$exp_scalar` — `fn($t) -> $t` scalar exp for the tail.
+/// * `$ln` — `fn($t) -> $t` scalar ln (the std-free kernel).
+///
+/// # Safety
+/// The generated function is `unsafe fn` with `#[target_feature]`; the
+/// caller must verify the CPU feature.
+#[macro_export]
+macro_rules! simd_logsumexp {
+    (
+        $name:ident, $t:ty, $feat:literal, $lanes:expr,
+        $load:expr, $max:expr, $sub:expr, $exp:expr,
+        $reduce:expr, $max_reduce:expr, $set1:expr,
+        $exp_scalar:expr, $ln:expr
+    ) => {
+        /// SIMD log-sum-exp reduction. See the scalar reference for
+        /// semantics; empty input yields `NEG_INFINITY`.
+        ///
+        /// # Safety
+        /// Caller must guarantee the CPU feature is available.
+        #[cfg(feature = "alloc")]
+        #[target_feature(enable = $feat)]
+        pub(crate) unsafe fn $name(values: &[$t]) -> $t {
+            let len = values.len();
+            if len == 0 {
+                return <$t>::NEG_INFINITY;
+            }
+            let ptr = values.as_ptr();
+            let chunks = len / $lanes;
+            let rem = len % $lanes;
+
+            // Pass 1: max over all chunks (skip vector loads if none fit).
+            let mut m = if chunks > 0 {
+                let mut vmax = $load(unsafe { ptr });
+                for i in 1..chunks {
+                    let v = $load(unsafe { ptr.add(i * $lanes) });
+                    vmax = $max(vmax, v);
+                }
+                $max_reduce(vmax)
+            } else {
+                <$t>::NEG_INFINITY
+            };
+            for i in 0..rem {
+                m = <$t>::max(m, unsafe { *values.get_unchecked(chunks * $lanes + i) });
+            }
+
+            // Pass 2: Σ exp(x − m), no store.
+            let vm = $set1(m);
+            let mut sum = 0.0;
+            for i in 0..chunks {
+                let v = $load(unsafe { ptr.add(i * $lanes) });
+                sum += $reduce($exp($sub(v, vm)));
+            }
+            for i in 0..rem {
+                sum += $exp_scalar(unsafe { *values.get_unchecked(chunks * $lanes + i) } - m);
+            }
+
+            m + $ln(sum)
+        }
+    };
+}
+
+/// Generate a three-pass `log_softmax` kernel writing into `out`:
+/// `x_i − logsumexp(x)` elementwise, 0-alloc.
+///
+/// Pass 1 reduces the max; pass 2 reduces `Σ exp(x − m)` (no store); pass 3
+/// writes `(x_i − m) − ln(sum)` directly. Reading `values` in the final pass
+/// (instead of a stored intermediate) is what makes the kernel allocation-free.
+///
+/// # Parameters
+///
+/// * `$name` — function name.
+/// * `$t` — scalar element type.
+/// * `$feat` — `target_feature` string.
+/// * `$lanes` — vector width in `$t` elements.
+/// * `$load` — `fn(*const $t) -> V`.
+/// * `$store` — `fn(*mut $t, V)`.
+/// * `$max` — `fn(V, V) -> V` elementwise max.
+/// * `$sub` — `fn(V, V) -> V` elementwise sub.
+/// * `$exp` — `fn(V) -> V` elementwise exp.
+/// * `$reduce` — `fn(V) -> $t` horizontal sum.
+/// * `$max_reduce` — `fn(V) -> $t` horizontal max.
+/// * `$set1` — `fn($t) -> V` broadcast.
+/// * `$exp_scalar` — `fn($t) -> $t` scalar exp for the tail.
+/// * `$ln` — `fn($t) -> $t` scalar ln.
+///
+/// # Safety
+/// The generated function is `unsafe fn` with `#[target_feature]`; the
+/// caller must verify the CPU feature and that `values` and `out` have
+/// equal lengths.
+#[macro_export]
+macro_rules! simd_log_softmax {
+    (
+        $name:ident, $t:ty, $feat:literal, $lanes:expr,
+        $load:expr, $store:expr, $max:expr, $sub:expr, $exp:expr,
+        $reduce:expr, $max_reduce:expr, $set1:expr,
+        $exp_scalar:expr, $ln:expr
+    ) => {
+        /// SIMD log-softmax kernel. See the scalar reference for semantics.
+        ///
+        /// # Safety
+        /// Caller must guarantee the CPU feature is available and that
+        /// `values` and `out` have equal lengths.
+        #[cfg(feature = "alloc")]
+        #[target_feature(enable = $feat)]
+        pub(crate) unsafe fn $name(values: &[$t], out: &mut [$t]) {
+            let len = values.len();
+            if len == 0 {
+                return;
+            }
+            let ptr = values.as_ptr();
+            let chunks = len / $lanes;
+            let rem = len % $lanes;
+
+            // Pass 1: max (same shape as simd_softmax).
+            let mut m = if chunks > 0 {
+                let mut vmax = $load(unsafe { ptr });
+                for i in 1..chunks {
+                    let v = $load(unsafe { ptr.add(i * $lanes) });
+                    vmax = $max(vmax, v);
+                }
+                $max_reduce(vmax)
+            } else {
+                <$t>::NEG_INFINITY
+            };
+            for i in 0..rem {
+                m = <$t>::max(m, unsafe { *values.get_unchecked(chunks * $lanes + i) });
+            }
+
+            // Pass 2: Σ exp(x − m), no store.
+            let vm = $set1(m);
+            let mut sum = 0.0;
+            for i in 0..chunks {
+                let v = $load(unsafe { ptr.add(i * $lanes) });
+                sum += $reduce($exp($sub(v, vm)));
+            }
+            for i in 0..rem {
+                sum += $exp_scalar(unsafe { *values.get_unchecked(chunks * $lanes + i) } - m);
+            }
+
+            // Pass 3: out[i] = (x_i − m) − ln(sum). Subtracting ln(sum)
+            // separately from (x_i − m) — never folding it into m — keeps
+            // ln(sum) from vanishing in the ulp of a large m.
+            let log_sum = $ln(sum);
+            let vm = $set1(m);
+            let vshift = $set1(log_sum);
+            for i in 0..chunks {
+                let v = $load(unsafe { ptr.add(i * $lanes) });
+                let d = $sub(v, vm);
+                $store(unsafe { out.as_mut_ptr().add(i * $lanes) }, $sub(d, vshift));
+            }
+            for i in 0..rem {
+                unsafe {
+                    *out.get_unchecked_mut(chunks * $lanes + i) =
+                        (*values.get_unchecked(chunks * $lanes + i) - m) - log_sum;
+                }
+            }
+        }
+    };
+}
+
+/// Generate a three-pass `layer_norm` kernel writing into `out`:
+/// `(x_i − mean) / sqrt(var + eps)`, 0-alloc.
+///
+/// Pass 1 reduces the mean; pass 2 stores the centered value `x − mean` into
+/// `out` while accumulating `Σ (x − mean)²`; pass 3 scales `out` by
+/// `1/sqrt(var + eps)`. Reusing the stored centered values in pass 3 (instead
+/// of re-reading `values`) is what makes the kernel allocation-free.
+///
+/// # Parameters
+///
+/// * `$name` — function name.
+/// * `$t` — scalar element type.
+/// * `$feat` — `target_feature` string.
+/// * `$lanes` — vector width in `$t` elements.
+/// * `$load` — `fn(*const $t) -> V`.
+/// * `$store` — `fn(*mut $t, V)`.
+/// * `$add` — `fn(V, V) -> V` elementwise add.
+/// * `$sub` — `fn(V, V) -> V` elementwise sub.
+/// * `$acc_ident` — zero identity vector.
+/// * `$combine` — `fn(V, V) -> V` folding `acc + v*v`.
+/// * `$reduce` — `fn(V) -> $t` horizontal sum.
+/// * `$set1` — `fn($t) -> V` broadcast.
+/// * `$scale` — `fn(V, $t) -> V` multiply every lane by the scalar `1/√(var+eps)`.
+/// * `$sqrt` — scalar `fn($t) -> $t` sqrt (the std-free kernel).
+///
+/// # Safety
+/// The generated function is `unsafe fn` with `#[target_feature]`; the
+/// caller must verify the CPU feature and that `values` and `out` have
+/// equal lengths.
+#[macro_export]
+macro_rules! simd_layer_norm {
+    (
+        $name:ident, $t:ty, $feat:literal, $lanes:expr,
+        $load:expr, $store:expr, $add:expr, $sub:expr,
+        $acc_ident:expr, $combine:expr, $reduce:expr, $set1:expr,
+        $scale:expr, $sqrt:expr
+    ) => {
+        /// SIMD layer norm kernel. See the scalar reference for semantics.
+        ///
+        /// # Safety
+        /// Caller must guarantee the CPU feature is available and that
+        /// `values` and `out` have equal lengths.
+        #[cfg(feature = "alloc")]
+        #[allow(clippy::cast_precision_loss)] // `len as $t` is inherent to the mean
+        #[target_feature(enable = $feat)]
+        pub(crate) unsafe fn $name(values: &[$t], eps: $t, out: &mut [$t]) {
+            let len = values.len();
+            if len == 0 {
+                return;
+            }
+            let ptr = values.as_ptr();
+            let chunks = len / $lanes;
+            let rem = len % $lanes;
+
+            // Pass 1: mean.
+            let mut acc = $acc_ident;
+            for i in 0..chunks {
+                acc = $add(acc, $load(unsafe { ptr.add(i * $lanes) }));
+            }
+            let mut sum = $reduce(acc);
+            for i in 0..rem {
+                sum += unsafe { *values.get_unchecked(chunks * $lanes + i) };
+            }
+            let mean = sum / len as $t;
+
+            // Pass 2: store centered values, accumulate Σ (x − mean)².
+            let vmean = $set1(mean);
+            let mut sq = $acc_ident;
+            for i in 0..chunks {
+                let c = $sub($load(unsafe { ptr.add(i * $lanes) }), vmean);
+                $store(unsafe { out.as_mut_ptr().add(i * $lanes) }, c);
+                sq = $combine(sq, c);
+            }
+            let mut sum_sq = $reduce(sq);
+            for i in 0..rem {
+                let c = unsafe { *values.get_unchecked(chunks * $lanes + i) } - mean;
+                unsafe { *out.get_unchecked_mut(chunks * $lanes + i) = c };
+                sum_sq += c * c;
+            }
+
+            // Pass 3: scale by 1/sqrt(var + eps) (population variance).
+            let inv = 1.0 / $sqrt(sum_sq / len as $t + eps);
+            for i in 0..chunks {
+                let v = $load(unsafe { out.as_ptr().add(i * $lanes) });
+                $store(unsafe { out.as_mut_ptr().add(i * $lanes) }, $scale(v, inv));
+            }
+            for i in 0..rem {
+                unsafe { *out.get_unchecked_mut(chunks * $lanes + i) *= inv };
+            }
+        }
+    };
+}

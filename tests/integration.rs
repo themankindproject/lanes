@@ -1012,3 +1012,17 @@ fn log_softmax_exp_sums_to_one() {
     assert!((s - 1.0).abs() < 1e-12);
     assert_eq!(lanes::ml::f32::log_softmax(&[]), Vec::<f32>::new());
 }
+
+#[test]
+#[should_panic(expected = "assertion")]
+fn log_softmax_into_short_buffer_panics() {
+    let mut out = [0.0_f32; 2];
+    lanes::ml::f32::log_softmax_into(&[1.0, 2.0, 3.0], &mut out);
+}
+
+#[test]
+#[should_panic(expected = "assertion")]
+fn layer_norm_into_short_buffer_panics() {
+    let mut out = [0.0_f64; 2];
+    lanes::ml::f64::layer_norm_into(&[1.0, 2.0, 3.0], 1e-9, &mut out);
+}

@@ -149,6 +149,59 @@ crate::simd_softmax!(
     |x: f32| crate::kernels::exp::exp(x)
 );
 
+// Logsumexp: two-pass scalar-returning reduction (max → Σexp → max+ln).
+crate::simd_logsumexp!(
+    logsumexp,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    _mm512_max_ps,
+    _mm512_sub_ps,
+    |v| unsafe { vexp_512(v) },
+    |v| unsafe { _mm512_reduce_add_ps(v) },
+    |v| unsafe { _mm512_reduce_max_ps(v) },
+    |s| unsafe { _mm512_set1_ps(s) },
+    |x: f32| crate::kernels::exp::exp(x),
+    crate::kernels::ln::ln
+);
+
+// Log-softmax: three-pass map (max → Σexp → (x-m)-ln(sum)), 0-alloc.
+crate::simd_log_softmax!(
+    log_softmax,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    |p, v| unsafe { _mm512_storeu_ps(p, v) },
+    _mm512_max_ps,
+    _mm512_sub_ps,
+    |v| unsafe { vexp_512(v) },
+    |v| unsafe { _mm512_reduce_add_ps(v) },
+    |v| unsafe { _mm512_reduce_max_ps(v) },
+    |s| unsafe { _mm512_set1_ps(s) },
+    |x: f32| crate::kernels::exp::exp(x),
+    crate::kernels::ln::ln
+);
+
+// Layer norm: three-pass (mean → center+Σsq → scale), 0-alloc.
+crate::simd_layer_norm!(
+    layer_norm,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    |p, v| unsafe { _mm512_storeu_ps(p, v) },
+    _mm512_add_ps,
+    _mm512_sub_ps,
+    _mm512_setzero_ps(),
+    |acc: __m512, v: __m512| _mm512_add_ps(acc, _mm512_mul_ps(v, v)),
+    |v| unsafe { _mm512_reduce_add_ps(v) },
+    |s| unsafe { _mm512_set1_ps(s) },
+    |v, inv| _mm512_mul_ps(v, _mm512_set1_ps(inv)),
+    crate::kernels::sqrt::sqrt
+);
+
 crate::simd_map!(
     sigmoid,
     f32,
@@ -328,18 +381,6 @@ crate::simd_map!(
 );
 
 // RMS norm: two-pass (sum of squares, then scale by rsqrt).
-// Sub scalar: x - p (used by logsumexp/layer_norm centering).
-crate::simd_map_param!(
-    sub_scalar,
-    f32,
-    "avx512f",
-    16,
-    |p| unsafe { _mm512_loadu_ps(p) },
-    |p, v| unsafe { _mm512_storeu_ps(p, v) },
-    |v: __m512, p1: f32, _p2: f32| _mm512_sub_ps(v, _mm512_set1_ps(p1)),
-    |x: f32, p1: f32, _p2: f32| x - p1
-);
-
 crate::simd_rms_norm!(
     rms_norm,
     f32,
@@ -1033,6 +1074,59 @@ crate::simd_softmax!(
     |x: f64| crate::kernels::exp::exp_f64(x)
 );
 
+// Logsumexp (f64): two-pass scalar-returning reduction.
+crate::simd_logsumexp!(
+    logsumexp_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |a, b| unsafe { _mm512_max_pd(a, b) },
+    |a, b| unsafe { _mm512_sub_pd(a, b) },
+    |v| unsafe { vexp_512d(v) },
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |v| unsafe { _mm512_reduce_max_pd(v) },
+    |s| unsafe { _mm512_set1_pd(s) },
+    |x: f64| crate::kernels::exp::exp_f64(x),
+    crate::kernels::ln::ln_f64
+);
+
+// Log-softmax (f64): three-pass map, 0-alloc.
+crate::simd_log_softmax!(
+    log_softmax_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |a, b| unsafe { _mm512_max_pd(a, b) },
+    |a, b| unsafe { _mm512_sub_pd(a, b) },
+    |v| unsafe { vexp_512d(v) },
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |v| unsafe { _mm512_reduce_max_pd(v) },
+    |s| unsafe { _mm512_set1_pd(s) },
+    |x: f64| crate::kernels::exp::exp_f64(x),
+    crate::kernels::ln::ln_f64
+);
+
+// Layer norm (f64): three-pass, 0-alloc.
+crate::simd_layer_norm!(
+    layer_norm_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    |a, b| unsafe { _mm512_add_pd(a, b) },
+    |a, b| unsafe { _mm512_sub_pd(a, b) },
+    _mm512_setzero_pd(),
+    |acc: __m512d, v: __m512d| _mm512_add_pd(acc, _mm512_mul_pd(v, v)),
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |s| unsafe { _mm512_set1_pd(s) },
+    |v, inv| _mm512_mul_pd(v, _mm512_set1_pd(inv)),
+    crate::kernels::sqrt::sqrt_f64
+);
+
 crate::simd_map!(
     sigmoid_f64,
     f64,
@@ -1235,18 +1329,6 @@ crate::simd_map!(
 );
 
 // RMS norm (f64).
-// Sub scalar (f64): x - p.
-crate::simd_map_param!(
-    sub_scalar_f64,
-    f64,
-    "avx512f",
-    8,
-    |p| unsafe { _mm512_loadu_pd(p) },
-    |p, v| unsafe { _mm512_storeu_pd(p, v) },
-    |v: __m512d, p1: f64, _p2: f64| _mm512_sub_pd(v, _mm512_set1_pd(p1)),
-    |x: f64, p1: f64, _p2: f64| x - p1
-);
-
 crate::simd_rms_norm!(
     rms_norm_f64,
     f64,

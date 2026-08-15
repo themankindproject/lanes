@@ -90,12 +90,15 @@ pub mod f32 {
         out
     }
 
-    /// Log-softmax over a slice: `x_i − logsumexp(x)` elementwise.
+    /// Log-softmax over a slice: `x_i − logsumexp(x)` elementwise, written
+    /// into `out`.
     ///
     /// Numerically stable via the max-shift: `x_i − max(x) − ln(Σ_j exp(x_j −
     /// max(x)))`. This is the primitive `PyTorch`'s [`nn.LogSoftmax`] computes
-    /// (paired with [`nn.NLLLoss`] it forms [`nn.CrossEntropyLoss`]). Returns a
-    /// new `Vec` of the same length; an empty slice yields an empty `Vec`.
+    /// (paired with [`nn.NLLLoss`] it forms [`nn.CrossEntropyLoss`]).
+    /// Allocation-free: `out` must have the same length as `values` (checked
+    /// with a debug assertion); reuse it across calls to avoid per-call
+    /// allocation in hot loops. An empty slice leaves `out` untouched.
     ///
     /// Reference: the max-subtraction trick and the fused
     /// log-softmax/NLL/cross-entropy decomposition as documented in
@@ -104,28 +107,39 @@ pub mod f32 {
     ///
     /// # Example
     /// ```
-    /// let v = lanes::ml::f32::log_softmax(&[1.0_f32, 2.0, 3.0]);
+    /// let v = [1.0_f32, 2.0, 3.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::ml::f32::log_softmax_into(&v, &mut out);
     /// // exp(log_softmax) sums to 1 — it IS softmax, logged.
+    /// let s: f32 = out.iter().map(|x| x.exp()).sum();
+    /// assert!((s - 1.0).abs() < 1e-6);
+    /// assert!(out[2] > out[1] && out[1] > out[0]);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn log_softmax_into(values: &[f32], out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_log_softmax(backend, values, out);
+    }
+
+    /// Log-softmax over a slice, returning a new `Vec`. Convenience wrapper
+    /// around [`log_softmax_into`]; prefer the `_into` form in hot loops.
+    ///
+    /// # Example
+    /// ```
+    /// let v = lanes::ml::f32::log_softmax(&[1.0_f32, 2.0, 3.0]);
     /// let s: f32 = v.iter().map(|x| x.exp()).sum();
     /// assert!((s - 1.0).abs() < 1e-6);
-    /// assert!(v[2] > v[1] && v[1] > v[0]);
     /// ```
     #[must_use]
     pub fn log_softmax(values: &[f32]) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        if values.is_empty() {
-            return out;
-        }
-        let backend = Backend::detect();
-        let m = kernels::dispatch_max(backend, values).unwrap_or(f32::NAN);
-        kernels::dispatch_sub_scalar(backend, values, m, m, &mut out);
-        let shifted = out.clone();
-        kernels::dispatch_exp(backend, &shifted, &mut out);
-        // Subtract separately: (x_i - m) - ln(s). Adding ln(s) to m first
-        // loses it when |m| ≫ ln(s) (the f32 ulp of a large m exceeds
-        // ln(s)), which would make every output round to 0.
-        let log_sum = kernels::ln::ln(kernels::dispatch_sum(backend, &out));
-        kernels::dispatch_sub_scalar(backend, &shifted, log_sum, log_sum, &mut out);
+        log_softmax_into(values, &mut out);
         out
     }
 
@@ -263,47 +277,56 @@ pub mod f32 {
     /// ```
     #[must_use]
     pub fn logsumexp(values: &[f32]) -> f32 {
-        if values.is_empty() {
-            return f32::NEG_INFINITY;
-        }
         let backend = Backend::detect();
-        let m = kernels::dispatch_max(backend, values).unwrap_or(f32::NAN);
-        let mut out = alloc::vec![0.0_f32; values.len()];
-        kernels::dispatch_sub_scalar(backend, values, m, m, &mut out);
-        let shifted = out.clone();
-        kernels::dispatch_exp(backend, &shifted, &mut out);
-        let s = kernels::dispatch_sum(backend, &out);
-        m + kernels::ln::ln(s)
+        kernels::dispatch_logsumexp(backend, values)
     }
 
-    /// Layer normalization: `(x_i - mean(x)) / sqrt(variance(x) + eps)`.
+    /// Layer normalization: `(x_i - mean(x)) / sqrt(variance(x) + eps)`,
+    /// written into `out`.
     ///
     /// The standard pre-activation norm (complement to [`rms_norm`], which
-    /// drops the mean). Returns a new `Vec` of the same length; an empty
-    /// slice yields an empty `Vec`. NaNs propagate.
+    /// drops the mean). Allocation-free: `out` must have the same length as
+    /// `values` (checked with a debug assertion); reuse it across calls to
+    /// avoid per-call allocation in hot loops. An empty slice leaves `out`
+    /// untouched. NaNs propagate.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [1.0_f32, 2.0, 3.0];
+    /// let mut out = vec![0.0_f32; v.len()];
+    /// lanes::ml::f32::layer_norm_into(&v, 1e-5, &mut out);
+    /// let m: f32 = out.iter().sum::<f32>() / 3.0;
+    /// assert!(m.abs() < 1e-6);
+    /// // sum of squares after norm is n·var/(var+eps) ≈ 3 for this input.
+    /// let s: f32 = out.iter().map(|x| x * x).sum();
+    /// assert!((s - 3.0).abs() < 1e-3);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    #[allow(clippy::cast_precision_loss)] // `len as f32` is inherent to the mean
+    pub fn layer_norm_into(values: &[f32], eps: f32, out: &mut [f32]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_layer_norm(backend, values, eps, out);
+    }
+
+    /// Layer normalization, returning a new `Vec`. Convenience wrapper
+    /// around [`layer_norm_into`]; prefer the `_into` form in hot loops.
     ///
     /// # Example
     /// ```
     /// let v = lanes::ml::f32::layer_norm(&[1.0_f32, 2.0, 3.0], 1e-5);
     /// let m: f32 = v.iter().sum::<f32>() / 3.0;
     /// assert!(m.abs() < 1e-6);
-    /// // sum of squares after norm is n·var/(var+eps) ≈ 3 for this input.
-    /// let s: f32 = v.iter().map(|x| x * x).sum();
-    /// assert!((s - 3.0).abs() < 1e-3);
     /// ```
-    #[cfg(feature = "alloc")]
     #[must_use]
-    #[allow(clippy::cast_precision_loss)] // `len as f32` is inherent to the mean
     pub fn layer_norm(values: &[f32], eps: f32) -> Vec<f32> {
         let mut out = alloc::vec![0.0_f32; values.len()];
-        if values.is_empty() {
-            return out;
-        }
-        let backend = Backend::detect();
-        let mean = kernels::dispatch_sum(backend, values) / values.len() as f32;
-        kernels::dispatch_sub_scalar(backend, values, mean, mean, &mut out);
-        let centered: alloc::vec::Vec<f32> = out.clone();
-        kernels::dispatch_rms_norm(backend, &centered, eps, &mut out);
+        layer_norm_into(values, eps, &mut out);
         out
     }
 }
@@ -388,12 +411,15 @@ pub mod f64 {
         out
     }
 
-    /// Log-softmax over a slice: `x_i − logsumexp(x)` elementwise.
+    /// Log-softmax over a slice: `x_i − logsumexp(x)` elementwise, written
+    /// into `out`.
     ///
     /// Numerically stable via the max-shift: `x_i − max(x) − ln(Σ_j exp(x_j −
     /// max(x)))`. This is the primitive `PyTorch`'s [`nn.LogSoftmax`] computes
-    /// (paired with [`nn.NLLLoss`] it forms [`nn.CrossEntropyLoss`]). Returns a
-    /// new `Vec` of the same length; an empty slice yields an empty `Vec`.
+    /// (paired with [`nn.NLLLoss`] it forms [`nn.CrossEntropyLoss`]).
+    /// Allocation-free: `out` must have the same length as `values` (checked
+    /// with a debug assertion); reuse it across calls to avoid per-call
+    /// allocation in hot loops. An empty slice leaves `out` untouched.
     ///
     /// Reference: the max-subtraction trick and the fused
     /// log-softmax/NLL/cross-entropy decomposition as documented in
@@ -402,27 +428,38 @@ pub mod f64 {
     ///
     /// # Example
     /// ```
+    /// let v = [1.0_f64, 2.0, 3.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::ml::f64::log_softmax_into(&v, &mut out);
+    /// let s: f64 = out.iter().map(|x| x.exp()).sum();
+    /// assert!((s - 1.0).abs() < 1e-12);
+    /// assert!(out[2] > out[1] && out[1] > out[0]);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    pub fn log_softmax_into(values: &[f64], out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_log_softmax_f64(backend, values, out);
+    }
+
+    /// Log-softmax over a slice, returning a new `Vec`. Convenience wrapper
+    /// around [`log_softmax_into`]; prefer the `_into` form in hot loops.
+    ///
+    /// # Example
+    /// ```
     /// let v = lanes::ml::f64::log_softmax(&[1.0_f64, 2.0, 3.0]);
     /// let s: f64 = v.iter().map(|x| x.exp()).sum();
     /// assert!((s - 1.0).abs() < 1e-12);
-    /// assert!(v[2] > v[1] && v[1] > v[0]);
     /// ```
     #[must_use]
     pub fn log_softmax(values: &[f64]) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        if values.is_empty() {
-            return out;
-        }
-        let backend = Backend::detect();
-        let m = kernels::dispatch_max_f64(backend, values).unwrap_or(f64::NAN);
-        kernels::dispatch_sub_scalar_f64(backend, values, m, m, &mut out);
-        let shifted = out.clone();
-        kernels::dispatch_exp_f64(backend, &shifted, &mut out);
-        // Subtract separately: (x_i - m) - ln(s). Adding ln(s) to m first
-        // loses it when |m| ≫ ln(s) (the f64 ulp of a large m exceeds
-        // ln(s)), which would make every output round to 0.
-        let log_sum = kernels::ln::ln_f64(kernels::dispatch_sum_f64(backend, &out));
-        kernels::dispatch_sub_scalar_f64(backend, &shifted, log_sum, log_sum, &mut out);
+        log_softmax_into(values, &mut out);
         out
     }
 
@@ -560,47 +597,56 @@ pub mod f64 {
     /// ```
     #[must_use]
     pub fn logsumexp(values: &[f64]) -> f64 {
-        if values.is_empty() {
-            return f64::NEG_INFINITY;
-        }
         let backend = Backend::detect();
-        let m = kernels::dispatch_max_f64(backend, values).unwrap_or(f64::NAN);
-        let mut out = alloc::vec![0.0_f64; values.len()];
-        kernels::dispatch_sub_scalar_f64(backend, values, m, m, &mut out);
-        let shifted = out.clone();
-        kernels::dispatch_exp_f64(backend, &shifted, &mut out);
-        let s = kernels::dispatch_sum_f64(backend, &out);
-        m + kernels::ln::ln_f64(s)
+        kernels::dispatch_logsumexp_f64(backend, values)
     }
 
-    /// Layer normalization: `(x_i - mean(x)) / sqrt(variance(x) + eps)`.
+    /// Layer normalization: `(x_i - mean(x)) / sqrt(variance(x) + eps)`,
+    /// written into `out`.
     ///
     /// The standard pre-activation norm (complement to [`rms_norm`], which
-    /// drops the mean). Returns a new `Vec` of the same length; an empty
-    /// slice yields an empty `Vec`. NaNs propagate.
+    /// drops the mean). Allocation-free: `out` must have the same length as
+    /// `values` (checked with a debug assertion); reuse it across calls to
+    /// avoid per-call allocation in hot loops. An empty slice leaves `out`
+    /// untouched. NaNs propagate.
+    ///
+    /// # Example
+    /// ```
+    /// let v = [1.0_f64, 2.0, 3.0];
+    /// let mut out = vec![0.0_f64; v.len()];
+    /// lanes::ml::f64::layer_norm_into(&v, 1e-10, &mut out);
+    /// let m: f64 = out.iter().sum::<f64>() / 3.0;
+    /// assert!(m.abs() < 1e-12);
+    /// // sum of squares after norm is n·var/(var+eps) ≈ 3 for this input.
+    /// let s: f64 = out.iter().map(|x| x * x).sum();
+    /// assert!((s - 3.0).abs() < 1e-9);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != values.len()`.
+    #[allow(clippy::cast_precision_loss)] // `len as f64` is inherent to the mean
+    pub fn layer_norm_into(values: &[f64], eps: f64, out: &mut [f64]) {
+        // Always-on check: the backend kernels use unchecked writes, so a
+        // short `out` would be UB; panicking here keeps the safe API sound.
+        assert_eq!(values.len(), out.len());
+        let backend = Backend::detect();
+        kernels::dispatch_layer_norm_f64(backend, values, eps, out);
+    }
+
+    /// Layer normalization, returning a new `Vec`. Convenience wrapper
+    /// around [`layer_norm_into`]; prefer the `_into` form in hot loops.
     ///
     /// # Example
     /// ```
     /// let v = lanes::ml::f64::layer_norm(&[1.0_f64, 2.0, 3.0], 1e-10);
     /// let m: f64 = v.iter().sum::<f64>() / 3.0;
     /// assert!(m.abs() < 1e-12);
-    /// // sum of squares after norm is n·var/(var+eps) ≈ 3 for this input.
-    /// let s: f64 = v.iter().map(|x| x * x).sum();
-    /// assert!((s - 3.0).abs() < 1e-9);
     /// ```
-    #[cfg(feature = "alloc")]
     #[must_use]
-    #[allow(clippy::cast_precision_loss)] // `len as f64` is inherent to the mean
     pub fn layer_norm(values: &[f64], eps: f64) -> Vec<f64> {
         let mut out = alloc::vec![0.0_f64; values.len()];
-        if values.is_empty() {
-            return out;
-        }
-        let backend = Backend::detect();
-        let mean = kernels::dispatch_sum_f64(backend, values) / values.len() as f64;
-        kernels::dispatch_sub_scalar_f64(backend, values, mean, mean, &mut out);
-        let centered = out.clone();
-        kernels::dispatch_rms_norm_f64(backend, &centered, eps, &mut out);
+        layer_norm_into(values, eps, &mut out);
         out
     }
 }

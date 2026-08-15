@@ -205,6 +205,59 @@ crate::simd_softmax!(
     |x: f32| crate::kernels::exp::exp(x)
 );
 
+// Logsumexp: two-pass scalar-returning reduction (max → Σexp → max+ln).
+crate::simd_logsumexp!(
+    logsumexp,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    _mm256_max_ps,
+    _mm256_sub_ps,
+    |v| unsafe { vexp_256(v) },
+    |v| unsafe { hsum_256(v) },
+    |v| unsafe { hmax_256(v) },
+    |s| unsafe { _mm256_set1_ps(s) },
+    |x: f32| crate::kernels::exp::exp(x),
+    crate::kernels::ln::ln
+);
+
+// Log-softmax: three-pass map (max → Σexp → (x-m)-ln(sum)), 0-alloc.
+crate::simd_log_softmax!(
+    log_softmax,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    |p, v| unsafe { _mm256_storeu_ps(p, v) },
+    _mm256_max_ps,
+    _mm256_sub_ps,
+    |v| unsafe { vexp_256(v) },
+    |v| unsafe { hsum_256(v) },
+    |v| unsafe { hmax_256(v) },
+    |s| unsafe { _mm256_set1_ps(s) },
+    |x: f32| crate::kernels::exp::exp(x),
+    crate::kernels::ln::ln
+);
+
+// Layer norm: three-pass (mean → center+Σsq → scale), 0-alloc.
+crate::simd_layer_norm!(
+    layer_norm,
+    f32,
+    "avx2",
+    8,
+    |p| unsafe { _mm256_loadu_ps(p) },
+    |p, v| unsafe { _mm256_storeu_ps(p, v) },
+    _mm256_add_ps,
+    _mm256_sub_ps,
+    _mm256_setzero_ps(),
+    |acc: __m256, v: __m256| _mm256_add_ps(acc, _mm256_mul_ps(v, v)),
+    |v| unsafe { hsum_256(v) },
+    |s| unsafe { _mm256_set1_ps(s) },
+    |v, inv| _mm256_mul_ps(v, _mm256_set1_ps(inv)),
+    crate::kernels::sqrt::sqrt
+);
+
 crate::simd_map!(
     sigmoid,
     f32,
@@ -389,18 +442,6 @@ crate::simd_map!(
 );
 
 // RMS norm: two-pass (sum of squares, then scale by rsqrt).
-// Sub scalar: x - p (used by logsumexp/layer_norm centering).
-crate::simd_map_param!(
-    sub_scalar,
-    f32,
-    "avx2",
-    8,
-    |p| unsafe { _mm256_loadu_ps(p) },
-    |p, v| unsafe { _mm256_storeu_ps(p, v) },
-    |v: __m256, p1: f32, _p2: f32| _mm256_sub_ps(v, _mm256_set1_ps(p1)),
-    |x: f32, p1: f32, _p2: f32| x - p1
-);
-
 crate::simd_rms_norm!(
     rms_norm,
     f32,
@@ -1174,6 +1215,59 @@ crate::simd_softmax!(
     |x: f64| crate::kernels::exp::exp_f64(x)
 );
 
+// Logsumexp (f64): two-pass scalar-returning reduction.
+crate::simd_logsumexp!(
+    logsumexp_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |a, b| unsafe { _mm256_max_pd(a, b) },
+    |a, b| unsafe { _mm256_sub_pd(a, b) },
+    |v| unsafe { vexp_256d(v) },
+    |v| unsafe { hsum_256d(v) },
+    |v| unsafe { hmax_256d(v) },
+    |s| unsafe { _mm256_set1_pd(s) },
+    |x: f64| crate::kernels::exp::exp_f64(x),
+    crate::kernels::ln::ln_f64
+);
+
+// Log-softmax (f64): three-pass map, 0-alloc.
+crate::simd_log_softmax!(
+    log_softmax_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |a, b| unsafe { _mm256_max_pd(a, b) },
+    |a, b| unsafe { _mm256_sub_pd(a, b) },
+    |v| unsafe { vexp_256d(v) },
+    |v| unsafe { hsum_256d(v) },
+    |v| unsafe { hmax_256d(v) },
+    |s| unsafe { _mm256_set1_pd(s) },
+    |x: f64| crate::kernels::exp::exp_f64(x),
+    crate::kernels::ln::ln_f64
+);
+
+// Layer norm (f64): three-pass, 0-alloc.
+crate::simd_layer_norm!(
+    layer_norm_f64,
+    f64,
+    "avx2",
+    4,
+    |p| unsafe { _mm256_loadu_pd(p) },
+    |p, v| unsafe { _mm256_storeu_pd(p, v) },
+    |a, b| unsafe { _mm256_add_pd(a, b) },
+    |a, b| unsafe { _mm256_sub_pd(a, b) },
+    _mm256_setzero_pd(),
+    |acc: __m256d, v: __m256d| _mm256_add_pd(acc, _mm256_mul_pd(v, v)),
+    |v| unsafe { hsum_256d(v) },
+    |s| unsafe { _mm256_set1_pd(s) },
+    |v, inv| _mm256_mul_pd(v, _mm256_set1_pd(inv)),
+    crate::kernels::sqrt::sqrt_f64
+);
+
 crate::simd_map!(
     sigmoid_f64,
     f64,
@@ -1381,18 +1475,6 @@ crate::simd_map!(
 );
 
 // RMS norm (f64).
-// Sub scalar (f64): x - p.
-crate::simd_map_param!(
-    sub_scalar_f64,
-    f64,
-    "avx2",
-    4,
-    |p| unsafe { _mm256_loadu_pd(p) },
-    |p, v| unsafe { _mm256_storeu_pd(p, v) },
-    |v: __m256d, p1: f64, _p2: f64| _mm256_sub_pd(v, _mm256_set1_pd(p1)),
-    |x: f64, p1: f64, _p2: f64| x - p1
-);
-
 crate::simd_rms_norm!(
     rms_norm_f64,
     f64,

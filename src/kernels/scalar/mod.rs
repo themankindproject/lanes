@@ -113,6 +113,65 @@ pub(crate) fn rms_norm(values: &[f32], eps: f32, out: &mut [f32]) {
     }
 }
 
+/// Scalar log-sum-exp: `max + ln(Σ exp(x − max))`. Empty input yields
+/// `-infinity`. The max shift prevents overflow for large inputs. Gated on
+/// `alloc`: its only caller (`dispatch_logsumexp`) is alloc-gated.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn logsumexp(values: &[f32]) -> f32 {
+    let Some(m) = values.iter().copied().reduce(f32::max) else {
+        return f32::NEG_INFINITY;
+    };
+    let sum = values
+        .iter()
+        .map(|&x| crate::kernels::exp::exp(x - m))
+        .sum::<f32>();
+    m + crate::kernels::ln::ln(sum)
+}
+
+/// Scalar log-softmax into `out`: `x_i − logsumexp(x)`. Empty input leaves
+/// `out` untouched. The `ln(sum)` term is subtracted from `(x_i − m)`
+/// separately — never folded into `m` — so it does not vanish in the ulp
+/// of a large `m`.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn log_softmax(values: &[f32], out: &mut [f32]) {
+    let Some(m) = values.iter().copied().reduce(f32::max) else {
+        return;
+    };
+    let sum = values
+        .iter()
+        .map(|&x| crate::kernels::exp::exp(x - m))
+        .sum::<f32>();
+    let log_sum = crate::kernels::ln::ln(sum);
+    for (o, &x) in out.iter_mut().zip(values) {
+        *o = (x - m) - log_sum;
+    }
+}
+
+/// Scalar layer norm into `out`: `(x_i − mean) / sqrt(var + eps)` with
+/// population variance. Empty input leaves `out` untouched. NaNs propagate.
+#[cfg(feature = "alloc")]
+#[inline]
+#[allow(clippy::cast_precision_loss)] // `len as f32` is inherent to the mean
+pub(crate) fn layer_norm(values: &[f32], eps: f32, out: &mut [f32]) {
+    let len = values.len();
+    if len == 0 {
+        return;
+    }
+    let mean = values.iter().sum::<f32>() / len as f32;
+    let mut sum_sq = 0.0;
+    for (i, &x) in values.iter().enumerate() {
+        let c = x - mean;
+        out[i] = c;
+        sum_sq += c * c;
+    }
+    let inv = 1.0 / crate::kernels::sqrt::sqrt(sum_sq / len as f32 + eps);
+    for o in out.iter_mut() {
+        *o *= inv;
+    }
+}
+
 /// Scalar softplus reference: `ln(1 + e^x)` via the overflow-free form
 /// `max(x, 0) + ln1p(e^-|x|)` — no exp overflow, no precision loss for
 /// large |x|. Writes into `out` (same length as `values`).
@@ -182,15 +241,6 @@ pub(crate) fn sqrt(values: &[f32], out: &mut [f32]) {
 #[inline]
 pub(crate) fn clip(values: &[f32], lo: f32, hi: f32, out: &mut [f32]) {
     map(values, out, |x| x.clamp(lo, hi));
-}
-
-/// Elementwise subtract a scalar into `out`: `x - p`.
-///
-/// Gated on `alloc`: its only caller (`dispatch_sub_scalar`) is alloc-gated.
-#[cfg(feature = "alloc")]
-#[inline]
-pub(crate) fn sub_scalar(values: &[f32], p: f32, _p2: f32, out: &mut [f32]) {
-    map(values, out, |x| x - p);
 }
 
 /// Elementwise reciprocal square root into `out`: `1/sqrt(x)`.
@@ -434,15 +484,6 @@ pub(crate) fn rsqrt_f64(values: &[f64], out: &mut [f64]) {
     }
 }
 
-/// Elementwise subtract a scalar into `out`: `x - p`.
-#[cfg(feature = "alloc")]
-#[inline]
-pub(crate) fn sub_scalar_f64(values: &[f64], p: f64, _p2: f64, out: &mut [f64]) {
-    for (o, &x) in out.iter_mut().zip(values) {
-        *o = x - p;
-    }
-}
-
 pub(crate) fn exp_f64(values: &[f64], out: &mut [f64]) {
     for (v, o) in values.iter().zip(out) {
         *o = crate::kernels::exp::exp_f64(*v);
@@ -576,6 +617,65 @@ pub(crate) fn log1p_f64(z: f64) -> f64 {
         z
     } else {
         crate::kernels::ln::ln_f64(u) * z / (u - 1.0)
+    }
+}
+
+/// Scalar log-sum-exp (f64): `max + ln(Σ exp(x − max))`. Empty input yields
+/// `-infinity`. The max shift prevents overflow for large inputs. Gated on
+/// `alloc`: its only caller (`dispatch_logsumexp_f64`) is alloc-gated.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn logsumexp_f64(values: &[f64]) -> f64 {
+    let Some(m) = values.iter().copied().reduce(f64::max) else {
+        return f64::NEG_INFINITY;
+    };
+    let sum = values
+        .iter()
+        .map(|&x| crate::kernels::exp::exp_f64(x - m))
+        .sum::<f64>();
+    m + crate::kernels::ln::ln_f64(sum)
+}
+
+/// Scalar log-softmax into `out` (f64): `x_i − logsumexp(x)`. Empty input
+/// leaves `out` untouched. `ln(sum)` is subtracted from `(x_i − m)`
+/// separately — never folded into `m` — so it does not vanish in the ulp of
+/// a large `m`.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn log_softmax_f64(values: &[f64], out: &mut [f64]) {
+    let Some(m) = values.iter().copied().reduce(f64::max) else {
+        return;
+    };
+    let sum = values
+        .iter()
+        .map(|&x| crate::kernels::exp::exp_f64(x - m))
+        .sum::<f64>();
+    let log_sum = crate::kernels::ln::ln_f64(sum);
+    for (o, &x) in out.iter_mut().zip(values) {
+        *o = (x - m) - log_sum;
+    }
+}
+
+/// Scalar layer norm into `out` (f64): `(x_i − mean) / sqrt(var + eps)` with
+/// population variance. Empty input leaves `out` untouched. NaNs propagate.
+#[cfg(feature = "alloc")]
+#[inline]
+#[allow(clippy::cast_precision_loss)] // `len as f64` is inherent to the mean
+pub(crate) fn layer_norm_f64(values: &[f64], eps: f64, out: &mut [f64]) {
+    let len = values.len();
+    if len == 0 {
+        return;
+    }
+    let mean = values.iter().sum::<f64>() / len as f64;
+    let mut sum_sq = 0.0;
+    for (i, &x) in values.iter().enumerate() {
+        let c = x - mean;
+        out[i] = c;
+        sum_sq += c * c;
+    }
+    let inv = 1.0 / crate::kernels::sqrt::sqrt_f64(sum_sq / len as f64 + eps);
+    for o in out.iter_mut() {
+        *o *= inv;
     }
 }
 
@@ -808,5 +908,63 @@ mod tests {
         let mut out = [0.0_f32; 1];
         relu(&[-0.0], &mut out);
         assert_eq!(out[0], 0.0);
+    }
+
+    #[test]
+    fn logsumexp_known_values() {
+        // Empty → -inf; single → x; two equal → x + ln 2; shift-invariant.
+        assert_eq!(logsumexp(&[]), f32::NEG_INFINITY);
+        assert_eq!(logsumexp(&[3.5]), 3.5);
+        assert!((logsumexp(&[1.0, 1.0]) - (1.0 + 2.0_f32.ln())).abs() < 1e-6);
+        // [0, -1]: max 0, so result is ln(1 + e^-1).
+        let want = (1.0 + (-1.0_f32).exp()).ln();
+        assert!((logsumexp(&[0.0, -1.0]) - want).abs() < 1e-6);
+        // Shift invariance: adding C to every input adds C to the result.
+        let a = [1.0_f32, 2.0, 3.0];
+        let b = [101.0_f32, 102.0, 103.0];
+        assert!((logsumexp(&b) - logsumexp(&a) - 100.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn log_softmax_sums_to_one() {
+        let v = [1.0_f32, 2.0, 3.0];
+        let mut out = [0.0_f32; 3];
+        log_softmax(&v, &mut out);
+        let s: f32 = out.iter().map(|x| x.exp()).sum();
+        assert!((s - 1.0).abs() < 1e-6, "exp-sum {s}");
+        // Equal inputs → each output is -ln(n).
+        let u = [5.0_f32; 4];
+        let mut o = [0.0_f32; 4];
+        log_softmax(&u, &mut o);
+        for x in o {
+            assert!((x + 4.0_f32.ln()).abs() < 1e-6, "x={x}");
+        }
+    }
+
+    #[test]
+    fn layer_norm_unit_variance() {
+        let v = [1.0_f32, 2.0, 3.0, 4.0];
+        let mut out = [0.0_f32; 4];
+        layer_norm(&v, 1e-5, &mut out);
+        let mean: f32 = out.iter().sum::<f32>() / 4.0;
+        assert!(mean.abs() < 1e-5, "mean {mean}");
+        let var: f32 = out.iter().map(|x| x * x).sum::<f32>() / 4.0;
+        assert!((var - 1.0).abs() < 1e-3, "var {var}");
+        // Constant input: variance 0, so eps dominates → output ~0.
+        let c = [7.0_f32; 4];
+        layer_norm(&c, 1e-5, &mut out);
+        for x in out {
+            assert!(x.abs() < 1e-3, "const input gave {x}");
+        }
+    }
+
+    #[test]
+    fn logsumexp_f64_known_values() {
+        assert_eq!(logsumexp_f64(&[]), f64::NEG_INFINITY);
+        assert_eq!(logsumexp_f64(&[3.5]), 3.5);
+        assert!((logsumexp_f64(&[1.0, 1.0]) - (1.0 + 2.0_f64.ln())).abs() < 1e-12);
+        let a = [1.0_f64, 2.0, 3.0];
+        let b = [1001.0_f64, 1002.0, 1003.0];
+        assert!((logsumexp_f64(&b) - logsumexp_f64(&a) - 1000.0).abs() < 1e-9);
     }
 }
