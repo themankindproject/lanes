@@ -119,14 +119,15 @@ pub use error::Error;
 
 /// Statistical reductions (aggregates over slices): `sum`, `prod`, `min`,
 /// `max`, `argmax`, `argmin`, `sum_sq`, `mean`, `variance`, `std_dev`,
-/// `geometric_mean`, `dot`.
+/// `geometric_mean`, `dot`, `count_zero`, `count_nan`, `count_infinite`.
 ///
 /// Precision is selected via the [`f32`] or [`f64`] submodule.
 pub mod stats {
     pub use crate::algorithms::stats::{f32, f64};
 }
 
-/// Distance and norm functions: `l1_norm`, `l2_norm`, `max_norm`.
+/// Distance and norm functions: `l1_norm`, `l2_norm`, `max_norm`,
+/// `squared_distance`.
 /// All are `no_std`-clean (the sqrt for `l2_norm` is the std-free kernel).
 /// Precision is selected via the [`f32`] or [`f64`] submodule.
 pub mod distance {
@@ -134,7 +135,8 @@ pub mod distance {
 }
 
 /// Elementwise math functions (per-element maps): `sqrt`, `clip`, `rsqrt`,
-/// `exp`, `ln`, `tanh`. Each also has an allocation-free `_into` variant
+/// `exp`, `ln`, `tanh`, `hypot`, `powi`, `abs_sub`. Each also has an
+/// allocation-free `_into` variant
 /// (e.g. [`math::f32::exp_into`]) that writes into a caller-provided
 /// buffer — prefer those in hot loops. Precision is selected via the
 /// [`f32`] or [`f64`] submodule.

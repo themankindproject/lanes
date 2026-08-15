@@ -38,10 +38,11 @@ let s64 = f64::sum(&[1.0, 2.0, 3.0]);  // 6.0
 ## Functions
 
 - **`stats`** — `sum`, `prod`, `min`, `max`, `argmax`, `argmin`, `sum_sq`,
-  `mean`, `variance`, `std_dev`, `geometric_mean`, `dot`
-- **`distance`** — `l1_norm`, `l2_norm`, `max_norm`
-- **`math`** — `sqrt`, `clip`, `rsqrt`, `exp`, `ln`, `tanh` (each also as
-  `*_into`)
+  `mean`, `variance`, `std_dev`, `geometric_mean`, `dot`, `count_zero`,
+  `count_nan`, `count_infinite`
+- **`distance`** — `l1_norm`, `l2_norm`, `max_norm`, `squared_distance`
+- **`math`** — `sqrt`, `clip`, `rsqrt`, `exp`, `ln`, `tanh`, `hypot`,
+  `powi`, `abs_sub` (each also as `*_into`)
 - **`ml`** — `softmax`, `log_softmax`, `sigmoid`, `silu`, `gelu`, `relu`,
   `softplus`, `rms_norm`, `layer_norm`, `cosine_similarity`, `logsumexp`
   (every map-style op also as `*_into`)
