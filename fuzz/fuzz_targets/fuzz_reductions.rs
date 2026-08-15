@@ -58,4 +58,17 @@ fuzz_target!(|input: ReductionsInput| {
             assert!(lo <= hi, "min {lo} > max {hi}");
         }
     }
+
+    // count_*: never panic; counts are <= len, and NaN/infinite predicates
+    // are disjoint.
+    let cz = lanes::stats::f32::count_zero(v);
+    let cn = lanes::stats::f32::count_nan(v);
+    let ci = lanes::stats::f32::count_infinite(v);
+    assert!(cz <= v.len() && cn <= v.len() && ci <= v.len());
+    assert!(cn + ci <= v.len());
+    if v.is_empty() {
+        assert_eq!(cz, 0);
+        assert_eq!(cn, 0);
+        assert_eq!(ci, 0);
+    }
 });
