@@ -419,7 +419,7 @@ crate::simd_map!(
 );
 
 // Clip: one-pass map with lo/hi params, min(max(v, lo), hi).
-crate::simd_map_param!(
+crate::simd_clip!(
     clip,
     f32,
     "avx512f",
@@ -921,7 +921,7 @@ crate::simd_map!(
     |x: f64| 1.0 / crate::kernels::sqrt::sqrt_f64(x)
 );
 
-crate::simd_map_param!(
+crate::simd_clip!(
     clip_f64,
     f64,
     "avx512f",

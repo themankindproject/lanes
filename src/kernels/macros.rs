@@ -33,6 +33,7 @@
 /// * `$tail` — a `fn($t, $t) -> $t` applied to `(result_so_far, element)`
 ///   for the scalar tail (e.g. `|r, v| r + v`, or `f32::min`).
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_reduce {
     ($name:ident, $t:ty, $feat:literal, $lanes:expr, $load:expr, $acc_ident:expr, $combine:expr, $reduce:expr, $tail:expr) => {
         /// SIMD reduction kernel. See the enclosing module for semantics.
@@ -91,6 +92,7 @@ macro_rules! simd_reduce {
 /// * `$max_reduce` — `fn(V) -> $t` horizontal max (distinct from `$reduce`).
 /// * `$set1` — `fn($t) -> V` broadcast a scalar to all lanes.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_softmax {
     ($name:ident, $t:ty, $feat:literal, $lanes:expr, $load:expr, $store:expr, $max:expr, $sub:expr, $exp:expr, $add:expr, $mul:expr, $reduce:expr, $max_reduce:expr, $set1:expr, $exp_scalar:expr) => {
         /// SIMD softmax kernel. See the enclosing module for semantics.
@@ -172,6 +174,7 @@ macro_rules! simd_softmax {
 /// * `$tail` — a `fn($t, $t, $t) -> $t` applied to
 ///   `(result_so_far, va, vb)` for the scalar tail (e.g. `|r, a, b| r + a * b`).
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_reduce2 {
     ($name:ident, $t:ty, [$( $feat:literal ),+], $lanes:expr, $load:expr, $acc_ident:expr, $combine:expr, $reduce:expr, $tail:expr) => {
         /// SIMD two-input reduction kernel. See the enclosing module for semantics.
@@ -228,6 +231,7 @@ macro_rules! simd_reduce2 {
 /// The generated function is `unsafe fn` with `#[target_feature]`; the
 /// caller must verify the CPU feature before invoking it.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_exp {
     (
         $name:ident, $t:ty, $feat:literal, $vt:ty, $ivt:ty,
@@ -340,6 +344,7 @@ macro_rules! simd_exp {
 /// The generated function is `unsafe fn` with `#[target_feature]`; the
 /// caller must verify the CPU feature before invoking it.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_exp_f64 {
     (
         $name:ident, $feat:literal, $vt:ty, $ivt:ty,
@@ -459,6 +464,7 @@ macro_rules! simd_exp_f64 {
 /// * `$cmpgt_f/$cmplt_f/$cmpeq_f` — float compares (float-mask vectors).
 /// * `$andf/$andnotf/$orf` — float-domain bit ops (for masking).
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_ln {
     (
         $name:ident, $feat:literal, $vt:ty, $ivt:ty,
@@ -564,6 +570,7 @@ macro_rules! simd_ln {
 /// The generated function is `unsafe fn` with `#[target_feature]`; the
 /// caller must verify the CPU feature before invoking it.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_ln_f64 {
     (
         $name:ident, $feat:literal, $vt:ty, $ivt:ty,
@@ -694,6 +701,7 @@ macro_rules! simd_ln_f64 {
 /// The generated function is `unsafe fn` with `#[target_feature]`; the
 /// caller must verify the CPU feature and equal-length slices.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_map {
     (
         $name:ident, $t:ty, $feat:literal, $lanes:expr,
@@ -724,12 +732,11 @@ macro_rules! simd_map {
     };
 }
 
-/// Generate a one-pass vector map kernel with extra scalar parameters
-/// (`clip` and future parameterized maps).
+/// Generate a one-pass vector clip kernel (`clamp(x, lo, hi)` per lane).
 ///
-/// Same skeleton as [`simd_map!`], but the generated function takes two
-/// extra `$t` parameters, passed to both the vector `$op` and the scalar
-/// `$scalar`.
+/// Same skeleton as [`simd_map!`], but the generated function takes the
+/// `lo`/`hi` bound parameters, passed to both the vector `$op` and the
+/// scalar tail `$scalar`.
 ///
 /// # Parameters
 ///
@@ -739,19 +746,20 @@ macro_rules! simd_map {
 /// * `$lanes` — vector width in `$t` elements.
 /// * `$load` — `fn(*const $t) -> V`.
 /// * `$store` — `fn(*mut $t, V)`.
-/// * `$op` — `fn(V, $t, $t) -> V` elementwise map (params after the vector).
-/// * `$scalar` — `fn($t, $t, $t) -> $t` scalar tail map.
+/// * `$op` — `fn(V, $t, $t) -> V` elementwise clamp.
+/// * `$scalar` — `fn($t, $t, $t) -> $t` scalar tail clamp.
 ///
 /// # Safety
 /// The generated function is `unsafe fn` with `#[target_feature]`; the
 /// caller must verify the CPU feature and equal-length slices.
 #[macro_export]
-macro_rules! simd_map_param {
+#[doc(hidden)]
+macro_rules! simd_clip {
     (
         $name:ident, $t:ty, $feat:literal, $lanes:expr,
         $load:expr, $store:expr, $op:expr, $scalar:expr
     ) => {
-        /// Vector elementwise map with parameters. See the scalar reference.
+        /// Vector elementwise clip. See the scalar reference for semantics.
         ///
         /// # Safety
         /// Caller must ensure the CPU feature is available and that `values`
@@ -759,17 +767,17 @@ macro_rules! simd_map_param {
         #[cfg(feature = "alloc")]
         #[inline]
         #[target_feature(enable = $feat)]
-        pub(crate) unsafe fn $name(values: &[$t], p1: $t, p2: $t, out: &mut [$t]) {
+        pub(crate) unsafe fn $name(values: &[$t], lo: $t, hi: $t, out: &mut [$t]) {
             let len = values.len();
             let chunks = len / $lanes;
             let rem = len % $lanes;
             for i in 0..chunks {
                 let v = $load(unsafe { values.as_ptr().add(i * $lanes) });
-                $store(unsafe { out.as_mut_ptr().add(i * $lanes) }, $op(v, p1, p2));
+                $store(unsafe { out.as_mut_ptr().add(i * $lanes) }, $op(v, lo, hi));
             }
             for i in 0..rem {
                 let x = unsafe { *values.get_unchecked(chunks * $lanes + i) };
-                let mapped = $scalar(x, p1, p2);
+                let mapped = $scalar(x, lo, hi);
                 unsafe { *out.get_unchecked_mut(chunks * $lanes + i) = mapped };
             }
         }
@@ -797,6 +805,7 @@ macro_rules! simd_map_param {
 /// * `$scale` — `fn(V, $t) -> V` multiply every lane by the scalar `1/√(ms+eps)`.
 /// * `$sqrt` — scalar sqrt (`kernels::sqrt::sqrt` / `sqrt_f64`).
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_rms_norm {
     (
         $name:ident, $t:ty, $feat:literal, $lanes:expr,
@@ -880,6 +889,7 @@ macro_rules! simd_rms_norm {
 /// The generated function is `unsafe fn` with `#[target_feature]`; the
 /// caller must verify the CPU feature and that `values` is non-empty.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_argminmax {
     (
         $name:ident, $t:ty, $feat:literal, $lanes:expr,
@@ -965,6 +975,7 @@ macro_rules! simd_argminmax {
 /// The generated function is `unsafe fn` with `#[target_feature]`; the
 /// caller must verify the CPU feature.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_logsumexp {
     (
         $name:ident, $t:ty, $feat:literal, $lanes:expr,
@@ -1048,6 +1059,7 @@ macro_rules! simd_logsumexp {
 /// caller must verify the CPU feature and that `values` and `out` have
 /// equal lengths.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_log_softmax {
     (
         $name:ident, $t:ty, $feat:literal, $lanes:expr,
@@ -1148,6 +1160,7 @@ macro_rules! simd_log_softmax {
 /// caller must verify the CPU feature and that `values` and `out` have
 /// equal lengths.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_layer_norm {
     (
         $name:ident, $t:ty, $feat:literal, $lanes:expr,

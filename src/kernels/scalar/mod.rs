@@ -7,10 +7,13 @@
 //! on `alloc`: their only public callers (`lanes::ml::*`) return a `Vec`.
 //! The exp they use (`kernels::exp`) is fully `no_std`.
 
+#[cfg(feature = "alloc")]
 use crate::kernels::exp;
 
 /// Constants for the GELU tanh approximation.
+#[cfg(feature = "alloc")]
 const GELU_A: f32 = 0.797_884_6; // sqrt(2/pi) in f32
+#[cfg(feature = "alloc")]
 const GELU_B: f32 = 0.044_715;
 
 /// Scalar softmax reference. Writes into `out` (same length as `values`).
@@ -189,10 +192,9 @@ pub(crate) fn softplus(values: &[f32], out: &mut [f32]) {
     });
 }
 
-/// `ln(1+z)` for `z ≥ 0` via the musl/fdlibm `s_log1pf` identity:
-/// `z·ln(1+z)/((1+z)-1)` — accurate even when `z` underflows toward 0.
 /// `ln(1+z)` for `z >= 0` (`musl s_log1pf.c` identity). Shared by the softplus
 /// scalar tails on every backend.
+#[cfg(feature = "alloc")]
 #[inline]
 #[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
 pub(crate) fn log1p(z: f32) -> f32 {
@@ -217,6 +219,17 @@ pub(crate) fn sum(values: &[f32]) -> f32 {
 #[cfg(feature = "alloc")]
 #[inline]
 fn map(values: &[f32], out: &mut [f32], op: impl Fn(f32) -> f32) {
+    debug_assert_eq!(values.len(), out.len());
+    for (v, o) in values.iter().zip(out) {
+        *o = op(*v);
+    }
+}
+
+/// `map` for `f64`, alloc-gated like its `f32` twin (its users are all
+/// alloc-gated dispatch paths).
+#[cfg(feature = "alloc")]
+#[inline]
+fn map_f64(values: &[f64], out: &mut [f64], op: impl Fn(f64) -> f64) {
     debug_assert_eq!(values.len(), out.len());
     for (v, o) in values.iter().zip(out) {
         *o = op(*v);
@@ -278,9 +291,7 @@ pub(crate) fn ln(values: &[f32], out: &mut [f32]) {
 #[cfg(feature = "alloc")]
 #[inline]
 pub(crate) fn ln_f64(values: &[f64], out: &mut [f64]) {
-    for (v, o) in values.iter().zip(out) {
-        *o = crate::kernels::ln::ln_f64(*v);
-    }
+    map_f64(values, out, crate::kernels::ln::ln_f64);
 }
 
 /// Compute the sum of squares of all elements in a slice.
@@ -461,33 +472,26 @@ pub(crate) fn argmin_f64(values: &[f64]) -> (f64, usize) {
 #[cfg(feature = "alloc")]
 #[inline]
 pub(crate) fn sqrt_f64(values: &[f64], out: &mut [f64]) {
-    for (v, o) in values.iter().zip(out) {
-        *o = crate::kernels::sqrt::sqrt_f64(*v);
-    }
+    map_f64(values, out, crate::kernels::sqrt::sqrt_f64);
 }
 
 /// Elementwise clip into `out`: `clamp(x, lo, hi)`.
 #[cfg(feature = "alloc")]
 #[inline]
 pub(crate) fn clip_f64(values: &[f64], lo: f64, hi: f64, out: &mut [f64]) {
-    for (v, o) in values.iter().zip(out) {
-        *o = v.clamp(lo, hi);
-    }
+    map_f64(values, out, |x| x.clamp(lo, hi));
 }
 
 /// Elementwise reciprocal square root into `out`: `1/sqrt(x)`.
 #[cfg(feature = "alloc")]
 #[inline]
 pub(crate) fn rsqrt_f64(values: &[f64], out: &mut [f64]) {
-    for (v, o) in values.iter().zip(out) {
-        *o = 1.0 / crate::kernels::sqrt::sqrt_f64(*v);
-    }
+    map_f64(values, out, |x| 1.0 / crate::kernels::sqrt::sqrt_f64(x));
 }
 
+#[cfg(feature = "alloc")]
 pub(crate) fn exp_f64(values: &[f64], out: &mut [f64]) {
-    for (v, o) in values.iter().zip(out) {
-        *o = crate::kernels::exp::exp_f64(*v);
-    }
+    map_f64(values, out, crate::kernels::exp::exp_f64);
 }
 
 /// Numerically-stable softmax into `out`.
@@ -606,9 +610,9 @@ pub(crate) fn softplus_f64(values: &[f64], out: &mut [f64]) {
     }
 }
 
-/// `ln(1+z)` for `z ≥ 0` via the musl/fdlibm `s_log1p` identity.
 /// `ln(1+z)` for `z >= 0` (`musl s_log1p.c` identity). Shared by the softplus
 /// scalar tails on every backend.
+#[cfg(feature = "alloc")]
 #[inline]
 #[allow(clippy::float_cmp)] // u == 1.0 is the musl underflow branch
 pub(crate) fn log1p_f64(z: f64) -> f64 {

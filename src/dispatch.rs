@@ -18,7 +18,7 @@
 /// The appropriate backend is selected at runtime based on CPU feature
 /// detection. Variants are target-dependent: only backends compiled for
 /// the current architecture are listed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
     /// Portable scalar implementation — always available.
     Scalar,
@@ -55,22 +55,6 @@ impl Backend {
         #[cfg(not(feature = "std"))]
         {
             Backend::Scalar
-        }
-    }
-
-    /// Stable, human-readable name of this backend.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Scalar => "scalar",
-            #[cfg(target_arch = "x86_64")]
-            Self::Sse2 => "sse2",
-            #[cfg(target_arch = "x86_64")]
-            Self::Avx2 => "avx2",
-            #[cfg(target_arch = "x86_64")]
-            Self::Avx512 => "avx512",
-            #[cfg(target_arch = "aarch64")]
-            Self::Neon => "neon",
         }
     }
 }

@@ -119,7 +119,6 @@ fuzz_target!(|input: NormsInput| {
             assert_eq!(actual, b.len());
             assert_ne!(a.len(), b.len());
         }
-        Err(_) => panic!("unexpected error variant"),
     }
 
     // layer_norm: no panic, same length, unit variance on finite, non-empty

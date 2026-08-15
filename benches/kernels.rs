@@ -6,7 +6,8 @@
 //! scalar-vs-SIMD speedup is measurable, and against the dispatched `lanes`
 //! entry point at sizes spanning cache-resident to memory-bandwidth-bound.
 //!
-//! To compare backends, set `LANES_BACKEND` (see docs/benchmarking.md):
+//! To compare backends, set `LANES_BACKEND` (e.g. `scalar`, `sse2`, `avx2`,
+//! `avx512`, `neon` on the matching platform):
 //!
 //! ```sh
 //! LANES_BACKEND=scalar cargo bench --bench kernels
@@ -15,22 +16,52 @@
 //! ```
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 
 /// Size ladder from cache-resident to memory-bandwidth-bound.
 const SIZES: &[usize] = &[16, 32, 64, 128, 256, 1024, 4096, 16_384, 65_536, 1_000_000];
 
+/// xorshift64* RNG: 6 lines, zero deps, deterministic and fast enough for
+/// benchmark data generation (uniformity is irrelevant — reproducibility is).
+struct XorShift64(u64);
+
+impl XorShift64 {
+    fn new(seed: u64) -> Self {
+        Self(seed.max(1))
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+}
+
 /// Deterministic random f32 data for reproducible benchmarks.
 fn random_f32_vec(n: usize, seed: u64) -> Vec<f32> {
-    let mut rng = StdRng::seed_from_u64(seed);
-    (0..n).map(|_| rng.gen_range(-1000.0..1000.0)).collect()
+    let mut rng = XorShift64::new(seed);
+    (0..n)
+        .map(|_| {
+            let hi = (rng.next_u64() >> 40) as u32;
+            let frac = (hi as f32) * (1.0 / (1u32 << 24) as f32);
+            (frac - 0.5) * 2000.0
+        })
+        .collect()
 }
 
 /// Deterministic random f64 data for reproducible benchmarks.
 fn random_f64_vec(n: usize, seed: u64) -> Vec<f64> {
-    let mut rng = StdRng::seed_from_u64(seed);
-    (0..n).map(|_| rng.gen_range(-1000.0..1000.0)).collect()
+    let mut rng = XorShift64::new(seed);
+    (0..n)
+        .map(|_| {
+            let u = rng.next_u64();
+            let hi = (u >> 40) as u32;
+            let frac = (hi as f64) * (1.0 / (1u32 << 24) as f64);
+            (frac - 0.5) * 2000.0
+        })
+        .collect()
 }
 
 /// Naive iterator baselines (independent of `lanes`).

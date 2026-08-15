@@ -74,6 +74,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `log_softmax`/`layer_norm` now delegate to the new `_into` kernels;
   the internal `sub_scalar` kernels were removed (dead after the
   restructure).
+- **Breaking:** `Backend::name()` and the `Hash` impl on `Backend` are
+  removed (both had zero callers; `{:?}` debug printing covers every
+  existing use).
+- `simd_map_param!` is renamed to `simd_clip!` (its only caller is
+  `clip`) with named `lo`/`hi` parameters; all 14 internal kernel
+  macros are now `#[doc(hidden)]` on docs.rs.
+- Benchmarks use a dependency-free xorshift64 generator instead of
+  `rand`; the `rand` dev-dependency and the redundant `[profile.bench]`
+  block are dropped.
+
+### Removed
+
+- `deny.toml` (no `cargo-deny` runner in CI or tooling) and
+  `site/index.html` (a gitignored single-file placeholder).
 
 ### Fixed
 
