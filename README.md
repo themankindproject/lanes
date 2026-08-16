@@ -59,6 +59,9 @@ let s64 = f64::sum(&[1.0, 2.0, 3.0]);        // 6.0
   `count_nan`, `count_infinite`
 - **`distance`** — `l1_norm`, `l2_norm`, `max_norm`, `squared_distance`,
   `kl_divergence`, `js_divergence`
+- **`binary`** — `hamming`, `jaccard` (bit-level distances over packed
+  `&[u8]` bitmaps: a slice of `n` bytes is a binary vector of `8n`
+  dimensions)
 - **`math`** — `sqrt`, `clip`, `rsqrt`, `exp`, `ln`, `tanh`, `hypot`,
   `powi`, `abs_sub` (each also as `*_into`)
 - **`ml`** — `softmax`, `log_softmax`, `sigmoid`, `silu`, `gelu`, `relu`,
@@ -107,6 +110,8 @@ expression compiled with identical settings. Reproduce with
 | `distance` | `squared_distance` | 12.5 µs | 147.0 µs | **11.8×** |
 | `distance` | `kl_divergence` | 104.4 µs | 538.9 µs | **5.2×** |
 | `distance` | `js_divergence` | 223.5 µs | 1307.1 µs | **5.8×** |
+| `binary` | `hamming` | 4.7 µs | 122.5 µs | **25.8×** |
+| `binary` | `jaccard` | 8.6 µs | 239.9 µs | **28.0×** |
 | `math` | `sqrt` | 27.6 µs | 27.6 µs | 1.0× |
 | `math` | `clip` | 11.3 µs | 14.0 µs | 1.2× |
 | `math` | `rsqrt` | 50.5 µs | 55.0 µs | 1.1× |
@@ -153,7 +158,8 @@ expression compiled with identical settings. Reproduce with
 Fallible kernels return `Result<_, lanes::Error>` instead of panicking:
 
 - two-input ops (`dot`, `squared_distance`, `abs_sub`, `hypot`,
-  `cosine_similarity`, `kl_divergence`, `js_divergence`) →
+  `cosine_similarity`, `kl_divergence`, `js_divergence`, `hamming`,
+  `jaccard`) →
   `Err(Error::LengthMismatch { expected, actual })`
   on unequal operand lengths
 - every `*_into` variant → `Err(Error::LengthMismatch { .. })` when the

@@ -46,6 +46,9 @@
 //! assert_eq!(s64, 6.0_f64);
 //! ```
 //!
+//! The `binary` family is the exception: it operates on packed `&[u8]`
+//! bitmaps with bit-level semantics and has no precision submodules.
+//!
 //! ## Supported backends
 //!
 //! | Architecture | Backend | Selection |
@@ -90,7 +93,8 @@
 //! so callers can branch on the exact failure mode:
 //!
 //! * Two-input operations (`dot`, `squared_distance`, `abs_sub`, `hypot`,
-//!   `cosine_similarity`, `kl_divergence`, `js_divergence`) return
+//!   `cosine_similarity`, `kl_divergence`, `js_divergence`, `hamming`,
+//!   `jaccard`) return
 //!   `Err(`[`Error::LengthMismatch`]`)` when their operands disagree in
 //!   length.
 //! * Every `_into` variant returns `Err(`[`Error::LengthMismatch`]`)` when
