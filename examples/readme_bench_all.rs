@@ -23,6 +23,20 @@ fn row(family: &str, name: &str, lanes_us: f64, naive_us: f64) {
     );
 }
 
+/// Abramowitz–Stegun 7.1.26 erf approximation (~1e-7 accuracy). Naive
+/// speed baseline only — NOT the same algorithm or accuracy class as the
+/// lanes kernel (which is ≤ 1 ulp / perfectly rounded).
+#[allow(clippy::excessive_precision)] // canonical published A&S coefficients
+fn as_erf(x: f32) -> f32 {
+    let t = 1.0 / (1.0 + 0.3275911 * x.abs());
+    let y = 1.0
+        - (((((1.061_405_429 * t - 1.453_152_027) * t) + 1.421_413_741) * t - 0.284_496_736) * t
+            + 0.254_829_592)
+            * t
+            * (-x * x).exp();
+    if x < 0.0 { -y } else { y }
+}
+
 fn main() {
     println!("backend: {:?}", lanes::Backend::detect());
     println!("family\tfunction\tlanes_us\tnaive_us\tspeedup");
@@ -356,6 +370,21 @@ fn main() {
         time_us(|| lanes::math::f32::tanh(&a)),
         time_us(|| a.iter().map(|&x| x.tanh()).collect::<Vec<_>>()),
     );
+
+    // ---------------- special ----------------
+    row(
+        "special",
+        "erf",
+        time_us(|| lanes::special::f32::erf(&a)),
+        time_us(|| a.iter().map(|&x| as_erf(x)).collect::<Vec<_>>()),
+    );
+    row(
+        "special",
+        "erfc",
+        time_us(|| lanes::special::f32::erfc(&a)),
+        time_us(|| a.iter().map(|&x| 1.0 - as_erf(x)).collect::<Vec<_>>()),
+    );
+
     row(
         "math",
         "hypot",
