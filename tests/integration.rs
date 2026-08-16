@@ -1465,3 +1465,37 @@ fn i8_sum_known_values() {
     assert_eq!(lanes::stats::i8::sum(&[-128; 3]), -384);
     assert_eq!(lanes::stats::i8::sum(&[]), 0);
 }
+
+#[test]
+fn i8_min_known_values() {
+    assert_eq!(lanes::stats::i8::min(&[3, 1, 4, 1, 5]), Some(1));
+    assert_eq!(lanes::stats::i8::min(&[-128, 127, 0]), Some(-128));
+    assert_eq!(lanes::stats::i8::min(&[5]), Some(5));
+    assert_eq!(lanes::stats::i8::min(&[]), None);
+}
+
+#[test]
+fn i8_max_known_values() {
+    assert_eq!(lanes::stats::i8::max(&[3, 1, 4, 1, 5]), Some(5));
+    assert_eq!(lanes::stats::i8::max(&[-128, 127, 0]), Some(127));
+    assert_eq!(lanes::stats::i8::max(&[5]), Some(5));
+    assert_eq!(lanes::stats::i8::max(&[]), None);
+}
+
+#[test]
+fn i8_sum_sq_known_values() {
+    // 1 + 4 + 9 + 16 = 30.
+    assert_eq!(lanes::stats::i8::sum_sq(&[1, -2, 3, -4]), 30);
+    // Extremes: (-128)^2 = 16384, needs the i64 accumulator.
+    assert_eq!(lanes::stats::i8::sum_sq(&[-128, 127]), 16384 + 16129);
+    assert_eq!(lanes::stats::i8::sum_sq(&[]), 0);
+    assert_eq!(lanes::stats::i8::sum_sq(&[7; 8]), 392);
+}
+
+#[test]
+fn i8_count_zero_known_values() {
+    assert_eq!(lanes::stats::i8::count_zero(&[0, 1, 0, -1, 0]), 3);
+    assert_eq!(lanes::stats::i8::count_zero(&[1, 2, 3]), 0);
+    assert_eq!(lanes::stats::i8::count_zero(&[0; 5]), 5);
+    assert_eq!(lanes::stats::i8::count_zero(&[]), 0);
+}

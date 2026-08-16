@@ -485,6 +485,24 @@ pub(crate) fn sum_i8(values: &[i8]) -> i64 {
     values.iter().map(|&x| i64::from(x)).sum()
 }
 
+/// Find the minimum i8 element. Returns [`None`] for an empty slice.
+#[inline]
+pub(crate) fn min_i8(values: &[i8]) -> Option<i8> {
+    values.iter().copied().min()
+}
+
+/// Find the maximum i8 element. Returns [`None`] for an empty slice.
+#[inline]
+pub(crate) fn max_i8(values: &[i8]) -> Option<i8> {
+    values.iter().copied().max()
+}
+
+/// Count i8 elements equal to zero.
+#[inline]
+pub(crate) fn count_zero_i8(values: &[i8]) -> usize {
+    values.iter().filter(|&&x| x == 0).count()
+}
+
 /// Kullback–Leibler divergence kernel (f32): `sum(p[i] * ln(p[i] / q[i]))`.
 /// Returns `0.0` for empty inputs.
 ///

@@ -413,6 +413,42 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_min_i8,
+    [values: &[i8]],
+    Option<i8>,
+    scalar::min_i8,
+    scalar::min_i8,
+    scalar::min_i8,
+    scalar::min_i8,
+    scalar::min_i8,
+    id
+);
+
+dispatch!(
+    dispatch_max_i8,
+    [values: &[i8]],
+    Option<i8>,
+    scalar::max_i8,
+    scalar::max_i8,
+    scalar::max_i8,
+    scalar::max_i8,
+    scalar::max_i8,
+    id
+);
+
+dispatch!(
+    dispatch_count_zero_i8,
+    [values: &[i8]],
+    usize,
+    scalar::count_zero_i8,
+    scalar::count_zero_i8,
+    scalar::count_zero_i8,
+    scalar::count_zero_i8,
+    scalar::count_zero_i8,
+    id
+);
+
+dispatch!(
     dispatch_softmax,
     [values: &[f32], out: &mut [f32]],
     (),
