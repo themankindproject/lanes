@@ -468,6 +468,75 @@ crate::simd_reduce_wide!(
     |r: i64, v: i8| r + i64::from(v)
 );
 
+/// Horizontal minimum of 32×i8 lanes. Fold the two 128-bit halves, then
+/// shift-and-min down by 8, 4, 2, 1 bytes; lane 0 holds the result.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn hmin_256_i8(v: __m256i) -> i8 {
+    unsafe {
+        let v = _mm256_min_epi8(v, _mm256_permute2x128_si256(v, v, 0x01));
+        let v = _mm256_min_epi8(v, _mm256_srli_si256(v, 8));
+        let v = _mm256_min_epi8(v, _mm256_srli_si256(v, 4));
+        let v = _mm256_min_epi8(v, _mm256_srli_si256(v, 2));
+        let v = _mm256_min_epi8(v, _mm256_srli_si256(v, 1));
+        _mm_extract_epi8(_mm256_castsi256_si128(v), 0) as i8
+    }
+}
+
+/// Horizontal maximum of 32×i8 lanes. Same fold as [`hmin_256_i8`].
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn hmax_256_i8(v: __m256i) -> i8 {
+    unsafe {
+        let v = _mm256_max_epi8(v, _mm256_permute2x128_si256(v, v, 0x01));
+        let v = _mm256_max_epi8(v, _mm256_srli_si256(v, 8));
+        let v = _mm256_max_epi8(v, _mm256_srli_si256(v, 4));
+        let v = _mm256_max_epi8(v, _mm256_srli_si256(v, 2));
+        let v = _mm256_max_epi8(v, _mm256_srli_si256(v, 1));
+        _mm_extract_epi8(_mm256_castsi256_si128(v), 0) as i8
+    }
+}
+
+// i8 min: native signed-byte min (`vpminsb`). Identity i8::MAX.
+crate::simd_reduce!(
+    min_i8,
+    i8,
+    "avx2",
+    32,
+    |p: *const i8| unsafe { _mm256_loadu_si256(p.cast::<__m256i>()) },
+    _mm256_set1_epi8(127),
+    _mm256_min_epi8,
+    |v: __m256i| unsafe { hmin_256_i8(v) },
+    i8::min
+);
+
+// i8 max: native signed-byte max (`vpmaxsb`). Identity i8::MIN.
+crate::simd_reduce!(
+    max_i8,
+    i8,
+    "avx2",
+    32,
+    |p: *const i8| unsafe { _mm256_loadu_si256(p.cast::<__m256i>()) },
+    _mm256_set1_epi8(-128),
+    _mm256_max_epi8,
+    |v: __m256i| unsafe { hmax_256_i8(v) },
+    i8::max
+);
+
+// i8 count_zero: byte-equality mask via `vpcmpeqb`, then `vpmovmskb` popcount.
+crate::simd_count!(
+    count_zero_i8,
+    i8,
+    "avx2",
+    32,
+    |p: *const i8| unsafe { _mm256_loadu_si256(p.cast::<__m256i>()) },
+    |v: __m256i| unsafe {
+        _mm256_movemask_epi8(_mm256_cmpeq_epi8(v, _mm256_setzero_si256()))
+    },
+    |m: i32| m.count_ones() as usize,
+    |x: i8| x == 0
+);
+
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
 // Uses the crate's `no_std` `exp`, so available in all builds.
 crate::simd_softmax!(

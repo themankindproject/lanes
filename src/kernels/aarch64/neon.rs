@@ -481,6 +481,47 @@ crate::simd_reduce_wide!(
     |r: i64, v: i8| r + i64::from(v)
 );
 
+// i8 min: native signed-byte min (`vminq_s8`), horizontal `vminvq_s8`.
+// Identity i8::MAX.
+crate::simd_reduce!(
+    min_i8,
+    i8,
+    "neon",
+    16,
+    |p| unsafe { vld1q_s8(p) },
+    vdupq_n_s8(127),
+    vminq_s8,
+    |v| unsafe { vminvq_s8(v) },
+    i8::min
+);
+
+// i8 max: native signed-byte max (`vmaxq_s8`), horizontal `vmaxvq_s8`.
+// Identity i8::MIN.
+crate::simd_reduce!(
+    max_i8,
+    i8,
+    "neon",
+    16,
+    |p| unsafe { vld1q_s8(p) },
+    vdupq_n_s8(-128),
+    vmaxq_s8,
+    |v| unsafe { vmaxvq_s8(v) },
+    i8::max
+);
+
+// i8 count_zero: byte-equality mask (`vceqq_s8`), AND with 1 per lane,
+// horizontal sum. Same shape as the f32 `count_zero`.
+crate::simd_count!(
+    count_zero_i8,
+    i8,
+    "neon",
+    16,
+    |p| unsafe { vld1q_s8(p) },
+    |v: int8x16_t| unsafe { vceqq_s8(v, vdupq_n_s8(0)) },
+    |m: uint8x16_t| unsafe { vaddvq_u8(vandq_u8(m, vdupq_n_u8(1))) } as usize,
+    |x: i8| x == 0
+);
+
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
 // Uses the crate's `no_std` `exp`, so available in all builds.
 crate::simd_softmax!(

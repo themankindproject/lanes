@@ -35,8 +35,12 @@ use core::arch::x86_64::*;
 //
 // i8 family (dot/sum): the fused `_mm512_dpbusd_epi32` needs AVX512-VNNI
 // (not detected by the dispatcher), so the AVX2 widening kernels are
-// reused here too.
-pub(crate) use super::avx2::{dot_i8, hamming_popcount, jaccard_counts, sum_i8};
+// reused here too. The min/max/count_zero kernels use AVX512BW byte
+// ops (`vpminsb`/`vpmaxsb`/`vpcmpeqb`), also not detected, so they
+// re-export the AVX2 forms as well.
+pub(crate) use super::avx2::{
+    count_zero_i8, dot_i8, hamming_popcount, jaccard_counts, max_i8, min_i8, sum_i8,
+};
 
 // Bitwise ops on float vectors, routed through the integer domain:
 // `_mm512_and_ps` / `_mm512_or_ps` / `_mm512_xor_ps` / `_mm512_andnot_ps`

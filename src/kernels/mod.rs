@@ -417,11 +417,11 @@ dispatch!(
     [values: &[i8]],
     Option<i8>,
     scalar::min_i8,
-    scalar::min_i8,
-    scalar::min_i8,
-    scalar::min_i8,
-    scalar::min_i8,
-    id
+    x86::sse2::min_i8,
+    x86::avx2::min_i8,
+    x86::avx512::min_i8,
+    aarch64::neon::min_i8,
+    Some
 );
 
 dispatch!(
@@ -429,11 +429,11 @@ dispatch!(
     [values: &[i8]],
     Option<i8>,
     scalar::max_i8,
-    scalar::max_i8,
-    scalar::max_i8,
-    scalar::max_i8,
-    scalar::max_i8,
-    id
+    x86::sse2::max_i8,
+    x86::avx2::max_i8,
+    x86::avx512::max_i8,
+    aarch64::neon::max_i8,
+    Some
 );
 
 dispatch!(
@@ -441,10 +441,10 @@ dispatch!(
     [values: &[i8]],
     usize,
     scalar::count_zero_i8,
-    scalar::count_zero_i8,
-    scalar::count_zero_i8,
-    scalar::count_zero_i8,
-    scalar::count_zero_i8,
+    x86::sse2::count_zero_i8,
+    x86::avx2::count_zero_i8,
+    x86::avx512::count_zero_i8,
+    aarch64::neon::count_zero_i8,
     id
 );
 

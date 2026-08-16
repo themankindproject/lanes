@@ -477,6 +477,80 @@ crate::simd_reduce_wide!(
     |r: i64, v: i8| r + i64::from(v)
 );
 
+/// Horizontal minimum of 8×i16 lanes, returned as `i8` (the value always
+/// fits: every lane is a sign-extended `i8`). Shift-and-min: fold the
+/// upper half down by 8, 4, then 2 bytes; lane 0 ends up with the min of
+/// all 8. `_mm_srli_si128` zero-fills the high lanes, but only lane 0 is
+/// read and each step only consumes already-reduced low lanes.
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn hmin_128_i16(v: __m128i) -> i8 {
+    unsafe {
+        let m = _mm_min_epi16(v, _mm_srli_si128(v, 8));
+        let m = _mm_min_epi16(m, _mm_srli_si128(m, 4));
+        let m = _mm_min_epi16(m, _mm_srli_si128(m, 2));
+        _mm_extract_epi16(m, 0) as i8
+    }
+}
+
+/// Horizontal maximum of 8×i16 lanes, returned as `i8`. Same shift-and-max
+/// fold as [`hmin_128_i16`].
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn hmax_128_i16(v: __m128i) -> i8 {
+    unsafe {
+        let m = _mm_max_epi16(v, _mm_srli_si128(v, 8));
+        let m = _mm_max_epi16(m, _mm_srli_si128(m, 4));
+        let m = _mm_max_epi16(m, _mm_srli_si128(m, 2));
+        _mm_extract_epi16(m, 0) as i8
+    }
+}
+
+// i8 min: SSE2 has no signed-byte min (SSE4.1), so sign-extend each 16-byte
+// chunk to i16 and reduce with `pminsw`. Identity is i8::MAX (127).
+crate::simd_reduce!(
+    min_i8,
+    i8,
+    "sse2",
+    16,
+    |p: *const i8| unsafe { _mm_loadu_si128(p.cast::<__m128i>()) },
+    _mm_set1_epi16(127),
+    |acc: __m128i, v: __m128i| unsafe {
+        let (lo, hi) = sext_i8x16(v);
+        _mm_min_epi16(_mm_min_epi16(acc, lo), hi)
+    },
+    |v: __m128i| unsafe { hmin_128_i16(v) },
+    i8::min
+);
+
+// i8 max: sign-extend to i16 and reduce with `pmaxsw`. Identity i8::MIN.
+crate::simd_reduce!(
+    max_i8,
+    i8,
+    "sse2",
+    16,
+    |p: *const i8| unsafe { _mm_loadu_si128(p.cast::<__m128i>()) },
+    _mm_set1_epi16(-128),
+    |acc: __m128i, v: __m128i| unsafe {
+        let (lo, hi) = sext_i8x16(v);
+        _mm_max_epi16(_mm_max_epi16(acc, lo), hi)
+    },
+    |v: __m128i| unsafe { hmax_128_i16(v) },
+    i8::max
+);
+
+// i8 count_zero: byte-equality mask via `pcmpeqb`, then `pmovmskb` popcount.
+crate::simd_count!(
+    count_zero_i8,
+    i8,
+    "sse2",
+    16,
+    |p: *const i8| unsafe { _mm_loadu_si128(p.cast::<__m128i>()) },
+    |v: __m128i| unsafe { _mm_movemask_epi8(_mm_cmpeq_epi8(v, _mm_setzero_si128())) },
+    |m: i32| m.count_ones() as usize,
+    |x: i8| x == 0
+);
+
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar
 // (no vector exp intrinsic); the macro handles the chunk loop.
 // Uses the crate's `no_std` `exp`, so available in all builds.
