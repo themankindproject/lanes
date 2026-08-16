@@ -37,6 +37,38 @@ fn naive_dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum()
 }
 
+/// Helper: naive bit-level hamming reference.
+fn naive_hamming(a: &[u8], b: &[u8]) -> usize {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| (x ^ y).count_ones() as usize)
+        .sum()
+}
+
+/// Helper: naive jaccard similarity reference.
+fn naive_jaccard(a: &[u8], b: &[u8]) -> Option<f32> {
+    let mut inter = 0usize;
+    let mut union = 0usize;
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        inter += (x & y).count_ones() as usize;
+        union += (x | y).count_ones() as usize;
+    }
+    (union != 0).then(|| inter as f32 / union as f32)
+}
+
+/// Deterministic pseudo-random bytes (LCG) so the test is reproducible.
+fn lcg_bytes(seed: u64, n: usize) -> Vec<u8> {
+    let mut state = seed;
+    (0..n)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u8
+        })
+        .collect()
+}
+
 /// Ascending sequence: 1, 2, 3, ..., N
 fn ascending(n: usize) -> Vec<f32> {
     (1..=n).map(|x| x as f32).collect()
@@ -631,5 +663,45 @@ fn min_max_nan_parity_f64() {
             lanes::stats::f64::max(&all_nan).is_some_and(f64::is_nan),
             "f64 max(all-NaN len {len}) must be NaN"
         );
+    }
+}
+
+// Binary family: popcount reductions are integer-exact, so dispatched
+// results must equal the naive reference exactly on every backend. The
+// size list hits every chunk/tail boundary for the 16- and 32-byte
+// kernels (±1 around 16 and 32, plus larger sizes).
+
+#[test]
+fn cross_binary_hamming() {
+    for &n in &[
+        0usize, 1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 100, 255, 1024,
+    ] {
+        let a = lcg_bytes(0xDEAD_BEEF, n);
+        let b = lcg_bytes(0xC0FF_EE00, n);
+        assert_eq!(
+            lanes::binary::hamming(&a, &b),
+            Ok(naive_hamming(&a, &b)),
+            "hamming mismatch at n={n}"
+        );
+    }
+}
+
+#[test]
+fn cross_binary_jaccard() {
+    for &n in &[
+        0usize, 1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 100, 255, 1024,
+    ] {
+        let a = lcg_bytes(0xFEED_FACE, n);
+        let b = lcg_bytes(0x0BAD_F00D, n);
+        assert_eq!(
+            lanes::binary::jaccard(&a, &b),
+            Ok(naive_jaccard(&a, &b)),
+            "jaccard mismatch at n={n}"
+        );
+    }
+    // All-zero union at every size.
+    for &n in &[0usize, 1, 16, 33, 64] {
+        let z = vec![0u8; n];
+        assert_eq!(lanes::binary::jaccard(&z, &z), Ok(None));
     }
 }
