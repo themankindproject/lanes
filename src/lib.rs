@@ -90,8 +90,9 @@
 //! so callers can branch on the exact failure mode:
 //!
 //! * Two-input operations (`dot`, `squared_distance`, `abs_sub`, `hypot`,
-//!   `cosine_similarity`) return `Err(`[`Error::LengthMismatch`]`)` when
-//!   their operands disagree in length.
+//!   `cosine_similarity`, `kl_divergence`, `js_divergence`) return
+//!   `Err(`[`Error::LengthMismatch`]`)` when their operands disagree in
+//!   length.
 //! * Every `_into` variant returns `Err(`[`Error::LengthMismatch`]`)` when
 //!   the caller-provided output buffer has the wrong length.
 //! * `geometric_mean` returns `Err(`[`Error::EmptyInput`]`)` for an empty
@@ -148,7 +149,7 @@ pub mod stats {
 }
 
 /// Distance and norm functions: `l1_norm`, `l2_norm`, `max_norm`,
-/// `squared_distance`.
+/// `squared_distance`, `kl_divergence`, `js_divergence`.
 /// All are `no_std`-clean (the sqrt for `l2_norm` is the std-free kernel).
 /// Precision is selected via the [`f32`] or [`f64`] submodule.
 pub mod distance {

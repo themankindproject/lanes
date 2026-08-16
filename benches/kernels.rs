@@ -119,6 +119,62 @@ fn naive_count_zero(values: &[f32]) -> usize {
     values.iter().filter(|&&x| x == 0.0).count()
 }
 
+fn naive_kl_divergence(p: &[f32], q: &[f32]) -> f32 {
+    p.iter().zip(q).map(|(&a, &b)| a * (a / b).ln()).sum()
+}
+
+fn naive_js_divergence(p: &[f32], q: &[f32]) -> f32 {
+    p.iter()
+        .zip(q)
+        .map(|(&a, &b)| {
+            let m = (a + b) * 0.5;
+            a * (a / m).ln() + b * (b / m).ln()
+        })
+        .sum::<f32>()
+        * 0.5
+}
+
+fn naive_kl_divergence_f64(p: &[f64], q: &[f64]) -> f64 {
+    p.iter().zip(q).map(|(&a, &b)| a * (a / b).ln()).sum()
+}
+
+fn naive_js_divergence_f64(p: &[f64], q: &[f64]) -> f64 {
+    p.iter()
+        .zip(q)
+        .map(|(&a, &b)| {
+            let m = (a + b) * 0.5;
+            a * (a / m).ln() + b * (b / m).ln()
+        })
+        .sum::<f64>()
+        * 0.5
+}
+
+/// Deterministic random probability-distribution data: strictly positive
+/// values (divergences take `ln(p/q)`), reproducible per seed.
+fn random_distribution_f32(n: usize, seed: u64) -> Vec<f32> {
+    let mut rng = XorShift64::new(seed);
+    (0..n)
+        .map(|_| {
+            let hi = (rng.next_u64() >> 40) as u32;
+            let frac = (hi as f32) * (1.0 / (1u32 << 24) as f32);
+            frac + 1e-3
+        })
+        .collect()
+}
+
+/// `f64` twin of [`random_distribution_f32`].
+fn random_distribution_f64(n: usize, seed: u64) -> Vec<f64> {
+    let mut rng = XorShift64::new(seed);
+    (0..n)
+        .map(|_| {
+            let u = rng.next_u64();
+            let hi = (u >> 40) as u32;
+            let frac = (hi as f64) * (1.0 / (1u32 << 24) as f64);
+            frac + 1e-6
+        })
+        .collect()
+}
+
 /// Benchmark a sum-family reduction: `lanes` vs naive, across the size ladder.
 fn bench_reduce<T, F, G>(
     c: &mut Criterion,
@@ -330,6 +386,46 @@ fn bench_squared_distance(c: &mut Criterion) {
     );
 }
 
+fn bench_kl_divergence(c: &mut Criterion) {
+    bench_dot_pair(
+        c,
+        "kl_divergence",
+        random_distribution_f32,
+        |a, b| lanes::distance::f32::kl_divergence(a, b).unwrap(),
+        naive_kl_divergence,
+    );
+}
+
+fn bench_js_divergence(c: &mut Criterion) {
+    bench_dot_pair(
+        c,
+        "js_divergence",
+        random_distribution_f32,
+        |a, b| lanes::distance::f32::js_divergence(a, b).unwrap(),
+        naive_js_divergence,
+    );
+}
+
+fn bench_kl_divergence_f64(c: &mut Criterion) {
+    bench_dot_pair(
+        c,
+        "kl_divergence_f64",
+        random_distribution_f64,
+        |a, b| lanes::distance::f64::kl_divergence(a, b).unwrap(),
+        naive_kl_divergence_f64,
+    );
+}
+
+fn bench_js_divergence_f64(c: &mut Criterion) {
+    bench_dot_pair(
+        c,
+        "js_divergence_f64",
+        random_distribution_f64,
+        |a, b| lanes::distance::f64::js_divergence(a, b).unwrap(),
+        naive_js_divergence_f64,
+    );
+}
+
 fn bench_count_zero(c: &mut Criterion) {
     let mut group = c.benchmark_group("count_zero");
     for &size in SIZES {
@@ -358,6 +454,10 @@ criterion_group!(
     bench_hypot,
     bench_powi,
     bench_squared_distance,
+    bench_kl_divergence,
+    bench_js_divergence,
+    bench_kl_divergence_f64,
+    bench_js_divergence_f64,
     bench_count_zero
 );
 criterion_main!(benches);
