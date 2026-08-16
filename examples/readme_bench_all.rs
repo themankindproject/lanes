@@ -292,6 +292,32 @@ fn main() {
         time_us(|| lanes::stats::i8::count_zero(&ia)),
         time_us(|| ia.iter().filter(|&&x| x == 0).count()),
     );
+    row(
+        "distance::i8",
+        "l1_norm",
+        time_us(|| lanes::distance::i8::l1_norm(&ia)),
+        time_us(|| ia.iter().map(|&x| i64::from(x.unsigned_abs())).sum::<i64>()),
+    );
+    row(
+        "distance::i8",
+        "max_norm",
+        time_us(|| lanes::distance::i8::max_norm(&ia)),
+        time_us(|| ia.iter().map(|&x| x.unsigned_abs()).max()),
+    );
+    row(
+        "distance::i8",
+        "squared_distance",
+        time_us(|| lanes::distance::i8::squared_distance(&ia, &ib)),
+        time_us(|| {
+            ia.iter()
+                .zip(ib.iter())
+                .map(|(&x, &y)| {
+                    let d = i64::from(x) - i64::from(y);
+                    d * d
+                })
+                .sum::<i64>()
+        }),
+    );
 
     // ---------------- math ----------------
     row(

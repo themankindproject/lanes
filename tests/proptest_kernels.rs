@@ -1021,4 +1021,33 @@ proptest! {
         let naive = a.iter().filter(|&&x| x == 0).count();
         prop_assert_eq!(lanes::stats::i8::count_zero(&a), naive);
     }
+
+    #[test]
+    fn prop_l1_norm_i8_matches_naive(a in proptest::collection::vec(any::<i8>(), 0..=4200)) {
+        let naive: i64 = a.iter().map(|&x| i64::from(x.unsigned_abs())).sum();
+        prop_assert_eq!(lanes::distance::i8::l1_norm(&a), naive);
+    }
+
+    #[test]
+    fn prop_max_norm_i8_matches_naive(a in proptest::collection::vec(any::<i8>(), 0..=4200)) {
+        let expected = if a.is_empty() {
+            None
+        } else {
+            Some(a.iter().map(|&x| x.unsigned_abs()).max().unwrap())
+        };
+        prop_assert_eq!(lanes::distance::i8::max_norm(&a), expected);
+    }
+
+    #[test]
+    fn prop_squared_distance_i8_matches_naive((a, b) in i8_pairs()) {
+        let naive: i64 = a
+            .iter()
+            .zip(&b)
+            .map(|(&x, &y)| {
+                let d = i64::from(x) - i64::from(y);
+                d * d
+            })
+            .sum();
+        prop_assert_eq!(lanes::distance::i8::squared_distance(&a, &b), Ok(naive));
+    }
 }

@@ -366,7 +366,9 @@ pub mod i8 {
         let backend = Backend::detect();
         let mx = kernels::dispatch_max_i8(backend, values).unwrap_or(0);
         let mn = kernels::dispatch_min_i8(backend, values).unwrap_or(0);
-        Some((mx.max(0) as u8).max(mn.unsigned_abs()))
+        // `mx.max(0)` is non-negative, so `unsigned_abs` is the identity
+        // here (and keeps clippy's cast_sign_loss quiet).
+        Some(mx.max(0).unsigned_abs().max(mn.unsigned_abs()))
     }
 
     /// Squared Euclidean distance `sum((a[i] - b[i])²)`, accumulated in

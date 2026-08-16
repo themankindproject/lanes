@@ -616,6 +616,66 @@ fn bench_count_zero_i8(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_l1_norm_i8(c: &mut Criterion) {
+    let mut group = c.benchmark_group("l1_norm_i8");
+    for &size in SIZES {
+        let v = random_i8_vec(size, 53);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes::distance::i8::l1_norm(black_box(&v)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| {
+                black_box(&v)
+                    .iter()
+                    .map(|&x| i64::from(x.unsigned_abs()))
+                    .sum::<i64>()
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_max_norm_i8(c: &mut Criterion) {
+    let mut group = c.benchmark_group("max_norm_i8");
+    for &size in SIZES {
+        let v = random_i8_vec(size, 54);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes::distance::i8::max_norm(black_box(&v)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| black_box(&v).iter().map(|&x| x.unsigned_abs()).max());
+        });
+    }
+    group.finish();
+}
+
+fn bench_squared_distance_i8(c: &mut Criterion) {
+    let mut group = c.benchmark_group("squared_distance_i8");
+    for &size in SIZES {
+        let a = random_i8_vec(size, 55);
+        let b = random_i8_vec(size, 56);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes::distance::i8::squared_distance(black_box(&a), black_box(&b)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| {
+                black_box(&a)
+                    .iter()
+                    .zip(black_box(&b).iter())
+                    .map(|(&x, &y)| {
+                        let d = i64::from(x) - i64::from(y);
+                        d * d
+                    })
+                    .sum::<i64>()
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_sum,
@@ -641,6 +701,9 @@ criterion_group!(
     bench_sum_sq_i8,
     bench_min_i8,
     bench_max_i8,
-    bench_count_zero_i8
+    bench_count_zero_i8,
+    bench_l1_norm_i8,
+    bench_max_norm_i8,
+    bench_squared_distance_i8
 );
 criterion_main!(benches);

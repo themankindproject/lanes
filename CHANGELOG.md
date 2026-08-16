@@ -23,6 +23,13 @@ so it is all listed as additions.
   `pminsw`/`pmaxsw`), AVX2 (`vpmovsxbw` + `vpmaddwd`; native `vpminsb`/
   `vpmaxsb`), AVX-512 (AVX2 kernels), NEON (`vmull_s8`/`vpadalq`;
   `vminq_s8`/`vmaxq_s8`).
+- New `distance::i8` submodule — exact integer norms: `l1_norm`,
+  `max_norm` (returns `Option<u8>` since `|i8::MIN| = 128` does not fit
+  in `i8`), `squared_distance`. All widen to `i16` before any operation
+  that could overflow; `max_norm` is composed from the `min`/`max`
+  kernels (no dedicated kernel needed). Backends: scalar, SSE2
+  (sign-extend + `pmaxsw`-abs idiom), AVX2 (`vpabsw`), AVX-512 (AVX2
+  kernels), NEON (`vabdl_s8`).
 
 ## [0.1.0] - 2026-08-16
 

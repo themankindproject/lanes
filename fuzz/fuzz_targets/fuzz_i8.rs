@@ -54,10 +54,43 @@ fuzz_target!(|input: I8Input| {
     assert_eq!(lanes::stats::i8::min(a), a.iter().copied().min());
     assert_eq!(lanes::stats::i8::max(a), a.iter().copied().max());
 
-    // count_zero: exact against the naive oracle.
+    // count_zero: infallible; exact against the naive oracle.
     let cz = lanes::stats::i8::count_zero(a);
     let naive_cz = a.iter().filter(|&&x| x == 0).count();
     assert_eq!(cz, naive_cz, "count_zero disagrees with naive oracle");
+
+    // l1_norm: infallible; exact against the naive i64 oracle.
+    let l1 = lanes::distance::i8::l1_norm(a);
+    let naive_l1: i64 = a.iter().map(|&x| i64::from(x.unsigned_abs())).sum();
+    assert_eq!(l1, naive_l1, "l1_norm disagrees with naive oracle");
+
+    // max_norm: None iff empty; exact against the naive oracle.
+    let mn = lanes::distance::i8::max_norm(a);
+    let naive_mn = if a.is_empty() {
+        None
+    } else {
+        Some(a.iter().map(|&x| x.unsigned_abs()).max().unwrap())
+    };
+    assert_eq!(mn, naive_mn, "max_norm disagrees with naive oracle");
+
+    // squared_distance: length contract + exact against the naive oracle.
+    if a.len() != b.len() {
+        assert!(matches!(
+            lanes::distance::i8::squared_distance(a, b),
+            Err(lanes::Error::LengthMismatch { .. })
+        ));
+    } else {
+        let sd = lanes::distance::i8::squared_distance(a, b).unwrap();
+        let naive_sd: i64 = a
+            .iter()
+            .zip(b.iter())
+            .map(|(&x, &y)| {
+                let d = i64::from(x) - i64::from(y);
+                d * d
+            })
+            .sum();
+        assert_eq!(sd, naive_sd, "squared_distance disagrees with naive oracle");
+    }
 
     // Empty-input contracts.
     if a.is_empty() {

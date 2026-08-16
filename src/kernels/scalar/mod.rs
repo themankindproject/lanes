@@ -1071,6 +1071,23 @@ mod tests {
         assert_eq!(sum_i8(&[1, -2, 3, -4]), -2);
         assert_eq!(sum_i8(&[127; 100]), 12700);
         assert_eq!(sum_i8(&[-128; 3]), -384);
+        assert_eq!(sum_i8(&[-128; 100]), -12800);
+    }
+
+    #[test]
+    fn scalar_l1_norm_i8() {
+        assert_eq!(l1_norm_i8(&[]), 0);
+        assert_eq!(l1_norm_i8(&[-3, 4]), 7);
+        assert_eq!(l1_norm_i8(&[i8::MIN]), 128);
+        assert_eq!(l1_norm_i8(&[i8::MIN; 100]), 12800);
+    }
+
+    #[test]
+    fn scalar_squared_distance_i8() {
+        assert_eq!(squared_distance_i8(&[], &[]), 0);
+        assert_eq!(squared_distance_i8(&[1, 2], &[4, 6]), 25);
+        assert_eq!(squared_distance_i8(&[i8::MIN], &[127]), 65025);
+        assert_eq!(squared_distance_i8(&[i8::MIN; 100], &[127; 100]), 6_502_500);
     }
 
     #[test]
