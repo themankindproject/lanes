@@ -320,8 +320,8 @@ crate::simd_reduce2!(
 unsafe fn popcnt_256_bytes(x: __m256i) -> __m256i {
     unsafe {
         let lookup = _mm256_setr_epi8(
-            0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4, 0, 1, 1, 2, 1, 2,
-            2, 3, 1, 2, 2, 3, 2, 3, 3, 4,
+            0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4, 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2,
+            3, 3, 4,
         );
         let lo_mask = _mm256_set1_epi8(0x0F);
         let lo = _mm256_and_si256(x, lo_mask);

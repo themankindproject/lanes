@@ -673,9 +673,7 @@ fn min_max_nan_parity_f64() {
 
 #[test]
 fn cross_binary_hamming() {
-    for &n in &[
-        0usize, 1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 100, 255, 1024,
-    ] {
+    for &n in &[0usize, 1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 100, 255, 1024] {
         let a = lcg_bytes(0xDEAD_BEEF, n);
         let b = lcg_bytes(0xC0FF_EE00, n);
         assert_eq!(
@@ -688,9 +686,7 @@ fn cross_binary_hamming() {
 
 #[test]
 fn cross_binary_jaccard() {
-    for &n in &[
-        0usize, 1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 100, 255, 1024,
-    ] {
+    for &n in &[0usize, 1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 100, 255, 1024] {
         let a = lcg_bytes(0xFEED_FACE, n);
         let b = lcg_bytes(0x0BAD_F00D, n);
         assert_eq!(

@@ -1375,7 +1375,10 @@ fn divergence_matches_scalar_on_chunked_lengths() {
 fn binary_hamming_known_values() {
     // Bit-level, not byte-level: 0b01 vs 0b11 differ in exactly 1 bit.
     assert_eq!(lanes::binary::hamming(&[0b01], &[0b11]), Ok(1));
-    assert_eq!(lanes::binary::hamming(&[0b1010_1010], &[0b0110_0110]), Ok(4));
+    assert_eq!(
+        lanes::binary::hamming(&[0b1010_1010], &[0b0110_0110]),
+        Ok(4)
+    );
     assert_eq!(lanes::binary::hamming(&[], &[]), Ok(0));
     assert_eq!(lanes::binary::hamming(&[0xFF; 4], &[0x00; 4]), Ok(32));
     assert_eq!(lanes::binary::hamming(&[0xAA, 0x55], &[0xAA, 0x55]), Ok(0));
