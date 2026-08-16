@@ -39,21 +39,21 @@
 
 /// |x| < 0.84375: erf(x) = x + x·R(x²) region (fdlibm boundary: the fixed
 /// point of erf is near 0.6174; 0.84375 keeps the form ≤ 1 ulp).
-const T_SMALL: f64 = 0.84375;
+pub(crate) const T_SMALL: f64 = 0.84375;
 /// |x| < 1.25: middle region, rational in s = |x| − 1.
-const T_MID: f64 = 1.25;
+pub(crate) const T_MID: f64 = 1.25;
 /// Tail split: 1/0.35 ≈ 2.857 (boundary between the two L fits).
-const T_SPLIT: f64 = 1.0 / 0.35;
+pub(crate) const T_SPLIT: f64 = 1.0 / 0.35;
 /// erfc(27.23) ≈ 5e-324 (smallest subnormal); beyond this erfc = 0, erf = ±1.
-const XMAX: f64 = 27.23;
+pub(crate) const XMAX: f64 = 27.23;
 /// 2^-56: below this, `erfc(x) = 1 − x` is correctly rounded (the cubic
 /// term of the series is < ½ ulp of 1).
-const T_TINY: f64 = 1.387_778_780_781_445_7e-17;
+pub(crate) const T_TINY: f64 = 1.387_778_780_781_445_7e-17;
 
 /// R(t) ≈ (erf(x)−x)/x, t = x², on [0, 0.84375²]. Remez fit, ascending
 /// powers; R(0) = 2/√π − 1 so `x + x·R(x²)` is exact at 0. Fit error
 /// 2.05e-23 (75 bits).
-const ERF_R: [f64; 14] = [
+pub(crate) const ERF_R: [f64; 14] = [
     1.283_791_670_955_125_9e-1,
     -3.761_263_890_318_375_4e-1,
     1.128_379_167_095_512_6e-1,
@@ -72,7 +72,7 @@ const ERF_R: [f64; 14] = [
 
 /// erfc(1+s) ≈ P(s)/Q(s), s ∈ [−0.15625, 0.25). Remez fit, ascending
 /// powers; Q(0) = 1. Fit error 1.9e-28 (92 bits).
-const ERFC1_NUM: [f64; 10] = [
+pub(crate) const ERFC1_NUM: [f64; 10] = [
     1.572_992_070_502_851_3e-1,
     -3.579_521_284_198_039e-1,
     3.374_729_044_798_999e-1,
@@ -84,7 +84,7 @@ const ERFC1_NUM: [f64; 10] = [
     4.601_058_710_808_035e-4,
     -4.856_542_938_472_312_4e-5,
 ];
-const ERFC1_DEN: [f64; 10] = [
+pub(crate) const ERFC1_DEN: [f64; 10] = [
     1.0,
     3.633_544_635_893_777_3e-1,
     4.653_333_636_519_545_5e-1,
@@ -99,7 +99,7 @@ const ERFC1_DEN: [f64; 10] = [
 
 /// L(u) ≈ ln(x·eˣ²·erfc(x)) + 0.5625, u = 1/x², x ∈ [1.25, 1/0.35).
 /// Remez rat(10,10), ascending powers; fit error 74 bits.
-const LA_NUM: [f64; 11] = [
+pub(crate) const LA_NUM: [f64; 11] = [
     -9.864_942_946_068_79e-3,
     -7.955_172_079_182_581e-1,
     -1.777_644_002_558_133_4e1,
@@ -112,7 +112,7 @@ const LA_NUM: [f64; 11] = [
     -1.307_955_064_574_635_7e2,
     -4.283_829_406_560_128,
 ];
-const LA_DEN: [f64; 11] = [
+pub(crate) const LA_DEN: [f64; 11] = [
     1.0,
     2.995_630_209_606_2e1,
     3.470_155_740_862_721_3e2,
@@ -128,7 +128,7 @@ const LA_DEN: [f64; 11] = [
 
 /// Same L, x ∈ [1/0.35, 27.23]. Remez rat(11,10), ascending powers;
 /// fit error 84 bits.
-const LB_NUM: [f64; 12] = [
+pub(crate) const LB_NUM: [f64; 12] = [
     -9.864_942_924_700_087e-3,
     -1.177_108_459_288_053_6,
     -5.252_856_863_854_7e1,
@@ -142,7 +142,7 @@ const LB_NUM: [f64; 12] = [
     -2.522_154_908_110_599e5,
     -4.872_688_929_824_555e3,
 ];
-const LB_DEN: [f64; 11] = [
+pub(crate) const LB_DEN: [f64; 11] = [
     1.0,
     6.863_784_863_799_798e1,
     1.909_250_206_850_094_2e3,

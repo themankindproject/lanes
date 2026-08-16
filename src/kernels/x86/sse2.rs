@@ -2157,6 +2157,315 @@ crate::simd_rms_norm!(
     crate::kernels::sqrt::sqrt_f64
 );
 
+// --- erf/erfc family (f64 piecewise SIMD, f32 widen-to-f64) ----------------
+//
+// Same piecewise structure and identical clean-room Remez coefficients as
+// the scalar oracle in `kernels::erf` (see that module for the region
+// layout and accuracy contracts). Every arithmetic op below mirrors
+// `erfc_pos`/`erf_f64` lane-for-lane, so the vector path inherits the
+// scalar accuracy: f64 erf ≤ 1 ulp, f64 erfc ≤ 3 ulp. The f32 kernels
+// widen to f64 and round once (perfectly rounded — f32-native arithmetic
+// cancels catastrophically in every region).
+
+/// Horner evaluation of the small-region R polynomial (`ERF_R`, ascending
+/// powers) at `x2` = x², shared by the erf and erfc small-region forms.
+///
+/// # Safety
+/// Caller must ensure SSE2 is available (implied by the `target_feature`
+/// gate on every caller).
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn horner_r_128d(x2: __m128d) -> __m128d {
+    let r = crate::kernels::erf::ERF_R;
+    let mut acc = unsafe { _mm_set1_pd(r[13]) };
+    let mut i = 12;
+    loop {
+        acc = unsafe { _mm_add_pd(_mm_set1_pd(r[i]), _mm_mul_pd(acc, x2)) };
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+    acc
+}
+
+/// Horner evaluation of the middle-region rational P(s)/Q(s)
+/// (`ERFC1_NUM`/`ERFC1_DEN`, ascending powers), shared by erf and erfc.
+///
+/// # Safety
+/// Caller must ensure SSE2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn erfc1_pq_128d(s: __m128d) -> __m128d {
+    let num = crate::kernels::erf::ERFC1_NUM;
+    let den = crate::kernels::erf::ERFC1_DEN;
+    let mut p = unsafe { _mm_set1_pd(num[9]) };
+    let mut q = unsafe { _mm_set1_pd(den[9]) };
+    let mut i = 8;
+    loop {
+        p = unsafe { _mm_add_pd(_mm_set1_pd(num[i]), _mm_mul_pd(p, s)) };
+        q = unsafe { _mm_add_pd(_mm_set1_pd(den[i]), _mm_mul_pd(q, s)) };
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+    unsafe { _mm_div_pd(p, q) }
+}
+
+/// Tail-region L(u) rational, u = 1/x²: `LA` for x < 1/0.35, `LB`
+/// otherwise (both ascending powers). Shared by erf and erfc.
+///
+/// # Safety
+/// Caller must ensure SSE2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn tail_l_128d(a: __m128d, u: __m128d) -> __m128d {
+    let la_n = crate::kernels::erf::LA_NUM;
+    let la_d = crate::kernels::erf::LA_DEN;
+    let mut an = unsafe { _mm_set1_pd(la_n[10]) };
+    let mut ad = unsafe { _mm_set1_pd(la_d[10]) };
+    let mut i = 9;
+    loop {
+        an = unsafe { _mm_add_pd(_mm_set1_pd(la_n[i]), _mm_mul_pd(an, u)) };
+        ad = unsafe { _mm_add_pd(_mm_set1_pd(la_d[i]), _mm_mul_pd(ad, u)) };
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+    let lb_n = crate::kernels::erf::LB_NUM;
+    let lb_d = crate::kernels::erf::LB_DEN;
+    // NB: LB_NUM has 12 coefficients, LB_DEN has 11 — separate loops, or
+    // the shared counter seeds the denominator's top coefficient twice.
+    let mut bn = unsafe { _mm_set1_pd(lb_n[11]) };
+    let mut j = 10;
+    loop {
+        bn = unsafe { _mm_add_pd(_mm_set1_pd(lb_n[j]), _mm_mul_pd(bn, u)) };
+        if j == 0 {
+            break;
+        }
+        j -= 1;
+    }
+    let mut bd = unsafe { _mm_set1_pd(lb_d[10]) };
+    let mut j = 9;
+    loop {
+        bd = unsafe { _mm_add_pd(_mm_set1_pd(lb_d[j]), _mm_mul_pd(bd, u)) };
+        if j == 0 {
+            break;
+        }
+        j -= 1;
+    }
+    let m = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(crate::kernels::erf::T_SPLIT)) };
+    unsafe {
+        _mm_or_pd(
+            _mm_and_pd(m, _mm_div_pd(an, ad)),
+            _mm_andnot_pd(m, _mm_div_pd(bn, bd)),
+        )
+    }
+}
+
+/// erfc(x) for 2 lanes, full domain (sign, specials, NaN). Lane-for-lane
+/// mirror of the scalar `erfc_f64`: erfc(|x|) from the piecewise regions,
+/// then `2 − c` for negative lanes. NaN lanes fall through every region
+/// mask into the tail (producing garbage) and are blended back to NaN at
+/// the end; ±∞ fall out of the tail arithmetic naturally (0 / 2).
+///
+/// # Safety
+/// Caller must ensure SSE2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn verfc_128d(v: __m128d) -> __m128d {
+    let sign_bit = unsafe { _mm_set1_pd(-0.0) };
+    let a = unsafe { _mm_andnot_pd(sign_bit, v) }; // |x|
+    let nan = unsafe { _mm_cmpunord_pd(v, v) };
+
+    // --- small region: split forms (mirror of erfc_pos) ----------------
+    let x2 = unsafe { _mm_mul_pd(v, v) }; // x² is sign-free
+    let xr = unsafe { _mm_mul_pd(a, horner_r_128d(x2)) };
+    // tiny: 1 − a (correctly rounded below 2^-56)
+    let tiny_val = unsafe { _mm_sub_pd(_mm_set1_pd(1.0), a) };
+    // low: 1 − (a + xr)
+    let lo_val = unsafe { _mm_sub_pd(_mm_set1_pd(1.0), _mm_add_pd(a, xr)) };
+    // high: 0.5 − ((a − 0.5) + xr) — Sterbenz-exact split, no cancellation
+    let hi_val = unsafe {
+        _mm_sub_pd(
+            _mm_set1_pd(0.5),
+            _mm_add_pd(_mm_sub_pd(a, _mm_set1_pd(0.5)), xr),
+        )
+    };
+    let m_tiny = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(crate::kernels::erf::T_TINY)) };
+    let m_quarter = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(0.25)) };
+    let small_val = unsafe {
+        _mm_or_pd(
+            _mm_and_pd(m_tiny, tiny_val),
+            _mm_andnot_pd(
+                m_tiny,
+                _mm_or_pd(
+                    _mm_and_pd(m_quarter, lo_val),
+                    _mm_andnot_pd(m_quarter, hi_val),
+                ),
+            ),
+        )
+    };
+
+    // --- middle region: P(s)/Q(s), s = |x| − 1 --------------------------
+    let mid_val = unsafe { erfc1_pq_128d(_mm_sub_pd(a, _mm_set1_pd(1.0))) };
+
+    // --- tail: z-trick ---------------------------------------------------
+    // z = |x| with the low 32 mantissa bits cleared, so z² + 0.5625 is
+    // exactly representable and the first exp argument is rounding-free.
+    let z = unsafe {
+        _mm_and_pd(
+            a,
+            _mm_castsi128_pd(_mm_set1_epi64x(0xFFFF_FFFF_0000_0000_u64 as i64)),
+        )
+    };
+    let u = unsafe { _mm_div_pd(_mm_set1_pd(1.0), _mm_mul_pd(a, a)) };
+    let l = unsafe { tail_l_128d(a, u) };
+    let e1 = unsafe {
+        vexp_128d(_mm_sub_pd(
+            _mm_sub_pd(_mm_setzero_pd(), _mm_mul_pd(z, z)),
+            _mm_set1_pd(0.5625),
+        ))
+    };
+    let e2 = unsafe {
+        vexp_128d(_mm_add_pd(
+            _mm_mul_pd(_mm_sub_pd(z, a), _mm_add_pd(z, a)),
+            l,
+        ))
+    };
+    let tail_val = unsafe { _mm_div_pd(_mm_mul_pd(e1, e2), a) };
+    // |x| > XMAX (incl. +∞ and NaN fall-through): 0
+    let m_xmax = unsafe { _mm_cmple_pd(a, _mm_set1_pd(crate::kernels::erf::XMAX)) };
+    let tail_val = unsafe { _mm_and_pd(m_xmax, tail_val) };
+
+    // --- assemble erfc(|x|), then sign -----------------------------------
+    let m_small = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(crate::kernels::erf::T_SMALL)) };
+    let m_mid = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(crate::kernels::erf::T_MID)) };
+    let c = unsafe {
+        _mm_or_pd(
+            _mm_and_pd(m_small, small_val),
+            _mm_andnot_pd(
+                m_small,
+                _mm_or_pd(_mm_and_pd(m_mid, mid_val), _mm_andnot_pd(m_mid, tail_val)),
+            ),
+        )
+    };
+    let neg = unsafe { _mm_cmplt_pd(v, _mm_setzero_pd()) };
+    let out = unsafe {
+        _mm_or_pd(
+            _mm_and_pd(neg, _mm_sub_pd(_mm_set1_pd(2.0), c)),
+            _mm_andnot_pd(neg, c),
+        )
+    };
+    unsafe { _mm_or_pd(out, nan) } // NaN in → NaN out
+}
+
+/// erf(x) for 2 lanes, full domain. Mirror of the scalar `erf_f64`:
+/// small region `x + x·R(x²)` (exact at ±0, signed), otherwise
+/// `1 − erfc(|x|)` with the sign applied. ±∞ saturate via the tail
+/// (1 − 0 / 1 − 2); NaN lanes are blended back to NaN at the end.
+///
+/// # Safety
+/// Caller must ensure SSE2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn verf_128d(v: __m128d) -> __m128d {
+    let sign_bit = unsafe { _mm_set1_pd(-0.0) };
+    let a = unsafe { _mm_andnot_pd(sign_bit, v) }; // |x|
+    let nan = unsafe { _mm_cmpunord_pd(v, v) };
+
+    // small: erf(x) = x + x·R(x²) — R(0) = 2/√π − 1, exact at ±0; the
+    // form is already signed (uses v, not |v|), so no sign flip below.
+    let x2 = unsafe { _mm_mul_pd(v, v) };
+    let small_val = unsafe { _mm_add_pd(v, _mm_mul_pd(v, horner_r_128d(x2))) };
+
+    // big: 1 − erfc(|x|) (verfc handles the |x| > XMAX → 0 tail), then
+    // odd symmetry — the sign flip applies ONLY to the big region, exactly
+    // like the scalar `erf_f64` (small lanes are already signed).
+    let big_val = unsafe { _mm_sub_pd(_mm_set1_pd(1.0), verfc_128d(a)) };
+    let neg = unsafe { _mm_cmplt_pd(v, _mm_setzero_pd()) };
+    let big_val = unsafe {
+        _mm_or_pd(
+            _mm_and_pd(neg, _mm_sub_pd(_mm_setzero_pd(), big_val)),
+            _mm_andnot_pd(neg, big_val),
+        )
+    };
+
+    let m_small = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(crate::kernels::erf::T_SMALL)) };
+    let y = unsafe {
+        _mm_or_pd(
+            _mm_and_pd(m_small, small_val),
+            _mm_andnot_pd(m_small, big_val),
+        )
+    };
+    unsafe { _mm_or_pd(y, nan) }
+}
+
+crate::simd_map!(
+    erf_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    |p, v| unsafe { _mm_storeu_pd(p, v) },
+    |v: __m128d| unsafe { verf_128d(v) },
+    |x: f64| crate::kernels::erf::erf_f64(x)
+);
+
+crate::simd_map!(
+    erfc_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    |p, v| unsafe { _mm_storeu_pd(p, v) },
+    |v: __m128d| unsafe { verfc_128d(v) },
+    |x: f64| crate::kernels::erf::erfc_f64(x)
+);
+
+// f32 erf/erfc: widen 4 floats to two f64 pairs, run the f64 vector op,
+// round once back to f32 (the perfectly-rounded f32 contract).
+crate::simd_map!(
+    erf,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    |p, v| unsafe { _mm_storeu_ps(p, v) },
+    |v: __m128| unsafe {
+        let lo = _mm_cvtps_pd(v);
+        let hi = _mm_cvtps_pd(_mm_movehl_ps(v, v));
+        let rlo = _mm_cvtpd_ps(verf_128d(lo));
+        let rhi = _mm_cvtpd_ps(verf_128d(hi));
+        _mm_movelh_ps(rlo, rhi)
+    },
+    |x: f32| crate::kernels::erf::erf(x)
+);
+
+crate::simd_map!(
+    erfc,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    |p, v| unsafe { _mm_storeu_ps(p, v) },
+    |v: __m128| unsafe {
+        let lo = _mm_cvtps_pd(v);
+        let hi = _mm_cvtps_pd(_mm_movehl_ps(v, v));
+        let rlo = _mm_cvtpd_ps(verfc_128d(lo));
+        let rhi = _mm_cvtpd_ps(verfc_128d(hi));
+        _mm_movelh_ps(rlo, rhi)
+    },
+    |x: f32| crate::kernels::erf::erfc(x)
+);
+
 #[cfg(test)]
 #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 mod tests {
