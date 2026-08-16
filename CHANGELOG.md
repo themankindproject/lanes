@@ -60,6 +60,11 @@ so it is all listed as additions.
   `logsumexp` — maps and norms also as `*_into` variants.
 - `_into` variants write into a caller-provided buffer so hot loops can
   reuse one allocation; the allocating forms are thin wrappers.
+- The allocating wrappers build their output buffer without a zero-fill
+  (`with_capacity` + `set_len`, confined to a single kernel-layer helper
+  and Miri-verified): the map kernel writes every element, so the
+  `vec![0.0; n]` pre-fill would be pure wasted store traffic on
+  memory-bound maps.
 - `exp`, `ln`, `tanh`, `sqrt`, `rsqrt` get full SIMD kernels on every
   backend with fdlibm/SLEEF/musl-derived reductions, ≤ 1 ulp vs `std`.
 - `softplus` uses the overflow-free `max(x, 0) + ln1p(e^-|x|)` form

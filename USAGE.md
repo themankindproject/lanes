@@ -579,7 +579,8 @@ Contract of every `_into` function:
   `lo > hi` or a bound is NaN.
 
 The allocating forms (`softmax`, `exp`, ...) are thin wrappers: they
-allocate a zeroed `Vec` of the right length and call the `_into` kernel.
+allocate an uninitialized `Vec` of the right length (no zero-fill — the
+kernel writes every element) and call the `_into` kernel.
 
 ---
 

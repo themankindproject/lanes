@@ -15,12 +15,12 @@ panics on bad input — fallible kernels return `Result`.
 
 | Kernel | `lanes` | naive iterator | speedup |
 | --- | ---: | ---: | ---: |
-| `sum` | 6.1 µs | 146.7 µs | **23.9×** |
-| `l2_norm` | 6.9 µs | 147.2 µs | **21.3×** |
-| `dot` | 12.5 µs | 147.6 µs | **11.8×** |
-| `tanh` | 157.4 µs | 791.9 µs | **5.0×** |
-| `softmax` | 148.1 µs | 852.3 µs | **5.8×** |
-| `exp` | 100.9 µs | 373.8 µs | **3.7×** |
+| `sum` | 6.2 µs | 146.6 µs | **23.8×** |
+| `l2_norm` | 6.9 µs | 147.3 µs | **21.4×** |
+| `dot` | 12.3 µs | 146.9 µs | **11.9×** |
+| `tanh` | 146.7 µs | 774.4 µs | **5.3×** |
+| `softmax` | 140.6 µs | 845.6 µs | **6.0×** |
+| `exp` | 95.1 µs | 355.9 µs | **3.7×** |
 
 <sub>f32, n = 65,536, AVX-512F backend on an i5-1135G7, release build.
 "naive" is the plain iterator expression compiled with the same
@@ -85,45 +85,45 @@ expression compiled with identical settings. Reproduce with
 
 | Family | Function | `lanes` | naive | speedup |
 | --- | --- | ---: | ---: | ---: |
-| `stats` | `sum` | 6.1 µs | 146.7 µs | **23.9×** |
-| `stats` | `prod` | 9.2 µs | 146.9 µs | **15.9×** |
-| `stats` | `min` | 11.6 µs | 293.0 µs | **25.4×** |
-| `stats` | `max` | 11.6 µs | 293.0 µs | **25.2×** |
-| `stats` | `argmax` | 18.4 µs | 147.3 µs | **8.0×** |
-| `stats` | `argmin` | 18.6 µs | 147.7 µs | **7.9×** |
-| `stats` | `sum_sq` | 6.8 µs | 146.7 µs | **21.6×** |
-| `stats` | `mean` | 6.1 µs | 147.0 µs | **24.1×** |
-| `stats` | `variance` | 23.9 µs | 293.5 µs | **12.3×** |
-| `stats` | `std_dev` | 23.9 µs | 294.2 µs | **12.3×** |
-| `stats` | `geometric_mean` | 146.6 µs | 414.8 µs | **2.8×** |
-| `stats` | `dot` | 12.5 µs | 147.6 µs | **11.8×** |
-| `stats` | `count_zero` | 25.1 µs | 26.0 µs | 1.0× |
-| `stats` | `count_nan` | 25.0 µs | 26.1 µs | 1.0× |
-| `stats` | `count_infinite` | 26.1 µs | 32.5 µs | 1.2× |
-| `distance` | `l1_norm` | 6.9 µs | 148.6 µs | **21.6×** |
-| `distance` | `l2_norm` | 6.9 µs | 147.2 µs | **21.3×** |
-| `distance` | `max_norm` | 11.6 µs | 289.2 µs | **24.9×** |
-| `distance` | `squared_distance` | 12.5 µs | 147.1 µs | **11.8×** |
-| `math` | `sqrt` | 34.8 µs | 27.6 µs | 0.8× |
-| `math` | `clip` | 19.0 µs | 14.2 µs | 0.7× |
-| `math` | `rsqrt` | 58.0 µs | 55.5 µs | 1.0× |
-| `math` | `exp` | 100.9 µs | 373.8 µs | **3.7×** |
-| `math` | `ln` | 94.8 µs | 457.1 µs | **4.8×** |
-| `math` | `tanh` | 157.4 µs | 791.9 µs | **5.0×** |
-| `math` | `hypot` | 58.9 µs | 373.8 µs | **6.3×** |
-| `math` | `powi` | 19.1 µs | 12.6 µs | 0.7× |
-| `math` | `abs_sub` | 24.3 µs | 20.5 µs | 0.8× |
-| `ml` | `softmax` | 148.1 µs | 852.3 µs | **5.8×** |
-| `ml` | `log_softmax` | 164.5 µs | 697.1 µs | **4.2×** |
-| `ml` | `sigmoid` | 121.8 µs | 372.4 µs | **3.1×** |
-| `ml` | `silu` | 120.6 µs | 372.8 µs | **3.1×** |
-| `ml` | `gelu` | 164.0 µs | 1226.1 µs | **7.5×** |
-| `ml` | `relu` | 18.7 µs | 12.7 µs | 0.7× |
-| `ml` | `softplus` | 360.6 µs | 1410.6 µs | **3.9×** |
-| `ml` | `rms_norm` | 27.8 µs | 160.2 µs | **5.8×** |
-| `ml` | `layer_norm` | 36.1 µs | 307.7 µs | **8.5×** |
-| `ml` | `cosine_similarity` | 26.3 µs | 442.6 µs | **16.9×** |
-| `ml` | `logsumexp` | 135.2 µs | 698.0 µs | **5.2×** |
+| `stats` | `sum` | 6.2 µs | 146.6 µs | **23.8×** |
+| `stats` | `prod` | 9.3 µs | 146.8 µs | **15.9×** |
+| `stats` | `min` | 11.6 µs | 295.5 µs | **25.4×** |
+| `stats` | `max` | 11.6 µs | 292.9 µs | **25.2×** |
+| `stats` | `argmax` | 18.8 µs | 147.4 µs | **7.8×** |
+| `stats` | `argmin` | 18.2 µs | 148.7 µs | **8.2×** |
+| `stats` | `sum_sq` | 7.2 µs | 147.8 µs | **20.4×** |
+| `stats` | `mean` | 6.4 µs | 147.7 µs | **23.0×** |
+| `stats` | `variance` | 25.4 µs | 295.7 µs | **11.6×** |
+| `stats` | `std_dev` | 24.0 µs | 293.8 µs | **12.3×** |
+| `stats` | `geometric_mean` | 142.3 µs | 425.1 µs | **3.0×** |
+| `stats` | `dot` | 12.3 µs | 146.9 µs | **11.9×** |
+| `stats` | `count_zero` | 25.1 µs | 26.9 µs | 1.1× |
+| `stats` | `count_nan` | 25.1 µs | 26.2 µs | 1.0× |
+| `stats` | `count_infinite` | 26.1 µs | 33.5 µs | 1.3× |
+| `distance` | `l1_norm` | 6.9 µs | 147.4 µs | **21.5×** |
+| `distance` | `l2_norm` | 6.9 µs | 147.3 µs | **21.4×** |
+| `distance` | `max_norm` | 11.6 µs | 289.5 µs | **25.0×** |
+| `distance` | `squared_distance` | 12.5 µs | 147.0 µs | **11.8×** |
+| `math` | `sqrt` | 27.6 µs | 27.6 µs | 1.0× |
+| `math` | `clip` | 11.3 µs | 14.0 µs | 1.2× |
+| `math` | `rsqrt` | 50.5 µs | 55.0 µs | 1.1× |
+| `math` | `exp` | 95.1 µs | 355.9 µs | **3.7×** |
+| `math` | `ln` | 87.7 µs | 452.4 µs | **5.2×** |
+| `math` | `tanh` | 146.7 µs | 774.4 µs | **5.3×** |
+| `math` | `hypot` | 50.5 µs | 367.2 µs | **7.3×** |
+| `math` | `powi` | 11.3 µs | 12.7 µs | 1.1× |
+| `math` | `abs_sub` | 16.6 µs | 20.4 µs | 1.2× |
+| `ml` | `softmax` | 140.6 µs | 845.6 µs | **6.0×** |
+| `ml` | `log_softmax` | 143.5 µs | 690.8 µs | **4.8×** |
+| `ml` | `sigmoid` | 114.6 µs | 372.5 µs | **3.3×** |
+| `ml` | `silu` | 113.2 µs | 372.4 µs | **3.3×** |
+| `ml` | `gelu` | 155.0 µs | 1140.9 µs | **7.4×** |
+| `ml` | `relu` | 10.9 µs | 12.5 µs | 1.2× |
+| `ml` | `softplus` | 350.8 µs | 1492.2 µs | **4.3×** |
+| `ml` | `rms_norm` | 20.1 µs | 159.4 µs | **7.9×** |
+| `ml` | `layer_norm` | 28.1 µs | 307.0 µs | **10.9×** |
+| `ml` | `cosine_similarity` | 25.9 µs | 439.4 µs | **17.0×** |
+| `ml` | `logsumexp` | 134.8 µs | 707.1 µs | **5.2×** |
 
 **Reading the table honestly.** Two distinct regimes:
 
@@ -136,9 +136,14 @@ expression compiled with identical settings. Reproduce with
 - **Trivial elementwise ops are ~1× (`relu`, `clip`, `abs_sub`, `powi`,
   `sqrt`, `rsqrt`).** These need no reassociation, so the compiler
   auto-vectorizes the naive baseline too — both are memory-bandwidth
-  bound and there's nothing left to win. `lanes` still gives you the
-  dispatch/`no_std`/`_into`/error-handling story for these, just not a
-  speedup over already-vectorized code.
+  bound and there's nothing left to win. `lanes` matches or slightly
+  beats the naive baseline here (1.0–1.3×); the allocating wrappers
+  build their output buffer without a zero-fill (the kernel writes every
+  element), so they pay only one store pass. For hot loops, prefer the
+  `_into` variants with a reused buffer to skip the allocation entirely.
+  `lanes` still gives you the dispatch/`no_std`/`_into`/error-handling
+  story for these, just not a large speedup over already-vectorized
+  code.
 
 ## Error handling
 

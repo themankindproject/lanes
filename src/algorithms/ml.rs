@@ -65,7 +65,7 @@ pub mod f32 {
     /// ```
     #[must_use]
     pub fn softmax(values: &[f32]) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = softmax_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -120,7 +120,7 @@ pub mod f32 {
     /// ```
     #[must_use]
     pub fn sigmoid(values: &[f32]) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = sigmoid_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -182,7 +182,7 @@ pub mod f32 {
     /// ```
     #[must_use]
     pub fn softplus(values: &[f32]) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = softplus_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -240,7 +240,7 @@ pub mod f32 {
     /// ```
     #[must_use]
     pub fn log_softmax(values: &[f32]) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = log_softmax_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -295,7 +295,7 @@ pub mod f32 {
     /// ```
     #[must_use]
     pub fn silu(values: &[f32]) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = silu_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -351,7 +351,7 @@ pub mod f32 {
     /// ```
     #[must_use]
     pub fn gelu(values: &[f32]) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = gelu_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -401,7 +401,7 @@ pub mod f32 {
     /// ```
     #[must_use]
     pub fn relu(values: &[f32]) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = relu_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -457,7 +457,7 @@ pub mod f32 {
     /// ```
     #[must_use]
     pub fn rms_norm(values: &[f32], eps: f32) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = rms_norm_into(values, eps, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -566,7 +566,7 @@ pub mod f32 {
     /// ```
     #[must_use]
     pub fn layer_norm(values: &[f32], eps: f32) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = layer_norm_into(values, eps, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -628,7 +628,7 @@ pub mod f64 {
     /// ```
     #[must_use]
     pub fn softmax(values: &[f64]) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = softmax_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -683,7 +683,7 @@ pub mod f64 {
     /// ```
     #[must_use]
     pub fn sigmoid(values: &[f64]) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = sigmoid_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -744,7 +744,7 @@ pub mod f64 {
     /// ```
     #[must_use]
     pub fn softplus(values: &[f64]) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = softplus_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -801,7 +801,7 @@ pub mod f64 {
     /// ```
     #[must_use]
     pub fn log_softmax(values: &[f64]) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = log_softmax_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -856,7 +856,7 @@ pub mod f64 {
     /// ```
     #[must_use]
     pub fn silu(values: &[f64]) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = silu_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -912,7 +912,7 @@ pub mod f64 {
     /// ```
     #[must_use]
     pub fn gelu(values: &[f64]) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = gelu_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -962,7 +962,7 @@ pub mod f64 {
     /// ```
     #[must_use]
     pub fn relu(values: &[f64]) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = relu_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -1018,7 +1018,7 @@ pub mod f64 {
     /// ```
     #[must_use]
     pub fn rms_norm(values: &[f64], eps: f64) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = rms_norm_into(values, eps, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -1127,7 +1127,7 @@ pub mod f64 {
     /// ```
     #[must_use]
     pub fn layer_norm(values: &[f64], eps: f64) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = layer_norm_into(values, eps, &mut out); // infallible: out.len() == values.len() by construction
         out
     }

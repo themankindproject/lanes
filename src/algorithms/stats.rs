@@ -227,7 +227,7 @@ pub mod f32 {
             return Err(Error::NonPositiveInput { index });
         }
         let backend = Backend::detect();
-        let mut logs = alloc::vec![0.0_f32; values.len()];
+        let mut logs = kernels::alloc_uninit(values.len());
         kernels::dispatch_ln(backend, values, &mut logs);
         let mean = kernels::dispatch_sum(backend, &logs) / values.len() as f32;
         Ok(crate::kernels::exp::exp(mean))
@@ -525,7 +525,7 @@ pub mod f64 {
             return Err(Error::NonPositiveInput { index });
         }
         let backend = Backend::detect();
-        let mut logs = alloc::vec![0.0_f64; values.len()];
+        let mut logs = kernels::alloc_uninit(values.len());
         kernels::dispatch_ln_f64(backend, values, &mut logs);
         let mean = kernels::dispatch_sum_f64(backend, &logs) / values.len() as f64;
         Ok(crate::kernels::exp::exp_f64(mean))

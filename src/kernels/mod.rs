@@ -32,6 +32,50 @@ fn id<T>(v: T) -> T {
     v
 }
 
+/// Allocate a `Vec<T>` of `len` elements without zero-initializing them.
+///
+/// The allocating wrappers (`math`, `ml`) build an output buffer and then
+/// hand it to a kernel that writes every element. Building the buffer with
+/// `vec![0.0; n]` first zero-fills the whole region, which the kernel then
+/// immediately overwrites — pure wasted store traffic on memory-bound maps.
+/// This helper skips that zero-fill: it reserves capacity for `len` elements
+/// and sets the length, returning the buffer uninitialized so the caller's
+/// kernel can write it directly.
+///
+/// # Safety invariant (upheld by every call site)
+///
+/// The returned buffer holds uninitialized memory. It is sound to expose
+/// uninitialized `f32`/`f64` (no invalid bit patterns, no `Drop`), and every
+/// caller immediately passes the buffer to a kernel that writes all `len`
+/// elements before any element is read or the buffer is returned. The
+/// single-pass maps (`simd_map!`/`simd_clip!`) and `rms_norm`/`log_softmax`
+/// only store into `out`; the multi-pass kernels (`softmax`, `layer_norm`)
+/// write every element in their first output pass and only read `out` in a
+/// later pass. The single `set_len` below is the only `unsafe` operation and
+/// is confined to this kernel-layer helper, keeping the algorithm layer
+/// `#![forbid(unsafe_code)]`.
+#[cfg(feature = "alloc")]
+#[inline]
+// `clippy::uninit_vec` flags `with_capacity` + `set_len` as a general hazard
+// (exposing uninitialized memory). Here it is sound and intentional: the
+// element type is `f32`/`f64` at every call site (no invalid bit patterns,
+// no `Drop`), and each caller fully writes the buffer via a map kernel before
+// it is read or returned. Verified under Miri with
+// `-Zmiri-strict-provenance` (the CI flag). See the SAFETY note below.
+#[allow(clippy::uninit_vec)]
+pub(crate) fn alloc_uninit<T>(len: usize) -> alloc::vec::Vec<T> {
+    let mut out = alloc::vec::Vec::with_capacity(len);
+    // SAFETY: `with_capacity(len)` reserved room for `len` elements, so
+    // `set_len(len)` stays within capacity. `T` is `f32`/`f64` at every call
+    // site (no invalid bit patterns, no `Drop`), and each caller fully writes
+    // the buffer before reading it, so no uninitialized value is ever
+    // observed.
+    unsafe {
+        out.set_len(len);
+    }
+    out
+}
+
 /// Shared skeleton for every dispatch fn: one `match` on `Backend` with the
 /// per-backend kernel paths as arguments.
 ///

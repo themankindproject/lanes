@@ -834,6 +834,36 @@ pub(crate) fn layer_norm_f64(values: &[f64], eps: f64, out: &mut [f64]) {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn alloc_uninit_empty() {
+        let buf: alloc::vec::Vec<f32> = crate::kernels::alloc_uninit(0);
+        assert!(buf.is_empty());
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    #[allow(clippy::cast_precision_loss)] // test indices are tiny; exactness irrelevant
+    fn alloc_uninit_write_then_read() {
+        // Miri coverage for the uninit-allocation helper: the buffer comes
+        // back uninitialized and must be fully written before any read.
+        // Writing every element then reading them back is the exact contract
+        // the map kernels uphold.
+        let mut buf: alloc::vec::Vec<f32> = crate::kernels::alloc_uninit(17);
+        assert_eq!(buf.len(), 17);
+        for (i, x) in buf.iter_mut().enumerate() {
+            *x = i as f32;
+        }
+        assert_eq!(buf[16], 16.0);
+
+        let mut buf64: alloc::vec::Vec<f64> = crate::kernels::alloc_uninit(9);
+        assert_eq!(buf64.len(), 9);
+        for (i, x) in buf64.iter_mut().enumerate() {
+            *x = i as f64 * 2.0;
+        }
+        assert_eq!(buf64[8], 16.0);
+    }
+
     #[test]
     fn prod_empty() {
         assert_eq!(prod(&[]), 1.0);

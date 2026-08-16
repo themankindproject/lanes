@@ -75,7 +75,7 @@ pub mod f32 {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn sqrt(values: &[f32]) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = sqrt_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -142,7 +142,7 @@ pub mod f32 {
     /// (the [`f32::clamp`] precondition).
     #[cfg(feature = "alloc")]
     pub fn clip(values: &[f32], lo: f32, hi: f32) -> Result<Vec<f32>, Error> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         clip_into(values, lo, hi, &mut out)?;
         Ok(out)
     }
@@ -202,7 +202,7 @@ pub mod f32 {
     /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
     #[cfg(feature = "alloc")]
     pub fn abs_sub(a: &[f32], b: &[f32]) -> Result<Vec<f32>, Error> {
-        let mut out = alloc::vec![0.0_f32; a.len()];
+        let mut out = kernels::alloc_uninit(a.len());
         abs_sub_into(a, b, &mut out)?;
         Ok(out)
     }
@@ -262,7 +262,7 @@ pub mod f32 {
     /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
     #[cfg(feature = "alloc")]
     pub fn hypot(a: &[f32], b: &[f32]) -> Result<Vec<f32>, Error> {
-        let mut out = alloc::vec![0.0_f32; a.len()];
+        let mut out = kernels::alloc_uninit(a.len());
         hypot_into(a, b, &mut out)?;
         Ok(out)
     }
@@ -311,7 +311,7 @@ pub mod f32 {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn powi(values: &[f32], n: i32) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = powi_into(values, n, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -370,7 +370,7 @@ pub mod f32 {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn rsqrt(values: &[f32]) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = rsqrt_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -427,7 +427,7 @@ pub mod f32 {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn tanh(values: &[f32]) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = tanh_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -482,7 +482,7 @@ pub mod f32 {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn exp(values: &[f32]) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = exp_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -539,7 +539,7 @@ pub mod f32 {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn ln(values: &[f32]) -> Vec<f32> {
-        let mut out = alloc::vec![0.0_f32; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = ln_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -606,7 +606,7 @@ pub mod f64 {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn sqrt(values: &[f64]) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = sqrt_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -673,7 +673,7 @@ pub mod f64 {
     /// (the [`f64::clamp`] precondition).
     #[cfg(feature = "alloc")]
     pub fn clip(values: &[f64], lo: f64, hi: f64) -> Result<Vec<f64>, Error> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         clip_into(values, lo, hi, &mut out)?;
         Ok(out)
     }
@@ -733,7 +733,7 @@ pub mod f64 {
     /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
     #[cfg(feature = "alloc")]
     pub fn abs_sub(a: &[f64], b: &[f64]) -> Result<Vec<f64>, Error> {
-        let mut out = alloc::vec![0.0_f64; a.len()];
+        let mut out = kernels::alloc_uninit(a.len());
         abs_sub_into(a, b, &mut out)?;
         Ok(out)
     }
@@ -793,7 +793,7 @@ pub mod f64 {
     /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
     #[cfg(feature = "alloc")]
     pub fn hypot(a: &[f64], b: &[f64]) -> Result<Vec<f64>, Error> {
-        let mut out = alloc::vec![0.0_f64; a.len()];
+        let mut out = kernels::alloc_uninit(a.len());
         hypot_into(a, b, &mut out)?;
         Ok(out)
     }
@@ -842,7 +842,7 @@ pub mod f64 {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn powi(values: &[f64], n: i32) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = powi_into(values, n, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -901,7 +901,7 @@ pub mod f64 {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn rsqrt(values: &[f64]) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = rsqrt_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -956,7 +956,7 @@ pub mod f64 {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn exp(values: &[f64]) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = exp_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -1013,7 +1013,7 @@ pub mod f64 {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn ln(values: &[f64]) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = ln_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
@@ -1070,7 +1070,7 @@ pub mod f64 {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn tanh(values: &[f64]) -> Vec<f64> {
-        let mut out = alloc::vec![0.0_f64; values.len()];
+        let mut out = kernels::alloc_uninit(values.len());
         let _ = tanh_into(values, &mut out); // infallible: out.len() == values.len() by construction
         out
     }
