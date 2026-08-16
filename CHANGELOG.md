@@ -10,6 +10,8 @@ so it is all listed as additions.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-17
+
 ### Added
 
 - New `special` kernel family — `erf` and `erfc` for f32 and f64 with
@@ -166,4 +168,5 @@ so it is all listed as additions.
 - CI: fmt + clippy + test, doctest, MSRV, Miri, fuzz smoke, native
   aarch64, and llvm-cov coverage on every push and PR.
 
-[Unreleased]: https://github.com/themankindproject/lanes/commits/main
+[Unreleased]: https://github.com/themankindproject/lanes/compare/v0.1.2...main
+[0.1.2]: https://github.com/themankindproject/lanes/compare/v0.1.0...v0.1.2
