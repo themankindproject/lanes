@@ -761,3 +761,51 @@ fn cross_i8_sum() {
         );
     }
 }
+
+#[test]
+fn cross_i8_sum_sq() {
+    for &n in I8_SIZES {
+        let v: Vec<i8> = lcg_bytes(0x511CE, n).into_iter().map(|b| b as i8).collect();
+        let naive: i64 = v.iter().map(|&x| i64::from(x) * i64::from(x)).sum();
+        assert_eq!(
+            lanes::stats::i8::sum_sq(&v),
+            naive,
+            "i8 sum_sq mismatch at n={n}"
+        );
+    }
+}
+
+#[test]
+fn cross_i8_min_max() {
+    for &n in I8_SIZES {
+        let v: Vec<i8> = lcg_bytes(0x1111_1111, n).into_iter().map(|b| b as i8).collect();
+        assert_eq!(
+            lanes::stats::i8::min(&v),
+            v.iter().copied().min(),
+            "i8 min mismatch at n={n}"
+        );
+        assert_eq!(
+            lanes::stats::i8::max(&v),
+            v.iter().copied().max(),
+            "i8 max mismatch at n={n}"
+        );
+    }
+}
+
+#[test]
+fn cross_i8_count_zero() {
+    for &n in I8_SIZES {
+        // Mix in guaranteed zeros: every 7th byte forced to 0.
+        let v: Vec<i8> = lcg_bytes(0x00AB_CDEF, n)
+            .into_iter()
+            .enumerate()
+            .map(|(i, b)| if i % 7 == 0 { 0 } else { b as i8 })
+            .collect();
+        let naive = v.iter().filter(|&&x| x == 0).count();
+        assert_eq!(
+            lanes::stats::i8::count_zero(&v),
+            naive,
+            "i8 count_zero mismatch at n={n}"
+        );
+    }
+}
