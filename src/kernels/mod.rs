@@ -396,7 +396,7 @@ dispatch!(
     x86::sse2::dot_i8,
     x86::avx2::dot_i8,
     x86::avx512::dot_i8,
-    scalar::dot_i8,
+    aarch64::neon::dot_i8,
     id
 );
 
@@ -408,7 +408,7 @@ dispatch!(
     x86::sse2::sum_i8,
     x86::avx2::sum_i8,
     x86::avx512::sum_i8,
-    scalar::sum_i8,
+    aarch64::neon::sum_i8,
     id
 );
 

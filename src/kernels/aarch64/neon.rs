@@ -431,6 +431,58 @@ crate::simd_reduce2_count!(
     (usize, usize)
 );
 
+// --- i8 family: widening integer reductions (i8 -> i16 -> i32 -> i64) -----
+
+/// Horizontal sum of the two i64 counter lanes.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn hsum_neon_i64(v: int64x2_t) -> i64 {
+    unsafe { vgetq_lane_s64(v, 0) + vgetq_lane_s64(v, 1) }
+}
+
+// i8 dot: widening multiply (`vmull_s8`, 8×i8 -> 8×i16) on each half,
+// pairwise-add-long into i32 lanes (`vpadalq_s16`), widen to i64 counters
+// every 1024 chunks (per-lane bound 1024 * 2 * 16384 = 33.5M, ~64x below
+// i32 overflow).
+crate::simd_reduce2_wide!(
+    dot_i8,
+    i8,
+    ["neon"],
+    16,
+    |p: *const i8| unsafe { vld1q_s8(p) },
+    vdupq_n_s64(0),
+    vdupq_n_s32(0),
+    1024,
+    |narrow: int32x4_t, va: int8x16_t, vb: int8x16_t| unsafe {
+        let plo = vmull_s8(vget_low_s8(va), vget_low_s8(vb));
+        let phi = vmull_s8(vget_high_s8(va), vget_high_s8(vb));
+        vpadalq_s16(vpadalq_s16(narrow, plo), phi)
+    },
+    |acc: int64x2_t, narrow: int32x4_t| unsafe { vaddq_s64(acc, vpaddlq_s32(narrow)) },
+    |v: int64x2_t| unsafe { hsum_neon_i64(v) },
+    |r: i64, a: i8, b: i8| r + i64::from(a) * i64::from(b)
+);
+
+// i8 sum: pairwise-add-long into i16 lanes (`vpadalq_s8`), widen to i64
+// counters every 64 chunks (per-lane bound 64 * 256 = 16384, 2x below
+// i16 overflow).
+crate::simd_reduce_wide!(
+    sum_i8,
+    i8,
+    ["neon"],
+    16,
+    |p: *const i8| unsafe { vld1q_s8(p) },
+    vdupq_n_s64(0),
+    vdupq_n_s16(0),
+    64,
+    |narrow: int16x8_t, v: int8x16_t| unsafe { vpadalq_s8(narrow, v) },
+    |acc: int64x2_t, narrow: int16x8_t| unsafe {
+        vaddq_s64(acc, vpaddlq_s32(vpaddlq_s16(narrow)))
+    },
+    |v: int64x2_t| unsafe { hsum_neon_i64(v) },
+    |r: i64, v: i8| r + i64::from(v)
+);
+
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
 // Uses the crate's `no_std` `exp`, so available in all builds.
 crate::simd_softmax!(
