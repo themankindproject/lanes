@@ -812,3 +812,60 @@ fn cross_i8_count_zero() {
         );
     }
 }
+
+#[test]
+fn cross_i8_l1_norm() {
+    for &n in I8_SIZES {
+        let v: Vec<i8> = lcg_bytes(0x1AB5, n).into_iter().map(|b| b as i8).collect();
+        let naive: i64 = v.iter().map(|&x| i64::from(x.unsigned_abs())).sum();
+        assert_eq!(
+            lanes::distance::i8::l1_norm(&v),
+            naive,
+            "i8 l1_norm mismatch at n={n}"
+        );
+    }
+}
+
+#[test]
+fn cross_i8_max_norm() {
+    for &n in I8_SIZES {
+        let v: Vec<i8> = lcg_bytes(0x9A7, n).into_iter().map(|b| b as i8).collect();
+        let expected = if v.is_empty() {
+            None
+        } else {
+            Some(v.iter().map(|&x| x.unsigned_abs()).max().unwrap())
+        };
+        assert_eq!(
+            lanes::distance::i8::max_norm(&v),
+            expected,
+            "i8 max_norm mismatch at n={n}"
+        );
+    }
+}
+
+#[test]
+fn cross_i8_squared_distance() {
+    for &n in I8_SIZES {
+        let a: Vec<i8> = lcg_bytes(0x18D0_0007, n)
+            .into_iter()
+            .map(|b| b as i8)
+            .collect();
+        let b: Vec<i8> = lcg_bytes(0x5EED_1800, n)
+            .into_iter()
+            .map(|b| b as i8)
+            .collect();
+        let naive: i64 = a
+            .iter()
+            .zip(&b)
+            .map(|(&x, &y)| {
+                let d = i64::from(x) - i64::from(y);
+                d * d
+            })
+            .sum();
+        assert_eq!(
+            lanes::distance::i8::squared_distance(&a, &b),
+            Ok(naive),
+            "i8 squared_distance mismatch at n={n}"
+        );
+    }
+}
