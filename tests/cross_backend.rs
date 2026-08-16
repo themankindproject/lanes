@@ -901,3 +901,134 @@ fn cross_exp_f64_subnormal_band() {
         }
     }
 }
+
+// --- erf/erfc: SIMD chunk path vs scalar tail, bit-exact -------------------
+//
+// The dispatched map runs a vector loop for full chunks and a scalar tail
+// for the remainder. Both paths implement the same piecewise algorithm with
+// the same coefficients and rounding, so they must agree bit-for-bit. This
+// is the cross-backend invariant: a region-assembly or Horner-order bug in
+// one path (the NEON-popcount class) shows up as a chunk/tail mismatch.
+//
+// Oracle-free by construction: each element of a length-`n` dispatched call
+// is compared against the single-element dispatched call, which always takes
+// the scalar tail (n=1 < every lane width). No external reference needed.
+
+/// Deterministic pool spanning every erf/erfc region (tiny, small, mid,
+/// tail, subnormal band, saturation) for both signs, plus ±0.
+fn erf_pool_f64() -> Vec<f64> {
+    [
+        1e-20, -1e-20, 1e-18, -1e-18, // tiny region
+        0.1, -0.1, 0.5, -0.5, 0.8, -0.8, // small region
+        0.9, -0.9, 1.0, -1.0, 1.2, -1.2, // mid region
+        2.0, -2.0, 2.857, -2.857, // tail, near T_SPLIT (1/0.35)
+        3.0, -3.0, 5.0, -5.0, 10.0, -10.0, // tail
+        26.5, -26.5, 27.23, -27.23, // subnormal band, XMAX
+        30.0, -30.0, // beyond XMAX: erf = ±1, erfc = 0
+        0.0, -0.0,
+    ]
+    .to_vec()
+}
+
+#[test]
+fn cross_erf_erfc_f64_chunk_tail_bit_exact() {
+    let pool = erf_pool_f64();
+    // Single-element dispatched results: always the scalar tail path.
+    let single_e: Vec<f64> = pool
+        .iter()
+        .map(|&x| lanes::special::f64::erf(std::slice::from_ref(&x))[0])
+        .collect();
+    let single_c: Vec<f64> = pool
+        .iter()
+        .map(|&x| lanes::special::f64::erfc(std::slice::from_ref(&x))[0])
+        .collect();
+
+    // Every length 0..=48 crosses the 2/4/8-wide f64 chunk boundaries and
+    // leaves every possible tail remainder.
+    for n in 0..=48 {
+        let data: Vec<f64> = (0..n).map(|i| pool[i % pool.len()]).collect();
+        let got_e = lanes::special::f64::erf(&data);
+        let got_c = lanes::special::f64::erfc(&data);
+        for i in 0..n {
+            let j = i % pool.len();
+            assert_eq!(
+                got_e[i].to_bits(),
+                single_e[j].to_bits(),
+                "erf_f64 chunk/tail mismatch at n={n} i={i} x={}",
+                data[i]
+            );
+            assert_eq!(
+                got_c[i].to_bits(),
+                single_c[j].to_bits(),
+                "erfc_f64 chunk/tail mismatch at n={n} i={i} x={}",
+                data[i]
+            );
+            // Exact complement where erf is computed as 1 − erfc (x ≥
+            // 0.84375, positive sign — the Sterbenz-exact range): any
+            // region-assembly bug breaks this identity. Negative x goes
+            // through `2 − c`, which adds one rounding, so it's excluded.
+            if data[i] >= 0.84375 {
+                assert_eq!(
+                    got_e[i] + got_c[i],
+                    1.0,
+                    "erf+erfc != 1 at n={n} x={}",
+                    data[i]
+                );
+            }
+        }
+    }
+}
+
+/// f32 pool mirroring [`erf_pool_f64`].
+fn erf_pool_f32() -> Vec<f32> {
+    [
+        1e-20_f32, -1e-20, 1e-18, -1e-18, 0.1, -0.1, 0.5, -0.5, 0.8, -0.8, 0.9, -0.9, 1.0, -1.0,
+        1.2, -1.2, 2.0, -2.0, 2.857, -2.857, 3.0, -3.0, 5.0, -5.0, 10.0, -10.0, 26.5, -26.5, 27.23,
+        -27.23, 30.0, -30.0, 0.0, -0.0,
+    ]
+    .to_vec()
+}
+
+#[test]
+fn cross_erf_erfc_f32_chunk_tail_bit_exact() {
+    let pool = erf_pool_f32();
+    let single_e: Vec<f32> = pool
+        .iter()
+        .map(|&x| lanes::special::f32::erf(std::slice::from_ref(&x))[0])
+        .collect();
+    let single_c: Vec<f32> = pool
+        .iter()
+        .map(|&x| lanes::special::f32::erfc(std::slice::from_ref(&x))[0])
+        .collect();
+
+    // f32 lane widths go up to 16 (AVX-512), so sweep a wider range to hit
+    // every 4/8/16-wide chunk boundary and tail remainder.
+    for n in 0..=80 {
+        let data: Vec<f32> = (0..n).map(|i| pool[i % pool.len()]).collect();
+        let got_e = lanes::special::f32::erf(&data);
+        let got_c = lanes::special::f32::erfc(&data);
+        for i in 0..n {
+            let j = i % pool.len();
+            assert_eq!(
+                got_e[i].to_bits(),
+                single_e[j].to_bits(),
+                "erf_f32 chunk/tail mismatch at n={n} i={i} x={}",
+                data[i]
+            );
+            assert_eq!(
+                got_c[i].to_bits(),
+                single_c[j].to_bits(),
+                "erfc_f32 chunk/tail mismatch at n={n} i={i} x={}",
+                data[i]
+            );
+            if data[i] >= 0.84375 {
+                assert_eq!(
+                    got_e[i] + got_c[i],
+                    1.0,
+                    "erf+erfc != 1 at n={n} x={}",
+                    data[i]
+                );
+            }
+        }
+    }
+}

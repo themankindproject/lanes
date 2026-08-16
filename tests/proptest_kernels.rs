@@ -1050,4 +1050,124 @@ proptest! {
             .sum();
         prop_assert_eq!(lanes::distance::i8::squared_distance(&a, &b), Ok(naive));
     }
+
+    // --- erf/erfc: oracle-free algebraic properties ------------------------
+    //
+    // No std oracle exists (float_erf is unstable), so these check the
+    // invariants that follow from the kernel construction: ranges, specials,
+    // exact odd symmetry, saturation, the exact complement where erf is
+    // computed as 1 − erfc, and the erf+erfc = 1 sum identity.
+
+    #[test]
+    fn prop_erf_erfc_f32_properties(bits in any::<u32>()) {
+        let x = f32::from_bits(bits);
+        let e = lanes::special::f32::erf(std::slice::from_ref(&x))[0];
+        let c = lanes::special::f32::erfc(std::slice::from_ref(&x))[0];
+        if x.is_nan() {
+            prop_assert!(e.is_nan() && c.is_nan(), "NaN propagation at {}", x);
+        } else {
+            prop_assert!(e.abs() <= 1.0, "erf({}) = {} out of [-1,1]", x, e);
+            prop_assert!((0.0..=2.0).contains(&c), "erfc({}) = {} out of [0,2]", x, c);
+            // Odd symmetry is bit-exact: the small-region signed form and
+            // the big-region negation both commute with rounding.
+            let e_neg = lanes::special::f32::erf(&[-x])[0];
+            prop_assert_eq!(e_neg.to_bits(), (-e).to_bits(), "erf symmetry at {}", x);
+            // Saturation beyond XMAX (27.23).
+            if x > 28.0 {
+                prop_assert_eq!(e, 1.0);
+                prop_assert_eq!(c, 0.0);
+            }
+            if x < -28.0 {
+                prop_assert_eq!(e, -1.0);
+                prop_assert_eq!(c, 2.0);
+            }
+            // erf + erfc == 1 exactly where erf = round32(1 − erfc_f64):
+            // the two roundings stay within half an ulp of 1.0. (Do NOT
+            // assert e == 1.0 − c here: for f32 that subtracts in f32 from
+            // an already-rounded c, a second rounding that can drift 1 ulp.)
+            if x >= 0.84375 {
+                prop_assert_eq!(e + c, 1.0, "complement sum at {}", x);
+            }
+            // Sum identity everywhere else, with a rounding tolerance.
+            prop_assert!(
+                (e + c - 1.0).abs() <= 1e-6,
+                "erf({x}) + erfc({x}) = {}",
+                e + c
+            );
+        }
+    }
+
+    #[test]
+    fn prop_erf_erfc_f64_properties(bits in any::<u64>()) {
+        let x = f64::from_bits(bits);
+        let e = lanes::special::f64::erf(std::slice::from_ref(&x))[0];
+        let c = lanes::special::f64::erfc(std::slice::from_ref(&x))[0];
+        if x.is_nan() {
+            prop_assert!(e.is_nan() && c.is_nan(), "NaN propagation at {}", x);
+        } else {
+            prop_assert!(e.abs() <= 1.0, "erf({}) = {} out of [-1,1]", x, e);
+            prop_assert!((0.0..=2.0).contains(&c), "erfc({}) = {} out of [0,2]", x, c);
+            let e_neg = lanes::special::f64::erf(&[-x])[0];
+            prop_assert_eq!(e_neg.to_bits(), (-e).to_bits(), "erf symmetry at {}", x);
+            if x > 28.0 {
+                prop_assert_eq!(e, 1.0);
+                prop_assert_eq!(c, 0.0);
+            }
+            if x < -28.0 {
+                prop_assert_eq!(e, -1.0);
+                prop_assert_eq!(c, 2.0);
+            }
+            // f64 erf IS `1.0 − erfc` in the big region — bit-exact.
+            if x >= 0.84375 {
+                prop_assert_eq!(e, 1.0 - c, "complement at {}", x);
+                prop_assert_eq!(e + c, 1.0, "complement sum at {}", x);
+            }
+            prop_assert!(
+                (e + c - 1.0).abs() <= 1e-14,
+                "erf({x}) + erfc({x}) = {}",
+                e + c
+            );
+        }
+    }
+
+    /// f32 erf/erfc are perfectly rounded (f64 widen + round once), and a
+    /// correctly-rounded monotone function is monotone — so even a 1-ulp
+    /// step must not reverse. erfc is only perfectly rounded for x ≥ 0
+    /// (the `2 − c` complement for x < 0 adds one rounding).
+    #[test]
+    fn prop_erf_erfc_f32_monotone_1ulp(bits in any::<u32>()) {
+        let x = f32::from_bits(bits);
+        prop_assume!(!x.is_nan() && x != f32::INFINITY);
+        let y = if x == 0.0 {
+            f32::from_bits(1) // nextafter(±0, +inf)
+        } else if x > 0.0 {
+            f32::from_bits(x.to_bits() + 1)
+        } else {
+            f32::from_bits(x.to_bits() - 1)
+        };
+        let ex = lanes::special::f32::erf(std::slice::from_ref(&x))[0];
+        let ey = lanes::special::f32::erf(std::slice::from_ref(&y))[0];
+        prop_assert!(ex <= ey, "erf({}) = {} > erf({}) = {}", x, ex, y, ey);
+        if x >= 0.0 {
+            let cx = lanes::special::f32::erfc(std::slice::from_ref(&x))[0];
+            let cy = lanes::special::f32::erfc(std::slice::from_ref(&y))[0];
+            prop_assert!(cx >= cy, "erfc({}) = {} < erfc({}) = {}", x, cx, y, cy);
+        }
+    }
+
+    /// f64 monotonicity with a 0.01 step: large enough that the true gap
+    /// exceeds the combined ≤ 1/≤ 3 ulp approximation error everywhere
+    /// (a 1-ulp step is NOT guaranteed monotone under ≤ 1 ulp error).
+    /// Integer-mapped sampler — inexact float bounds choke proptest.
+    #[test]
+    fn prop_erf_erfc_f64_monotone_step(xi in -20_000_i64..=19_999) {
+        let x = (xi as f64) / 1000.0; // [-20, ~20)
+        let y = x + 0.01;
+        let ex = lanes::special::f64::erf(std::slice::from_ref(&x))[0];
+        let ey = lanes::special::f64::erf(std::slice::from_ref(&y))[0];
+        prop_assert!(ex <= ey, "erf({}) = {} > erf({}) = {}", x, ex, y, ey);
+        let cx = lanes::special::f64::erfc(std::slice::from_ref(&x))[0];
+        let cy = lanes::special::f64::erfc(std::slice::from_ref(&y))[0];
+        prop_assert!(cx >= cy, "erfc({}) = {} < erfc({}) = {}", x, cx, y, cy);
+    }
 }
