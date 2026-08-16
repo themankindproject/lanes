@@ -12,6 +12,28 @@
 //! * f32 `erf`/`erfc`: perfectly rounded — computed in f64 and rounded
 //!   once (0 ulp measured over every non-negative f32 input).
 //!
+//! ## Performance
+//!
+//! `erf`/`erfc` are piecewise, so per-element cost depends on where the
+//! input lands:
+//!
+//! * `|x| < 0.84375` (small): one degree-13 Horner, no `exp` — the
+//!   cheapest region, runs at full SIMD speed.
+//! * `0.84375 ≤ |x| < 1.25` (middle): one rational `P/Q`, no `exp`.
+//! * `1.25 ≤ |x| ≤ 27.23` (tail): two correctly-rounded vector `exp`s
+//!   plus a rational — several times the per-element cost of the small
+//!   region. That is the price of the accuracy contract: the
+//!   single-`exp` tail alternative was measured at 249 ulp and rejected.
+//! * `|x| > 27.23`: saturated (±1 / 0 / 2), nearly free.
+//!
+//! SIMD chunks whose lanes all fall in one region take a fast path that
+//! skips the other regions' work entirely, so uniform inputs (the common
+//! case — e.g. GELU-style workloads concentrated near zero) are the fast
+//! case, while inputs that alternate regions every element are the worst
+//! case. A tail-heavy distribution can run *slower* than a low-accuracy
+//! polynomial approximation; see the benchmark table in the README for
+//! measured numbers.
+//!
 //! Every map comes in two forms: the allocating form returns a new `Vec`,
 //! and the allocation-free `_into` form writes into a caller-provided
 //! buffer. Length mismatches are reported as [`Error::LengthMismatch`] —
