@@ -357,7 +357,7 @@ dispatch!(
     x86::sse2::hamming_popcount,
     x86::avx2::hamming_popcount,
     x86::avx512::hamming_popcount,
-    scalar::hamming_popcount,
+    aarch64::neon::hamming_popcount,
     id
 );
 
@@ -369,7 +369,7 @@ dispatch!(
     x86::sse2::jaccard_counts,
     x86::avx2::jaccard_counts,
     x86::avx512::jaccard_counts,
-    scalar::jaccard_counts,
+    aarch64::neon::jaccard_counts,
     (|(intersection, union): (usize, usize)| {
         if union == 0 {
             None
