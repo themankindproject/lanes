@@ -124,7 +124,72 @@ macro_rules! simd_reduce {
                 let v = unsafe { *values.get_unchecked(tail_start + i) };
                 result = $tail(result, v);
             }
+            result
+        }
+    };
+}
 
+/// Generate a two-input **integer counting** reduction kernel over packed
+/// bitmaps (`&[u8]`).
+///
+/// Integer sibling of [`simd_reduce2!`]: same chunked-loop skeleton and
+/// tail handling, but the accumulator is backend-defined (typically a
+/// vector of 64-bit counters) and the return type is caller-chosen
+/// (`usize` for hamming, `(usize, usize)` for jaccard's
+/// intersection/union pair). Counting reductions are exact — summation
+/// order never matters — so no unrolled variant exists.
+///
+/// Parameters:
+/// * `$name` — generated function name.
+/// * `$feat` — `target_feature` list (e.g. `"sse2"`, `"avx2"`, `"neon"`).
+/// * `$lanes` — bytes consumed per iteration (16/32 for SSE2/AVX2).
+/// * `$load` — `fn(*const u8) -> Vec` loader.
+/// * `$acc_ident` — accumulator identity (e.g. a zeroed counter vector,
+///   or a tuple of two for jaccard).
+/// * `$combine` — `fn(Acc, Vec, Vec) -> Acc`; applies the per-chunk op
+///   (XOR/AND/OR + popcount) and folds into the counters.
+/// * `$reduce` — `fn(Acc) -> $ret`; horizontal sum of the counters.
+/// * `$tail` — `fn($ret, u8, u8) -> $ret`; scalar tail fold.
+/// * `$ret` — return type (`usize` or `(usize, usize)`).
+///
+/// # Safety contract of generated fns
+/// Caller must guarantee the CPU features are available and that `a` and
+/// `b` have equal lengths.
+macro_rules! simd_reduce2_count {
+    ($name:ident, [$( $feat:literal ),+], $lanes:expr, $load:expr, $acc_ident:expr, $combine:expr, $reduce:expr, $tail:expr, $ret:ty) => {
+        /// SIMD two-input counting reduction kernel over packed bitmaps.
+        /// See the enclosing module for semantics.
+        ///
+        /// # Safety
+        /// Caller must guarantee the CPU features are available and that
+        /// `a` and `b` have equal lengths.
+        #[target_feature($(enable = $feat),*)]
+        pub(crate) unsafe fn $name(a: &[u8], b: &[u8]) -> $ret {
+            debug_assert_eq!(a.len(), b.len());
+            let len = a.len();
+            let a_ptr = a.as_ptr();
+            let b_ptr = b.as_ptr();
+            let chunks = len / $lanes;
+            let remainder = len % $lanes;
+
+            let mut acc = $acc_ident;
+            for i in 0..chunks {
+                // SAFETY: i * $lanes + ($lanes - 1) < chunks * $lanes <= len,
+                // so both pointers are in bounds.
+                let va = $load(unsafe { a_ptr.add(i * $lanes) });
+                let vb = $load(unsafe { b_ptr.add(i * $lanes) });
+                acc = $combine(acc, va, vb);
+            }
+
+            let mut result = $reduce(acc);
+
+            let tail_start = chunks * $lanes;
+            for i in 0..remainder {
+                // SAFETY: tail_start + i < len, so both reads are in bounds.
+                let va = unsafe { *a.get_unchecked(tail_start + i) };
+                let vb = unsafe { *b.get_unchecked(tail_start + i) };
+                result = $tail(result, va, vb);
+            }
             result
         }
     };
