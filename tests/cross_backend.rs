@@ -869,3 +869,35 @@ fn cross_i8_squared_distance() {
         );
     }
 }
+
+#[test]
+fn cross_exp_f64_subnormal_band() {
+    // Regression: simd_exp_f64! used to clamp n < -1022 to 0, so the
+    // vector backends returned 0 where the scalar exp_f64 returns
+    // denormals (x ∈ (−745.13, −708.4)). The erfc tail relies on those
+    // subnormal exp results. 8-wide slices force the SIMD path on every
+    // backend (f64 lane widths: SSE2/NEON 2, AVX2 4, AVX-512 8).
+    for i in 0..1000 {
+        let x = -708.4 - (i as f64) * 0.0367; // down to ≈ −745.1
+        let v = vec![x; 8];
+        let got = lanes::math::f64::exp(&v);
+        let want = x.exp(); // std exp is correctly rounded
+        for g in &got {
+            let ulps = (g.to_bits() as i128 - want.to_bits() as i128).abs();
+            assert!(
+                ulps <= 2,
+                "exp_f64({x}) = {g:e} want {want:e} ({ulps} ulps)"
+            );
+            // round(x·log2e) ≥ −1073 ⟺ x > −744.1: there the crate must
+            // produce a (sub)normal, not flush to 0. (In the narrow band
+            // (−745.13, −744.1) the scalar contract itself flushes at
+            // n ≤ −1074 — 1 ulp from std — and the vector must match it.)
+            if x > -744.1 {
+                assert!(
+                    g.is_subnormal() || g.is_normal(),
+                    "exp_f64({x}) = {g:e}: expected a (sub)normal, not 0/inf"
+                );
+            }
+        }
+    }
+}

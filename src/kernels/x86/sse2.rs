@@ -1759,11 +1759,56 @@ crate::simd_exp_f64!(
     },
     |v| unsafe { _mm_slli_epi64(v, 52) },
     |a, b| unsafe { _mm_add_epi64(a, b) },
-    // Signed 64-bit compare in the float domain: n_int and the clamp
-    // constants (±1024) are exactly representable in f64, and SSE2 has no
-    // `_mm_cmpgt_epi64` (that's SSE4.2).
-    |a, b| unsafe { _mm_castpd_si128(_mm_cmpgt_pd(_mm_castsi128_pd(a), _mm_castsi128_pd(b))) },
-    |a, b| unsafe { _mm_castpd_si128(_mm_cmplt_pd(_mm_castsi128_pd(a), _mm_castsi128_pd(b))) },
+    // Signed 64-bit compares, SSE2-only emulation (no `_mm_cmpgt_epi64`
+    // before SSE4.2). The old float-domain bitcast trick was WRONG for
+    // negative operands: a negative i64 bitcasts to a NaN f64, so every
+    // compare returned false — the denormal clamp masks never fired and
+    // the denormal band produced garbage. Correct emulation: flip the
+    // sign bit (signed → unsigned order), then compare the i32 halves
+    // with sign-flipped signed i32 compares, and sign-extend the i32
+    // results back to full i64 lane masks.
+    |a, b| unsafe {
+        let sign64 = _mm_set1_epi64x(i64::MIN);
+        let ua = _mm_xor_si128(a, sign64);
+        let ub = _mm_xor_si128(b, sign64);
+        let flip32 = _mm_set1_epi32(i32::MIN);
+        // High i32 of each i64 lane (positions 0 and 2 after the shift).
+        let ah = _mm_srli_epi64(ua, 32);
+        let bh = _mm_srli_epi64(ub, 32);
+        let gt_hi = _mm_cmpgt_epi32(_mm_xor_si128(ah, flip32), _mm_xor_si128(bh, flip32));
+        let eq_hi = _mm_cmpeq_epi32(ah, bh);
+        // Pack positions 0,2 → 0,1 (the two i64 lanes' results).
+        let gt_hi = _mm_shuffle_epi32(gt_hi, 0b00_00_10_00);
+        let eq_hi = _mm_shuffle_epi32(eq_hi, 0b00_00_10_00);
+        // Low i32 of each i64 lane, packed to positions 0,1.
+        let al = _mm_shuffle_epi32(ua, 0b00_00_10_00);
+        let bl = _mm_shuffle_epi32(ub, 0b00_00_10_00);
+        let gt_lo = _mm_cmpgt_epi32(_mm_xor_si128(al, flip32), _mm_xor_si128(bl, flip32));
+        // gt = gt_hi | (eq_hi & gt_lo) at positions 0,1; sign-extend each
+        // i32 mask to a full i64 lane mask (srai + unpacklo, the same
+        // idiom the round_f2i closure above uses).
+        let r32 = _mm_or_si128(gt_hi, _mm_and_si128(eq_hi, gt_lo));
+        let sign_bits = _mm_srai_epi32(r32, 31);
+        _mm_unpacklo_epi32(r32, sign_bits)
+    },
+    |a, b| unsafe {
+        let sign64 = _mm_set1_epi64x(i64::MIN);
+        let ua = _mm_xor_si128(b, sign64);
+        let ub = _mm_xor_si128(a, sign64);
+        let flip32 = _mm_set1_epi32(i32::MIN);
+        let ah = _mm_srli_epi64(ua, 32);
+        let bh = _mm_srli_epi64(ub, 32);
+        let gt_hi = _mm_cmpgt_epi32(_mm_xor_si128(ah, flip32), _mm_xor_si128(bh, flip32));
+        let eq_hi = _mm_cmpeq_epi32(ah, bh);
+        let gt_hi = _mm_shuffle_epi32(gt_hi, 0b00_00_10_00);
+        let eq_hi = _mm_shuffle_epi32(eq_hi, 0b00_00_10_00);
+        let al = _mm_shuffle_epi32(ua, 0b00_00_10_00);
+        let bl = _mm_shuffle_epi32(ub, 0b00_00_10_00);
+        let gt_lo = _mm_cmpgt_epi32(_mm_xor_si128(al, flip32), _mm_xor_si128(bl, flip32));
+        let r32 = _mm_or_si128(gt_hi, _mm_and_si128(eq_hi, gt_lo));
+        let sign_bits = _mm_srai_epi32(r32, 31);
+        _mm_unpacklo_epi32(r32, sign_bits)
+    },
     |a, b| unsafe { _mm_and_si128(a, b) },
     |a, b| unsafe { _mm_andnot_si128(a, b) },
     |a, b| unsafe { _mm_or_si128(a, b) }

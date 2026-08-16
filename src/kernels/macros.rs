@@ -792,23 +792,13 @@ macro_rules! simd_exp_f64 {
                 $sub(v, $mul(n, $set1(6.931_471_803_691_238e-1))),
                 $mul(n, $set1(1.908_214_929_270_588e-10)),
             );
-            // Zero r on saturated lanes BEFORE the poly: for huge |x| the
-            // float→int convert saturates and r = x - n·ln2 is garbage,
-            // making the Taylor poly NaN/inf (NaN × 0 = NaN defeats the
-            // exponent clamp below). r = 0 gives poly = 1, so the clamped
-            // exponent scale produces the correct 0 or inf.
-            let sat = $or_i(
-                $cmplt_i(n_int, $set1i(-1022)),
-                $cmpgt_i(n_int, $set1i(1023)),
-            );
-            // NaN lanes must keep propagating NaN, not force p = 1:
-            // round(NaN) saturates so they'd be classified as saturated.
-            // Detect NaN via bits and exempt it from the mask.
+            // NaN lanes must keep propagating NaN through the p-force
+            // mask below: round(NaN) saturates (or yields 0 on NEON), so
+            // detect NaN via bits and exempt it from the mask.
             let nan = $cmpgt_i(
                 $and_i($cast_vi(v), $set1i(0x7fff_ffff_ffff_ffff)),
                 $set1i(0x7ff0_0000_0000_0000),
             );
-            let sat = $andnot_i(nan, sat);
             // exp(r) degree-20 Taylor, Horner in r (descending coefficients).
             let p1 = $add(
                 $set1(1.0 / 2_432_902_008_176_640_000.0),
@@ -833,23 +823,42 @@ macro_rules! simd_exp_f64 {
             let p18 = $add($set1(0.5), $mul(r, p17));
             let p19 = $add($set1(1.0), $mul(r, p18));
             let p = $add($set1(1.0), $mul(r, p19));
-            // 2^n via exponent bits (52-bit shift), clamped: n < -1022 → 0
-            // (denormal range not matched by the shift path), n > 1023 →
-            // inf (raw shift overflows into the sign bit, giving -inf).
+            // 2^n in two steps so denormal results (n ∈ (−1074, −1022))
+            // match the scalar `kernels::exp::exp_f64` (its `f64_pow2`
+            // supports the full subnormal range):
+            //   factor1 = 2^max(n, −1022) via exponent bits — an exact
+            //             exponent shift, inf on overflow lanes;
+            //   factor2 = 2^(n+1022) on under lanes (exact: n+1022 ∈
+            //             (−52, 0] → normal power of two), 1.0 elsewhere,
+            //             0.0 on dead lanes (n ≤ −1074 → true zero,
+            //             matching the scalar's flush).
+            // p·factor2 rounds once into the subnormal range exactly like
+            // the scalar's `poly * f64_pow2(n)`; ·factor1 is then exact.
             let under = $cmplt_i(n_int, $set1i(-1022));
             let over = $cmpgt_i(n_int, $set1i(1023));
-            let n_bits = $slli_i($add_i(n_int, $set1i(1023)));
-            let n_bits = $andnot_i(under, n_bits);
+            let dead = $cmplt_i(n_int, $set1i(-1073));
+            let n_clamped = $or_i($and_i(under, $set1i(-1022)), $andnot_i(under, n_int));
+            let n_bits = $slli_i($add_i(n_clamped, $set1i(1023)));
             let n_bits = $andnot_i(over, n_bits);
             let n_bits = $or_i(n_bits, $and_i(over, $set1i(0x7FF0_0000_0000_0000)));
-            // On saturated lanes force p = 1.0 (r was garbage, so the poly
-            // could be NaN/inf); the exponent clamp below then produces
-            // the correct 0 or inf.
+            let extra_bits = $slli_i($add_i(n_int, $set1i(2045)));
+            let extra = $or_i(
+                $and_i(under, extra_bits),
+                $andnot_i(under, $set1i(0x3FF0_0000_0000_0000)),
+            );
+            let extra = $andnot_i(dead, extra);
+            // On dead/overflow lanes force p = 1.0: for huge |x| the
+            // float→int convert saturates and r = x − n·ln2 is garbage, so
+            // the Taylor poly could be NaN/inf (NaN × 0 = NaN would defeat
+            // the exponent clamp). p = 1 with the clamped scale produces
+            // the correct 0 or inf. Genuine denormal lanes (−1073 ≤ n ≤
+            // −1023) keep their polynomial.
+            let force = $andnot_i(nan, $or_i(dead, over));
             let p_bits = $cast_vi(p);
-            let p_bits = $andnot_i(sat, p_bits);
-            let p_bits = $or_i(p_bits, $and_i(sat, $cast_vi($set1(1.0))));
+            let p_bits = $andnot_i(force, p_bits);
+            let p_bits = $or_i(p_bits, $and_i(force, $cast_vi($set1(1.0))));
             let p = $cast_iv(p_bits);
-            $mul(p, $cast_iv(n_bits))
+            $mul($mul(p, $cast_iv(extra)), $cast_iv(n_bits))
         }
     };
 }
