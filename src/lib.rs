@@ -106,6 +106,11 @@
 //! never fail; NaN inputs propagate to NaN results rather than becoming
 //! errors.
 //!
+//! [`Error`] and [`Backend`] are both `#[non_exhaustive]`: new error
+//! variants (as new kernel families land) and new backends (e.g. WASM
+//! SIMD128) may be added in minor releases, so `match`es on them must
+//! keep a wildcard arm.
+//!
 //! ## Safety policy
 //!
 //! All `unsafe` code is confined to the kernel layer, behind `pub(crate)`

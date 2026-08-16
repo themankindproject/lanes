@@ -118,6 +118,9 @@ fuzz_target!(|input: NormsInput| {
         Err(lanes::Error::InvalidBounds) | Err(lanes::Error::NonPositiveInput { .. }) => {
             unreachable!("cosine_similarity never returns InvalidBounds or NonPositiveInput")
         }
+        // `Error` is `#[non_exhaustive]` — future variants are contract
+        // violations for cosine_similarity too.
+        Err(_) => unreachable!("cosine_similarity returned an unexpected error variant"),
     }
 
     // layer_norm: no panic, same length, unit variance on finite, non-empty
