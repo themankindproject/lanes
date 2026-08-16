@@ -155,6 +155,8 @@ macro_rules! simd_reduce {
 /// # Safety contract of generated fns
 /// Caller must guarantee the CPU features are available and that `a` and
 /// `b` have equal lengths.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! simd_reduce2_count {
     ($name:ident, [$( $feat:literal ),+], $lanes:expr, $load:expr, $acc_ident:expr, $combine:expr, $reduce:expr, $tail:expr, $ret:ty) => {
         /// SIMD two-input counting reduction kernel over packed bitmaps.

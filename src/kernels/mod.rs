@@ -354,9 +354,9 @@ dispatch!(
     [a: &[u8], b: &[u8]],
     usize,
     scalar::hamming_popcount,
-    scalar::hamming_popcount,
-    scalar::hamming_popcount,
-    scalar::hamming_popcount,
+    x86::sse2::hamming_popcount,
+    x86::avx2::hamming_popcount,
+    x86::avx512::hamming_popcount,
     scalar::hamming_popcount,
     id
 );
@@ -366,11 +366,17 @@ dispatch!(
     [a: &[u8], b: &[u8]],
     Option<f32>,
     scalar::jaccard,
-    scalar::jaccard,
-    scalar::jaccard,
-    scalar::jaccard,
-    scalar::jaccard,
-    id
+    x86::sse2::jaccard_counts,
+    x86::avx2::jaccard_counts,
+    x86::avx512::jaccard_counts,
+    scalar::jaccard_counts,
+    (|(intersection, union): (usize, usize)| {
+        if union == 0 {
+            None
+        } else {
+            Some(intersection as f32 / union as f32)
+        }
+    })
 );
 
 dispatch!(

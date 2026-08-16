@@ -434,6 +434,25 @@ pub(crate) fn hamming_popcount(a: &[u8], b: &[u8]) -> usize {
         .sum()
 }
 
+/// Jaccard counts kernel for packed bitmaps:
+/// `(popcount(a & b), popcount(a | b))` — the intersection and union bit
+/// counts. Returns `(0, 0)` for empty inputs. This is the shared
+/// intermediate form every backend reduces to; the final similarity
+/// `intersection / union` (or `None` on empty union) is applied by the
+/// dispatch wrapper.
+///
+/// Caller guarantees equal lengths (zip stops at the shorter otherwise).
+#[inline]
+pub(crate) fn jaccard_counts(a: &[u8], b: &[u8]) -> (usize, usize) {
+    let mut intersection = 0usize;
+    let mut union = 0usize;
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        intersection += (x & y).count_ones() as usize;
+        union += (x | y).count_ones() as usize;
+    }
+    (intersection, union)
+}
+
 /// Jaccard kernel for packed bitmaps: reduces
 /// `(popcount(a & b), popcount(a | b))` to the similarity
 /// `intersection / union`, or `None` when the union is empty (both
@@ -442,12 +461,7 @@ pub(crate) fn hamming_popcount(a: &[u8], b: &[u8]) -> usize {
 /// Caller guarantees equal lengths (zip stops at the shorter otherwise).
 #[inline]
 pub(crate) fn jaccard(a: &[u8], b: &[u8]) -> Option<f32> {
-    let mut intersection = 0usize;
-    let mut union = 0usize;
-    for (&x, &y) in a.iter().zip(b.iter()) {
-        intersection += (x & y).count_ones() as usize;
-        union += (x | y).count_ones() as usize;
-    }
+    let (intersection, union) = jaccard_counts(a, b);
     if union == 0 {
         None
     } else {

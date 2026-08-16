@@ -311,6 +311,86 @@ crate::simd_reduce2!(
     _mm256_add_ps
 );
 
+// --- binary family: popcount-based two-input reductions -------------------
+
+/// Per-byte popcount (each byte → 0..8) via nibble lookup. `pshufb` is
+/// legal here: AVX2 implies SSSE3.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn popcnt_256_bytes(x: __m256i) -> __m256i {
+    unsafe {
+        let lookup = _mm256_setr_epi8(
+            0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4, 0, 1, 1, 2, 1, 2,
+            2, 3, 1, 2, 2, 3, 2, 3, 3, 4,
+        );
+        let lo_mask = _mm256_set1_epi8(0x0F);
+        let lo = _mm256_and_si256(x, lo_mask);
+        // The 0x0F mask kills the cross-byte bits `_mm256_srli_epi16`
+        // bleeds into bits 4..7 of each low byte.
+        let hi = _mm256_and_si256(_mm256_srli_epi16(x, 4), lo_mask);
+        _mm256_add_epi8(
+            _mm256_shuffle_epi8(lookup, lo),
+            _mm256_shuffle_epi8(lookup, hi),
+        )
+    }
+}
+
+/// Sum per-byte counts (0..8) into four u64 counter lanes via `psadbw`.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn popcnt_256_sum(x: __m256i) -> __m256i {
+    unsafe { _mm256_sad_epu8(popcnt_256_bytes(x), _mm256_setzero_si256()) }
+}
+
+/// Horizontal sum of the four u64 counter lanes.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn hsum_256_u64(v: __m256i) -> usize {
+    unsafe {
+        let mut t = [0u64; 4];
+        _mm256_storeu_si256(t.as_mut_ptr() as *mut __m256i, v);
+        (t[0] + t[1] + t[2] + t[3]) as usize
+    }
+}
+
+// Hamming: popcount of XOR, 32 bytes per iteration.
+crate::simd_reduce2_count!(
+    hamming_popcount,
+    ["avx2"],
+    32,
+    |p: *const u8| unsafe { _mm256_loadu_si256(p as *const __m256i) },
+    _mm256_setzero_si256(),
+    |acc: __m256i, va: __m256i, vb: __m256i| unsafe {
+        _mm256_add_epi64(acc, popcnt_256_sum(_mm256_xor_si256(va, vb)))
+    },
+    |v: __m256i| unsafe { hsum_256_u64(v) },
+    |r: usize, a: u8, b: u8| r + (a ^ b).count_ones() as usize,
+    usize
+);
+
+// Jaccard counts: (popcount of AND, popcount of OR) per chunk.
+crate::simd_reduce2_count!(
+    jaccard_counts,
+    ["avx2"],
+    32,
+    |p: *const u8| unsafe { _mm256_loadu_si256(p as *const __m256i) },
+    (_mm256_setzero_si256(), _mm256_setzero_si256()),
+    |acc: (__m256i, __m256i), va: __m256i, vb: __m256i| unsafe {
+        (
+            _mm256_add_epi64(acc.0, popcnt_256_sum(_mm256_and_si256(va, vb))),
+            _mm256_add_epi64(acc.1, popcnt_256_sum(_mm256_or_si256(va, vb))),
+        )
+    },
+    |v: (__m256i, __m256i)| unsafe { (hsum_256_u64(v.0), hsum_256_u64(v.1)) },
+    |r: (usize, usize), a: u8, b: u8| {
+        (
+            r.0 + (a & b).count_ones() as usize,
+            r.1 + (a | b).count_ones() as usize,
+        )
+    },
+    (usize, usize)
+);
+
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
 // Uses the crate's `no_std` `exp`, so available in all builds.
 crate::simd_softmax!(

@@ -26,6 +26,14 @@
 #[allow(clippy::wildcard_imports)]
 use core::arch::x86_64::*;
 
+// Binary family (hamming/jaccard popcount kernels): AVX-512F alone cannot
+// express a fast byte popcount — `_mm512_popcnt_epi64` needs
+// AVX512-VPOPCNTDQ (not detected by the dispatcher) and
+// `_mm512_sad_epu8`/`_mm512_shuffle_epi8` need AVX512BW. Every CPU with
+// AVX-512F also has AVX2, so the AVX-512 tier reuses the AVX2 kernels
+// unchanged.
+pub(crate) use super::avx2::{hamming_popcount, jaccard_counts};
+
 // Bitwise ops on float vectors, routed through the integer domain:
 // `_mm512_and_ps` / `_mm512_or_ps` / `_mm512_xor_ps` / `_mm512_andnot_ps`
 // (and the `_pd` twins) are AVX-512DQ, not AVX-512F. Dispatch gates this
