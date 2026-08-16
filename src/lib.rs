@@ -162,9 +162,10 @@ pub mod stats {
 /// Distance and norm functions: `l1_norm`, `l2_norm`, `max_norm`,
 /// `squared_distance`, `kl_divergence`, `js_divergence`.
 /// All are `no_std`-clean (the sqrt for `l2_norm` is the std-free kernel).
-/// Precision is selected via the [`f32`] or [`f64`] submodule.
+/// Precision is selected via the [`f32`] or [`f64`] submodule; the [`i8`]
+/// submodule offers exact integer norms with `i64` accumulation.
 pub mod distance {
-    pub use crate::algorithms::distance::{f32, f64};
+    pub use crate::algorithms::distance::{f32, f64, i8};
 }
 
 /// Binary (bit-packed) vector distances: [`binary::hamming`],

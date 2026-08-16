@@ -315,3 +315,83 @@ pub mod f64 {
         Ok(kernels::dispatch_js_divergence_f64(backend, p, q) * 0.5)
     }
 }
+
+pub mod i8 {
+    //! 8-bit signed integer distance and norm functions with `i64`
+    //! accumulation.
+    //!
+    //! Results are exact (no rounding) and cannot overflow — every
+    //! intermediate is widened before the operation that could overflow
+    //! (notably `|i8::MIN| = 128`, which does not fit in `i8`).
+
+    use crate::dispatch::Backend;
+    use crate::error::Error;
+    use crate::kernels;
+
+    /// L1 norm (sum of absolute values), accumulated in `i64`.
+    ///
+    /// Returns `0` for an empty slice. `|i8::MIN| = 128` is handled
+    /// exactly.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::distance::i8::l1_norm(&[-3_i8, 4]), 7);
+    /// assert_eq!(lanes::distance::i8::l1_norm(&[i8::MIN]), 128);
+    /// ```
+    #[must_use]
+    pub fn l1_norm(values: &[i8]) -> i64 {
+        let backend = Backend::detect();
+        kernels::dispatch_l1_norm_i8(backend, values)
+    }
+
+    /// Max norm (maximum absolute value), or [`None`] for an empty slice.
+    ///
+    /// Returns `u8` — the minimal exact type, since `|i8::MIN| = 128`
+    /// does not fit in `i8`.
+    ///
+    /// Composed from the `min`/`max` kernels: `max(|v|)` is the larger of
+    /// the largest non-negative element and `|min|`, so no dedicated
+    /// kernel is needed.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::distance::i8::max_norm(&[-3_i8, 4]), Some(4));
+    /// assert_eq!(lanes::distance::i8::max_norm(&[i8::MIN]), Some(128));
+    /// ```
+    #[must_use]
+    pub fn max_norm(values: &[i8]) -> Option<u8> {
+        if values.is_empty() {
+            return None;
+        }
+        let backend = Backend::detect();
+        let mx = kernels::dispatch_max_i8(backend, values).unwrap_or(0);
+        let mn = kernels::dispatch_min_i8(backend, values).unwrap_or(0);
+        Some((mx.max(0) as u8).max(mn.unsigned_abs()))
+    }
+
+    /// Squared Euclidean distance `sum((a[i] - b[i])²)`, accumulated in
+    /// `i64`.
+    ///
+    /// Returns `Ok(0)` for two empty slices (same policy as the float
+    /// variants). Each difference fits in `i16` and each square in `i32`,
+    /// so the result is exact for any slice length.
+    ///
+    /// # Errors
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
+    ///
+    /// # Example
+    /// ```
+    /// let d = lanes::distance::i8::squared_distance(&[1_i8, 2], &[4_i8, 6]);
+    /// assert_eq!(d, Ok(25));
+    /// ```
+    pub fn squared_distance(a: &[i8], b: &[i8]) -> Result<i64, Error> {
+        if a.len() != b.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len(),
+            });
+        }
+        let backend = Backend::detect();
+        Ok(kernels::dispatch_squared_distance_i8(backend, a, b))
+    }
+}

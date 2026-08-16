@@ -1499,3 +1499,54 @@ fn i8_count_zero_known_values() {
     assert_eq!(lanes::stats::i8::count_zero(&[0; 5]), 5);
     assert_eq!(lanes::stats::i8::count_zero(&[]), 0);
 }
+
+#[test]
+fn i8_l1_norm_known_values() {
+    assert_eq!(lanes::distance::i8::l1_norm(&[]), 0);
+    assert_eq!(lanes::distance::i8::l1_norm(&[-3, 4]), 7);
+    // |i8::MIN| = 128 does not fit in i8 — must widen before abs.
+    assert_eq!(lanes::distance::i8::l1_norm(&[i8::MIN]), 128);
+    assert_eq!(lanes::distance::i8::l1_norm(&[i8::MIN, i8::MIN]), 256);
+    // i64 accumulation: 128 * 100 = 12800.
+    assert_eq!(lanes::distance::i8::l1_norm(&[i8::MIN; 100]), 12800);
+}
+
+#[test]
+fn i8_max_norm_known_values() {
+    assert_eq!(lanes::distance::i8::max_norm(&[]), None);
+    assert_eq!(lanes::distance::i8::max_norm(&[-3, 4]), Some(4));
+    // |i8::MIN| = 128 fits only in u8.
+    assert_eq!(lanes::distance::i8::max_norm(&[i8::MIN]), Some(128));
+    assert_eq!(lanes::distance::i8::max_norm(&[i8::MIN, 127]), Some(128));
+    assert_eq!(lanes::distance::i8::max_norm(&[127, -127]), Some(127));
+}
+
+#[test]
+fn i8_squared_distance_known_values() {
+    assert_eq!(lanes::distance::i8::squared_distance(&[], &[]), Ok(0));
+    assert_eq!(
+        lanes::distance::i8::squared_distance(&[1, 2], &[4, 6]),
+        Ok(25)
+    );
+    // (i8::MIN - 127)^2 = 255^2 = 65025 — needs i16 widening.
+    assert_eq!(
+        lanes::distance::i8::squared_distance(&[i8::MIN], &[127]),
+        Ok(65025)
+    );
+    // i64 accumulation: 65025 * 100.
+    assert_eq!(
+        lanes::distance::i8::squared_distance(&[i8::MIN; 100], &[127; 100]),
+        Ok(65025 * 100)
+    );
+}
+
+#[test]
+fn i8_squared_distance_length_mismatch() {
+    match lanes::distance::i8::squared_distance(&[1], &[1, 2]) {
+        Err(lanes::Error::LengthMismatch { expected, actual }) => {
+            assert_eq!(expected, 1);
+            assert_eq!(actual, 2);
+        }
+        other => panic!("expected LengthMismatch, got {other:?}"),
+    }
+}

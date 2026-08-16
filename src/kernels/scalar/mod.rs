@@ -482,7 +482,30 @@ pub(crate) fn dot_i8(a: &[i8], b: &[i8]) -> i64 {
 /// Returns `0` for an empty slice. Exact for any slice length.
 #[inline]
 pub(crate) fn sum_i8(values: &[i8]) -> i64 {
-    values.iter().map(|&x| i64::from(x)).sum()
+    values.iter().map(|&v| i64::from(v)).sum()
+}
+
+/// i8 L1 norm with i64 accumulation: `sum(|values[i]| as i64)`.
+/// Returns `0` for an empty slice. `unsigned_abs` handles `i8::MIN`
+/// (whose magnitude 128 does not fit in `i8`). Exact for any length.
+#[inline]
+pub(crate) fn l1_norm_i8(values: &[i8]) -> i64 {
+    values.iter().map(|&v| i64::from(v.unsigned_abs())).sum()
+}
+
+/// i8 squared Euclidean distance with i64 accumulation:
+/// `sum((a[i] - b[i])^2)`. Returns `0` for empty inputs. Each difference
+/// fits in i16 (range [-255, 255]) and each square in i32; the i64
+/// accumulator is exact for any slice length.
+#[inline]
+pub(crate) fn squared_distance_i8(a: &[i8], b: &[i8]) -> i64 {
+    a.iter()
+        .zip(b)
+        .map(|(&x, &y)| {
+            let d = i64::from(x) - i64::from(y);
+            d * d
+        })
+        .sum()
 }
 
 /// Find the minimum i8 element. Returns [`None`] for an empty slice.

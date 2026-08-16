@@ -449,6 +449,30 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_l1_norm_i8,
+    [values: &[i8]],
+    i64,
+    scalar::l1_norm_i8,
+    scalar::l1_norm_i8,
+    scalar::l1_norm_i8,
+    scalar::l1_norm_i8,
+    scalar::l1_norm_i8,
+    id
+);
+
+dispatch!(
+    dispatch_squared_distance_i8,
+    [a: &[i8], b: &[i8]],
+    i64,
+    scalar::squared_distance_i8,
+    scalar::squared_distance_i8,
+    scalar::squared_distance_i8,
+    scalar::squared_distance_i8,
+    scalar::squared_distance_i8,
+    id
+);
+
+dispatch!(
     dispatch_softmax,
     [values: &[f32], out: &mut [f32]],
     (),
