@@ -187,6 +187,13 @@ pub mod math {
     pub use crate::algorithms::math::{f32, f64};
 }
 
+/// Special functions (`erf`, `erfc`) — elementwise maps over slices.
+/// Select precision via the [`f32`] or [`f64`] submodule.
+#[cfg(feature = "alloc")]
+pub mod special {
+    pub use crate::algorithms::special::{f32, f64};
+}
+
 /// ML kernels built on the `lanes` core (`softmax`, `log_softmax`,
 /// `sigmoid`, `silu`, `gelu`, `relu`, `softplus`, `rms_norm`, `layer_norm`,
 /// `cosine_similarity`, `logsumexp`). Every map-style op also has an

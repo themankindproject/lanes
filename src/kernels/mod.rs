@@ -1012,6 +1012,58 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_erf,
+    [values: &[f32], out: &mut [f32]],
+    (),
+    scalar::erf,
+    scalar::erf,
+    scalar::erf,
+    scalar::erf,
+    scalar::erf,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_erfc,
+    [values: &[f32], out: &mut [f32]],
+    (),
+    scalar::erfc,
+    scalar::erfc,
+    scalar::erfc,
+    scalar::erfc,
+    scalar::erfc,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_erf_f64,
+    [values: &[f64], out: &mut [f64]],
+    (),
+    scalar::erf_f64,
+    scalar::erf_f64,
+    scalar::erf_f64,
+    scalar::erf_f64,
+    scalar::erf_f64,
+    id,
+    alloc
+);
+
+dispatch!(
+    dispatch_erfc_f64,
+    [values: &[f64], out: &mut [f64]],
+    (),
+    scalar::erfc_f64,
+    scalar::erfc_f64,
+    scalar::erfc_f64,
+    scalar::erfc_f64,
+    scalar::erfc_f64,
+    id,
+    alloc
+);
+
+dispatch!(
     dispatch_ln_f64,
     [values: &[f64], out: &mut [f64]],
     (),
