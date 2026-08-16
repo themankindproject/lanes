@@ -378,11 +378,12 @@ crate::simd_reduce2!(
 // --- binary family: popcount-based two-input reductions -------------------
 
 /// Sum per-byte popcounts into two u64 counter lanes:
-/// u8x16 → u16x8 → u32x4 → u64x2 (pairwise-add chain).
+/// per-byte popcount (`vcntq_u8`) followed by the pairwise-add chain
+/// u8x16 → u16x8 → u32x4 → u64x2.
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn popcnt_neon_sum(x: uint8x16_t) -> uint64x2_t {
-    unsafe { vpaddlq_u32(vpaddlq_u16(vpaddlq_u8(x))) }
+    unsafe { vpaddlq_u32(vpaddlq_u16(vpaddlq_u8(vcntq_u8(x)))) }
 }
 
 /// Horizontal sum of the two u64 counter lanes.
