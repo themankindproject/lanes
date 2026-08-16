@@ -14,6 +14,9 @@ so it is all listed as additions.
 
 **Architecture and platform**
 
+- `Error` and `Backend` are `#[non_exhaustive]`: new error variants and
+  new backends may be added in minor releases without a major version
+  bump; downstream `match`es keep a wildcard arm.
 - Layered architecture: public API → algorithm layer → kernel layer →
   backend layer, with runtime CPU dispatch cached in a `OnceLock`.
 - Runtime CPU detection (`is_x86_feature_detected!`, aarch64 auxiliary

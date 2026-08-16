@@ -8,7 +8,12 @@ use core::fmt;
 /// [`Error::LengthMismatch`] when the caller-provided output buffer is the wrong
 /// length; the two-input maps (`dot`, `abs_sub`, `hypot`, `squared_distance`,
 /// `cosine_similarity`) return it when their operands disagree.
+///
+/// This enum is marked `#[non_exhaustive]`: new failure modes may be added in
+/// a minor release (e.g. as new kernel families land), so downstream `match`es
+/// must keep a wildcard arm. Matching on the existing variants is stable.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Error {
     /// Two slices that must share a length did not.
     ///

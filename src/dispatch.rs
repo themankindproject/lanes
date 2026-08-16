@@ -18,7 +18,13 @@
 /// The appropriate backend is selected at runtime based on CPU feature
 /// detection. Variants are target-dependent: only backends compiled for
 /// the current architecture are listed.
+///
+/// This enum is marked `#[non_exhaustive]`: new backends (e.g. WASM
+/// SIMD128, SVE) may be added in a minor release, and the variant set
+/// already differs per target architecture — so downstream `match`es must
+/// keep a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Backend {
     /// Portable scalar implementation — always available.
     Scalar,

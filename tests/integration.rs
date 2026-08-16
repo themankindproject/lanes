@@ -522,7 +522,8 @@ fn dot_large_arrays() {
 #[test]
 fn backend_detect_returns_valid_variant() {
     let backend = Backend::detect();
-    // Verify we can match on it — compilation is the real test.
+    // Verify we can match on it — compilation is the real test. The
+    // wildcard arm is required: `Backend` is `#[non_exhaustive]`.
     match backend {
         Backend::Scalar => {}
         #[cfg(target_arch = "x86_64")]
@@ -533,6 +534,7 @@ fn backend_detect_returns_valid_variant() {
         Backend::Avx512 => {}
         #[cfg(target_arch = "aarch64")]
         Backend::Neon => {}
+        _ => {}
     }
 }
 
