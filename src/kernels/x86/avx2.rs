@@ -2207,15 +2207,17 @@ unsafe fn erfc1_pq_256d(s: __m256d) -> __m256d {
     unsafe { _mm256_div_pd(p, q) }
 }
 
-/// Tail-region L(u) rational, u = 1/x²: `LA` for x < 1/0.35, `LB`
-/// otherwise (both ascending powers). Shared by erf and erfc.
+/// Tail-region L(u) rational, u = 1/x², ascending powers. `LA` covers
+/// x < 1/0.35, `LB` x ≥ 1/0.35; [`tail_l_256d`] blends between them per lane.
+/// The two halves are split out so a pure-side chunk can evaluate only its own
+/// rational (bit-exact: the blend selects one side per lane anyway).
 ///
 /// # Safety
 /// Caller must ensure AVX2 is available.
 #[cfg(feature = "alloc")]
 #[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn tail_l_256d(a: __m256d, u: __m256d) -> __m256d {
+unsafe fn tail_la_256d(u: __m256d) -> __m256d {
     let mut an = unsafe { _mm256_set1_pd(crate::kernels::erf::LA_NUM[10]) };
     let mut ad = unsafe { _mm256_set1_pd(crate::kernels::erf::LA_DEN[10]) };
     let mut i = 9;
@@ -2237,6 +2239,17 @@ unsafe fn tail_l_256d(a: __m256d, u: __m256d) -> __m256d {
         }
         i -= 1;
     }
+    unsafe { _mm256_div_pd(an, ad) }
+}
+
+/// See [`tail_la_256d`]. `LB` half (x ≥ 1/0.35).
+///
+/// # Safety
+/// Caller must ensure AVX2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn tail_lb_256d(u: __m256d) -> __m256d {
     // NB: LB_NUM has 12 coefficients, LB_DEN has 11 — separate loops, or
     // the shared counter seeds the denominator's top coefficient twice.
     let mut bn = unsafe { _mm256_set1_pd(crate::kernels::erf::LB_NUM[11]) };
@@ -2267,11 +2280,33 @@ unsafe fn tail_l_256d(a: __m256d, u: __m256d) -> __m256d {
         }
         j -= 1;
     }
+    unsafe { _mm256_div_pd(bn, bd) }
+}
+
+/// Tail-region L(u) rational, u = 1/x²: `LA` for x < 1/0.35, `LB`
+/// otherwise (both ascending powers). Shared by erf and erfc.
+///
+/// # Safety
+/// Caller must ensure AVX2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn tail_l_256d(a: __m256d, u: __m256d) -> __m256d {
     let m = unsafe { _mm256_cmp_pd(a, _mm256_set1_pd(crate::kernels::erf::T_SPLIT), _CMP_LT_OQ) };
+    // Pure-side fast path: a chunk entirely on one side of T_SPLIT evaluates
+    // only its own rational (bit-exact — the blend selects one side per lane
+    // anyway, so skipping the unused half changes nothing).
+    let mm = unsafe { _mm256_movemask_pd(m) };
+    if mm == 0b1111 {
+        return unsafe { tail_la_256d(u) };
+    }
+    if mm == 0 {
+        return unsafe { tail_lb_256d(u) };
+    }
     unsafe {
         _mm256_or_pd(
-            _mm256_and_pd(m, _mm256_div_pd(an, ad)),
-            _mm256_andnot_pd(m, _mm256_div_pd(bn, bd)),
+            _mm256_and_pd(m, tail_la_256d(u)),
+            _mm256_andnot_pd(m, tail_lb_256d(u)),
         )
     }
 }

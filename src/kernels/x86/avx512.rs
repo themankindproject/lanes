@@ -1846,15 +1846,17 @@ unsafe fn erfc1_pq_512d(s: __m512d) -> __m512d {
     unsafe { _mm512_div_pd(p, q) }
 }
 
-/// Tail-region L(u) rational, u = 1/x²: `LA` for x < 1/0.35, `LB`
-/// otherwise (both ascending powers). Shared by erf and erfc.
+/// Tail-region L(u) rational, u = 1/x², ascending powers. `LA` covers
+/// x < 1/0.35, `LB` x ≥ 1/0.35; [`tail_l_512d`] blends between them per lane.
+/// The two halves are split out so a pure-side chunk can evaluate only its own
+/// rational (bit-exact: the blend selects one side per lane anyway).
 ///
 /// # Safety
 /// Caller must ensure AVX-512F is available.
 #[cfg(feature = "alloc")]
 #[inline]
 #[target_feature(enable = "avx512f")]
-unsafe fn tail_l_512d(a: __m512d, u: __m512d) -> __m512d {
+unsafe fn tail_la_512d(u: __m512d) -> __m512d {
     let mut an = unsafe { _mm512_set1_pd(crate::kernels::erf::LA_NUM[10]) };
     let mut ad = unsafe { _mm512_set1_pd(crate::kernels::erf::LA_DEN[10]) };
     let mut i = 9;
@@ -1876,6 +1878,17 @@ unsafe fn tail_l_512d(a: __m512d, u: __m512d) -> __m512d {
         }
         i -= 1;
     }
+    unsafe { _mm512_div_pd(an, ad) }
+}
+
+/// See [`tail_la_512d`]. `LB` half (x ≥ 1/0.35).
+///
+/// # Safety
+/// Caller must ensure AVX-512F is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn tail_lb_512d(u: __m512d) -> __m512d {
     // NB: LB_NUM has 12 coefficients, LB_DEN has 11 — separate loops, or
     // the shared counter seeds the denominator's top coefficient twice.
     let mut bn = unsafe { _mm512_set1_pd(crate::kernels::erf::LB_NUM[11]) };
@@ -1906,26 +1919,44 @@ unsafe fn tail_l_512d(a: __m512d, u: __m512d) -> __m512d {
         }
         j -= 1;
     }
-    let m =
-        unsafe { _mm512_cmp_pd_mask(a, _mm512_set1_pd(crate::kernels::erf::T_SPLIT), _CMP_LT_OQ) };
-    unsafe { _mm512_mask_blend_pd(m, _mm512_div_pd(bn, bd), _mm512_div_pd(an, ad)) }
+    unsafe { _mm512_div_pd(bn, bd) }
 }
 
-/// erfc(x) for 8 lanes, full domain (sign, specials, NaN). Lane-for-lane
-/// mirror of the scalar `erfc_f64` (see the SSE2 `verfc_128d` for the
-/// region-by-region notes).
+/// Tail-region L(u) rational, u = 1/x²: `LA` for x < 1/0.35, `LB`
+/// otherwise (both ascending powers). Shared by erf and erfc.
 ///
 /// # Safety
 /// Caller must ensure AVX-512F is available.
 #[cfg(feature = "alloc")]
 #[inline]
 #[target_feature(enable = "avx512f")]
-unsafe fn verfc_512d(v: __m512d) -> __m512d {
-    let a = andnot_pd(_mm512_set1_pd(-0.0), v); // |x|
-    let nan = unsafe { _mm512_cmp_pd_mask(v, v, _CMP_UNORD_Q) };
+unsafe fn tail_l_512d(a: __m512d, u: __m512d) -> __m512d {
+    let m =
+        unsafe { _mm512_cmp_pd_mask(a, _mm512_set1_pd(crate::kernels::erf::T_SPLIT), _CMP_LT_OQ) };
+    // Pure-side fast path: a chunk entirely on one side of T_SPLIT evaluates
+    // only its own rational (bit-exact — the blend selects one side per lane
+    // anyway, so skipping the unused half changes nothing).
+    if m == 0xFF {
+        return unsafe { tail_la_512d(u) };
+    }
+    if m == 0 {
+        return unsafe { tail_lb_512d(u) };
+    }
+    unsafe { _mm512_mask_blend_pd(m, tail_lb_512d(u), tail_la_512d(u)) }
+}
 
-    // --- small region: split forms (mirror of erfc_pos) ----------------
-    let x2 = unsafe { _mm512_mul_pd(v, v) }; // x² is sign-free
+/// erfc(`|x|`) for the small region `|x| < T_SMALL`: the split forms, mirror of
+/// the scalar `erfc_pos` (tiny / low / high sub-regions). Shared by the
+/// pure-small fast path and the general blend path, so both produce identical
+/// bits.
+///
+/// # Safety
+/// Caller must ensure AVX-512F is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn erfc_small_512d(a: __m512d) -> __m512d {
+    let x2 = unsafe { _mm512_mul_pd(a, a) }; // x² is sign-free
     let xr = unsafe { _mm512_mul_pd(a, horner_r_512d(x2)) };
     // tiny: 1 − a (correctly rounded below 2^-56)
     let tiny_val = unsafe { _mm512_sub_pd(_mm512_set1_pd(1.0), a) };
@@ -1941,18 +1972,26 @@ unsafe fn verfc_512d(v: __m512d) -> __m512d {
     let m_tiny =
         unsafe { _mm512_cmp_pd_mask(a, _mm512_set1_pd(crate::kernels::erf::T_TINY), _CMP_LT_OQ) };
     let m_quarter = unsafe { _mm512_cmp_pd_mask(a, _mm512_set1_pd(0.25), _CMP_LT_OQ) };
-    let small_val = unsafe {
+    unsafe {
         _mm512_mask_blend_pd(
             m_tiny,
             _mm512_mask_blend_pd(m_quarter, hi_val, lo_val),
             tiny_val,
         )
-    };
+    }
+}
 
-    // --- middle region: P(s)/Q(s), s = |x| − 1 --------------------------
-    let mid_val = unsafe { erfc1_pq_512d(_mm512_sub_pd(a, _mm512_set1_pd(1.0))) };
-
-    // --- tail: z-trick ---------------------------------------------------
+/// erfc(`|x|`) for the tail region `|x| ∈ [T_MID, XMAX]`: the z-trick, raw (no
+/// XMAX clamp — the general path applies it; the pure-tail fast path is
+/// guarded to |x| ≤ XMAX so needs none). Shared by the pure-tail fast path
+/// and the general blend path.
+///
+/// # Safety
+/// Caller must ensure AVX-512F is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn erfc_tail_raw_512d(a: __m512d) -> __m512d {
     let z = and_pd(a, unsafe {
         _mm512_castsi512_pd(_mm512_set1_epi64(crate::kernels::erf::Z_MASK_I64))
     });
@@ -1970,17 +2009,66 @@ unsafe fn verfc_512d(v: __m512d) -> __m512d {
             l,
         ))
     };
-    let tail_val = unsafe { _mm512_div_pd(_mm512_mul_pd(e1, e2), a) };
-    // |x| > XMAX (incl. +∞ and NaN fall-through): 0
-    let m_xmax =
-        unsafe { _mm512_cmp_pd_mask(a, _mm512_set1_pd(crate::kernels::erf::XMAX), _CMP_LE_OQ) };
-    let tail_val = unsafe { _mm512_maskz_mov_pd(m_xmax, tail_val) };
+    unsafe { _mm512_div_pd(_mm512_mul_pd(e1, e2), a) }
+}
 
-    // --- assemble erfc(|x|), then sign -----------------------------------
+/// Apply the erfc sign reflection: erfc(x) = c for x ≥ 0, 2 − c for x < 0,
+/// where c = erfc(|x|). Shared by every erfc path.
+///
+/// # Safety
+/// Caller must ensure AVX-512F is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn erfc_apply_sign_512d(v: __m512d, c: __m512d) -> __m512d {
+    let neg = unsafe { _mm512_cmp_pd_mask(v, _mm512_setzero_pd(), _CMP_LT_OQ) };
+    unsafe { _mm512_mask_blend_pd(neg, c, _mm512_sub_pd(_mm512_set1_pd(2.0), c)) }
+}
+
+/// erfc(x) for 8 lanes, full domain (sign, specials, NaN). Lane-for-lane
+/// mirror of the scalar `erfc_f64` (see the SSE2 `verfc_128d` for the
+/// region-by-region notes).
+///
+/// Pure-region chunks take a fast path that evaluates only their own region
+/// (the small/middle/tail forms are mutually exclusive per lane, so a chunk
+/// whose 8 lanes all fall in one region gets the same bits without paying for
+/// the other two — in particular skipping the tail's two vector `exp`s). NaN
+/// lanes clear every ordered-compare mask, so any NaN forces the general blend
+/// path and preserves NaN-in → NaN-out.
+///
+/// # Safety
+/// Caller must ensure AVX-512F is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn verfc_512d(v: __m512d) -> __m512d {
+    let a = andnot_pd(_mm512_set1_pd(-0.0), v); // |x|
     let m_small =
         unsafe { _mm512_cmp_pd_mask(a, _mm512_set1_pd(crate::kernels::erf::T_SMALL), _CMP_LT_OQ) };
     let m_mid =
         unsafe { _mm512_cmp_pd_mask(a, _mm512_set1_pd(crate::kernels::erf::T_MID), _CMP_LT_OQ) };
+    let m_tail_end =
+        unsafe { _mm512_cmp_pd_mask(a, _mm512_set1_pd(crate::kernels::erf::XMAX), _CMP_LE_OQ) };
+
+    // --- fast paths: pure-region chunks (NaN can never reach these) ------
+    if m_small == 0xFF {
+        return unsafe { erfc_apply_sign_512d(v, erfc_small_512d(a)) };
+    }
+    if m_small == 0 && m_mid == 0xFF {
+        let c = unsafe { erfc1_pq_512d(_mm512_sub_pd(a, _mm512_set1_pd(1.0))) };
+        return unsafe { erfc_apply_sign_512d(v, c) };
+    }
+    if m_mid == 0 && m_tail_end == 0xFF {
+        return unsafe { erfc_apply_sign_512d(v, erfc_tail_raw_512d(a)) };
+    }
+
+    // --- general path: mixed regions (or NaN present) — blend per lane ---
+    let nan = unsafe { _mm512_cmp_pd_mask(v, v, _CMP_UNORD_Q) };
+    let small_val = unsafe { erfc_small_512d(a) };
+    let mid_val = unsafe { erfc1_pq_512d(_mm512_sub_pd(a, _mm512_set1_pd(1.0))) };
+    let tail_val = unsafe { erfc_tail_raw_512d(a) };
+    // |x| > XMAX (incl. +∞ and NaN fall-through): 0
+    let tail_val = unsafe { _mm512_maskz_mov_pd(m_tail_end, tail_val) };
     let c = unsafe {
         _mm512_mask_blend_pd(
             m_small,
@@ -1988,13 +2076,18 @@ unsafe fn verfc_512d(v: __m512d) -> __m512d {
             small_val,
         )
     };
-    let neg = unsafe { _mm512_cmp_pd_mask(v, _mm512_setzero_pd(), _CMP_LT_OQ) };
-    let out = unsafe { _mm512_mask_blend_pd(neg, c, _mm512_sub_pd(_mm512_set1_pd(2.0), c)) };
+    let out = unsafe { erfc_apply_sign_512d(v, c) };
     unsafe { _mm512_mask_blend_pd(nan, out, _mm512_set1_pd(f64::NAN)) } // NaN in → NaN out
 }
 
 /// erf(x) for 8 lanes, full domain. Mirror of the scalar `erf_f64` (see
 /// the SSE2 `verf_128d` for the sign-handling notes).
+///
+/// Pure-region chunks take a fast path: a pure-small chunk evaluates only
+/// `x + x·R(x²)` (skipping the whole `verfc_512d` call, i.e. both vector
+/// `exp`s), and a pure-big chunk skips the small form. NaN clears `m_small`,
+/// so a pure-small chunk has no NaN; the pure-big path re-applies the NaN
+/// blend so NaN-in → NaN-out is preserved bit-for-bit.
 ///
 /// # Safety
 /// Caller must ensure AVX-512F is available.
@@ -2003,20 +2096,30 @@ unsafe fn verfc_512d(v: __m512d) -> __m512d {
 #[target_feature(enable = "avx512f")]
 unsafe fn verf_512d(v: __m512d) -> __m512d {
     let a = andnot_pd(_mm512_set1_pd(-0.0), v); // |x|
-    let nan = unsafe { _mm512_cmp_pd_mask(v, v, _CMP_UNORD_Q) };
+    let m_small =
+        unsafe { _mm512_cmp_pd_mask(a, _mm512_set1_pd(crate::kernels::erf::T_SMALL), _CMP_LT_OQ) };
 
-    // small: erf(x) = x + x·R(x²) — already signed (uses v, not |v|).
-    let x2 = unsafe { _mm512_mul_pd(v, v) };
-    let small_val = unsafe { _mm512_add_pd(v, _mm512_mul_pd(v, horner_r_512d(x2))) };
+    // --- fast path: pure-small chunk (NaN can never reach this) ----------
+    if m_small == 0xFF {
+        let x2 = unsafe { _mm512_mul_pd(v, v) };
+        return unsafe { _mm512_add_pd(v, _mm512_mul_pd(v, horner_r_512d(x2))) };
+    }
 
     // big: 1 − erfc(|x|), sign flip on the big region only.
     let big_val = unsafe { _mm512_sub_pd(_mm512_set1_pd(1.0), verfc_512d(a)) };
     let neg = unsafe { _mm512_cmp_pd_mask(v, _mm512_setzero_pd(), _CMP_LT_OQ) };
     let big_val =
         unsafe { _mm512_mask_blend_pd(neg, big_val, _mm512_sub_pd(_mm512_setzero_pd(), big_val)) };
+    let nan = unsafe { _mm512_cmp_pd_mask(v, v, _CMP_UNORD_Q) };
 
-    let m_small =
-        unsafe { _mm512_cmp_pd_mask(a, _mm512_set1_pd(crate::kernels::erf::T_SMALL), _CMP_LT_OQ) };
+    // --- fast path: pure-big chunk — skip the small form -----------------
+    if m_small == 0 {
+        return unsafe { _mm512_mask_blend_pd(nan, big_val, _mm512_set1_pd(f64::NAN)) };
+    }
+
+    // --- general path: mixed regions — evaluate the small form and blend -
+    let x2 = unsafe { _mm512_mul_pd(v, v) };
+    let small_val = unsafe { _mm512_add_pd(v, _mm512_mul_pd(v, horner_r_512d(x2))) };
     let y = unsafe { _mm512_mask_blend_pd(m_small, big_val, small_val) };
     unsafe { _mm512_mask_blend_pd(nan, y, _mm512_set1_pd(f64::NAN)) }
 }

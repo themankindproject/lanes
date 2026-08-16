@@ -1969,15 +1969,17 @@ unsafe fn erfc1_pq_128d(s: float64x2_t) -> float64x2_t {
     unsafe { vdivq_f64(p, q) }
 }
 
-/// Tail-region L(u) rational, u = 1/x²: `LA` for x < 1/0.35, `LB`
-/// otherwise (both ascending powers). Shared by erf and erfc.
+/// Tail-region L(u) rational, u = 1/x², ascending powers. `LA` covers
+/// x < 1/0.35, `LB` x ≥ 1/0.35; [`tail_l_128d`] blends between them per lane.
+/// The two halves are split out so a pure-side chunk can evaluate only its own
+/// rational (bit-exact: the blend selects one side per lane anyway).
 ///
 /// # Safety
 /// Caller must ensure NEON is available.
 #[cfg(feature = "alloc")]
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn tail_l_128d(a: float64x2_t, u: float64x2_t) -> float64x2_t {
+unsafe fn tail_la_128d(u: float64x2_t) -> float64x2_t {
     let mut an = unsafe { vdupq_n_f64(crate::kernels::erf::LA_NUM[10]) };
     let mut ad = unsafe { vdupq_n_f64(crate::kernels::erf::LA_DEN[10]) };
     let mut i = 9;
@@ -1999,6 +2001,17 @@ unsafe fn tail_l_128d(a: float64x2_t, u: float64x2_t) -> float64x2_t {
         }
         i -= 1;
     }
+    unsafe { vdivq_f64(an, ad) }
+}
+
+/// See [`tail_la_128d`]. `LB` half (x ≥ 1/0.35).
+///
+/// # Safety
+/// Caller must ensure NEON is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn tail_lb_128d(u: float64x2_t) -> float64x2_t {
     // NB: LB_NUM has 12 coefficients, LB_DEN has 11 — separate loops, or
     // the shared counter seeds the denominator's top coefficient twice.
     let mut bn = unsafe { vdupq_n_f64(crate::kernels::erf::LB_NUM[11]) };
@@ -2029,8 +2042,32 @@ unsafe fn tail_l_128d(a: float64x2_t, u: float64x2_t) -> float64x2_t {
         }
         j -= 1;
     }
+    unsafe { vdivq_f64(bn, bd) }
+}
+
+/// Tail-region L(u) rational, u = 1/x²: `LA` for x < 1/0.35, `LB`
+/// otherwise (both ascending powers). Shared by erf and erfc.
+///
+/// # Safety
+/// Caller must ensure NEON is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn tail_l_128d(a: float64x2_t, u: float64x2_t) -> float64x2_t {
     let m = unsafe { vcltq_f64(a, vdupq_n_f64(crate::kernels::erf::T_SPLIT)) };
-    unsafe { vbslq_f64(m, vdivq_f64(an, ad), vdivq_f64(bn, bd)) }
+    // Pure-side fast path: a chunk entirely on one side of T_SPLIT evaluates
+    // only its own rational (bit-exact — the blend selects one side per lane
+    // anyway, so skipping the unused half changes nothing). Each mask lane is
+    // all-ones or zero, so a horizontal min/max over the u32 view detects the
+    // two pure cases.
+    let m32 = unsafe { vreinterpretq_u32_u64(m) };
+    if unsafe { vminvq_u32(m32) } == u32::MAX {
+        return unsafe { tail_la_128d(u) };
+    }
+    if unsafe { vmaxvq_u32(m32) } == 0 {
+        return unsafe { tail_lb_128d(u) };
+    }
+    unsafe { vbslq_f64(m, tail_la_128d(u), tail_lb_128d(u)) }
 }
 
 /// erfc(x) for 2 lanes, full domain (sign, specials, NaN). Lane-for-lane
@@ -2071,7 +2108,7 @@ unsafe fn verfc_128d(v: float64x2_t) -> float64x2_t {
     let z = unsafe {
         vreinterpretq_f64_u64(vandq_u64(
             vreinterpretq_u64_f64(a),
-            vdupq_n_u64(0xFFFF_FFFF_0000_0000),
+            vdupq_n_u64(crate::kernels::erf::Z_MASK),
         ))
     };
     let u = unsafe { vdivq_f64(vdupq_n_f64(1.0), vmulq_f64(a, a)) };

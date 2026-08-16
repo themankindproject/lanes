@@ -51,7 +51,9 @@ pub(crate) const XMAX: f64 = 27.23;
 pub(crate) const T_TINY: f64 = 1.387_778_780_781_445_7e-17;
 /// z-trick mask: clears the low 32 fraction bits of an f64 bit pattern.
 pub(crate) const Z_MASK: u64 = 0xFFFF_FFFF_0000_0000;
-/// `Z_MASK` as an `i64` bit pattern for the SIMD `set1_epi64x` splats.
+/// `Z_MASK` as an `i64` bit pattern for the x86 SIMD `set1_epi64x` splats
+/// (NEON splats the `u64` directly, so this is x86-only).
+#[cfg(target_arch = "x86_64")]
 pub(crate) const Z_MASK_I64: i64 = Z_MASK as i64;
 
 /// R(t) ≈ (erf(x)−x)/x, t = x², on [0, 0.84375²]. Remez fit, ascending

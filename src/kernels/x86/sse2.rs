@@ -2215,15 +2215,17 @@ unsafe fn erfc1_pq_128d(s: __m128d) -> __m128d {
     unsafe { _mm_div_pd(p, q) }
 }
 
-/// Tail-region L(u) rational, u = 1/x²: `LA` for x < 1/0.35, `LB`
-/// otherwise (both ascending powers). Shared by erf and erfc.
+/// Tail-region L(u) rational, u = 1/x², ascending powers. `LA` covers
+/// x < 1/0.35, `LB` x ≥ 1/0.35; [`tail_l_128d`] blends between them per lane.
+/// The two halves are split out so a pure-side chunk can evaluate only its own
+/// rational (bit-exact: the blend selects one side per lane anyway).
 ///
 /// # Safety
 /// Caller must ensure SSE2 is available.
 #[cfg(feature = "alloc")]
 #[inline]
 #[target_feature(enable = "sse2")]
-unsafe fn tail_l_128d(a: __m128d, u: __m128d) -> __m128d {
+unsafe fn tail_la_128d(u: __m128d) -> __m128d {
     let mut an = unsafe { _mm_set1_pd(crate::kernels::erf::LA_NUM[10]) };
     let mut ad = unsafe { _mm_set1_pd(crate::kernels::erf::LA_DEN[10]) };
     let mut i = 9;
@@ -2245,6 +2247,17 @@ unsafe fn tail_l_128d(a: __m128d, u: __m128d) -> __m128d {
         }
         i -= 1;
     }
+    unsafe { _mm_div_pd(an, ad) }
+}
+
+/// See [`tail_la_128d`]. `LB` half (x ≥ 1/0.35).
+///
+/// # Safety
+/// Caller must ensure SSE2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn tail_lb_128d(u: __m128d) -> __m128d {
     // NB: LB_NUM has 12 coefficients, LB_DEN has 11 — separate loops, or
     // the shared counter seeds the denominator's top coefficient twice.
     let mut bn = unsafe { _mm_set1_pd(crate::kernels::erf::LB_NUM[11]) };
@@ -2275,11 +2288,33 @@ unsafe fn tail_l_128d(a: __m128d, u: __m128d) -> __m128d {
         }
         j -= 1;
     }
+    unsafe { _mm_div_pd(bn, bd) }
+}
+
+/// Tail-region L(u) rational, u = 1/x²: `LA` for x < 1/0.35, `LB`
+/// otherwise (both ascending powers). Shared by erf and erfc.
+///
+/// # Safety
+/// Caller must ensure SSE2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn tail_l_128d(a: __m128d, u: __m128d) -> __m128d {
     let m = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(crate::kernels::erf::T_SPLIT)) };
+    // Pure-side fast path: a chunk entirely on one side of T_SPLIT evaluates
+    // only its own rational (bit-exact — the blend selects one side per lane
+    // anyway, so skipping the unused half changes nothing).
+    let mm = unsafe { _mm_movemask_pd(m) };
+    if mm == 0b11 {
+        return unsafe { tail_la_128d(u) };
+    }
+    if mm == 0 {
+        return unsafe { tail_lb_128d(u) };
+    }
     unsafe {
         _mm_or_pd(
-            _mm_and_pd(m, _mm_div_pd(an, ad)),
-            _mm_andnot_pd(m, _mm_div_pd(bn, bd)),
+            _mm_and_pd(m, tail_la_128d(u)),
+            _mm_andnot_pd(m, tail_lb_128d(u)),
         )
     }
 }
