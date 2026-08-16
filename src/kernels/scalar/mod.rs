@@ -1016,6 +1016,23 @@ mod tests {
     }
 
     #[test]
+    fn scalar_dot_i8() {
+        assert_eq!(dot_i8(&[], &[]), 0);
+        assert_eq!(dot_i8(&[1, -2, 3, -4], &[5, 3, -1, -2]), 4);
+        // Extremes need the i64 accumulator.
+        assert_eq!(dot_i8(&[-128, 127], &[-128, 127]), 16384 + 16129);
+        assert_eq!(dot_i8(&[7; 8], &[3; 8]), 168);
+    }
+
+    #[test]
+    fn scalar_sum_i8() {
+        assert_eq!(sum_i8(&[]), 0);
+        assert_eq!(sum_i8(&[1, -2, 3, -4]), -2);
+        assert_eq!(sum_i8(&[127; 100]), 12700);
+        assert_eq!(sum_i8(&[-128; 3]), -384);
+    }
+
+    #[test]
     fn prod_single() {
         assert_eq!(prod(&[5.0]), 5.0);
     }

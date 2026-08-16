@@ -886,6 +886,16 @@ fn byte_pairs() -> impl Strategy<Value = (Vec<u8>, Vec<u8>)> {
         .prop_map(|pairs| pairs.into_iter().unzip())
 }
 
+/// Equal-length i8 pairs, sizes spanning chunk and epoch boundaries.
+fn i8_pairs() -> impl Strategy<Value = (Vec<i8>, Vec<i8>)> {
+    (0usize..=4200).prop_flat_map(|n| {
+        (
+            proptest::collection::vec(any::<i8>(), n),
+            proptest::collection::vec(any::<i8>(), n),
+        )
+    })
+}
+
 fn naive_hamming_ref(a: &[u8], b: &[u8]) -> usize {
     a.iter()
         .zip(b.iter())
@@ -955,6 +965,42 @@ proptest! {
             }
             Ok(None) => prop_assert!(a.iter().all(|&x| x == 0)),
             Err(_) => prop_assert!(false),
+        }
+    }
+
+    // --- i8 family ---------------------------------------------------------
+
+    #[test]
+    fn prop_dot_i8_matches_naive((a, b) in i8_pairs()) {
+        let naive: i64 = a.iter()
+            .zip(b.iter())
+            .map(|(&x, &y)| i64::from(x) * i64::from(y))
+            .sum();
+        prop_assert_eq!(lanes::stats::i8::dot(&a, &b), Ok(naive));
+    }
+
+    #[test]
+    fn prop_dot_i8_commutative((a, b) in i8_pairs()) {
+        prop_assert_eq!(
+            lanes::stats::i8::dot(&a, &b),
+            lanes::stats::i8::dot(&b, &a)
+        );
+    }
+
+    #[test]
+    fn prop_sum_i8_matches_naive(a in proptest::collection::vec(any::<i8>(), 0..=4200)) {
+        let naive: i64 = a.iter().map(|&x| i64::from(x)).sum();
+        prop_assert_eq!(lanes::stats::i8::sum(&a), naive);
+    }
+
+    #[test]
+    fn prop_sum_i8_split_invariant(a in proptest::collection::vec(any::<i8>(), 0..=4200)) {
+        // sum(a) == sum(prefix) + sum(suffix) at every split point.
+        for split in [0, a.len() / 3, a.len() / 2, a.len()] {
+            prop_assert_eq!(
+                lanes::stats::i8::sum(&a),
+                lanes::stats::i8::sum(&a[..split]) + lanes::stats::i8::sum(&a[split..])
+            );
         }
     }
 }
