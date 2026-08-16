@@ -711,13 +711,24 @@ proptest! {
 /// Strategy for divergence inputs: strictly positive and bounded away from
 /// zero so `ln(p/q)` stays finite and the summation-order tolerance is
 /// meaningful. Magnitudes keep 512-term sums far from overflow.
+///
+/// Built by mapping an integer strategy onto the float range rather than
+/// using a float range directly: proptest's float-range sampler asserts
+/// on inexact bounds (`1e-3` is not exactly representable in f32) and
+/// intermittently panics inside the sampler itself (seen on CI).
 fn positive_f32_vec() -> impl Strategy<Value = Vec<f32>> {
-    proptest::collection::vec(1e-3_f32..10.0, 0..512)
+    proptest::collection::vec(
+        (0..1_000_000u32).prop_map(|i| 1e-3 + (i as f32) * 9.999 / 1_000_000.0),
+        0..512,
+    )
 }
 
-/// `f64` twin of [`positive_f32_vec`].
+/// `f64` twin of [`positive_f32_vec`] (same integer-map rationale).
 fn positive_f64_vec() -> impl Strategy<Value = Vec<f64>> {
-    proptest::collection::vec(1e-6_f64..10.0, 0..512)
+    proptest::collection::vec(
+        (0..1_000_000u32).prop_map(|i| 1e-6 + (i as f64) * 9.999_999 / 1_000_000.0),
+        0..512,
+    )
 }
 
 /// Tolerance for the divergence properties: the SIMD and naive results use

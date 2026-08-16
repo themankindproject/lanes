@@ -37,6 +37,9 @@ fuzz_target!(|input: ContractsInput| {
         Err(lanes::Error::InvalidBounds) | Err(lanes::Error::NonPositiveInput { .. }) => {
             unreachable!("dot never returns InvalidBounds or NonPositiveInput")
         }
+        // `Error` is `#[non_exhaustive]` — future variants are contract
+        // violations for dot too.
+        Err(_) => unreachable!("dot returned an unexpected error variant"),
     }
 
     // sqrt: IEEE contract per element.
@@ -195,5 +198,8 @@ fuzz_target!(|input: ContractsInput| {
         Err(lanes::Error::InvalidBounds) | Err(lanes::Error::NonPositiveInput { .. }) => {
             unreachable!("squared_distance never returns InvalidBounds or NonPositiveInput")
         }
+        // `Error` is `#[non_exhaustive]` — future variants are contract
+        // violations for squared_distance too.
+        Err(_) => unreachable!("squared_distance returned an unexpected error variant"),
     }
 });
