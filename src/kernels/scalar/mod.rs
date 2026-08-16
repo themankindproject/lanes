@@ -464,24 +464,25 @@ pub(crate) fn jaccard(a: &[u8], b: &[u8]) -> Option<f32> {
     super::jaccard_similarity(jaccard_counts(a, b))
 }
 
-/// i8 dot product with i32 accumulation: `sum(a[i] * b[i] as i32)`.
-/// Returns `0` for empty inputs. The i32 accumulator cannot overflow:
-/// each product fits in i16 and `i32::MAX / (128*128) ≈ 262k` elements.
+/// i8 dot product with i64 accumulation: `sum(a[i] * b[i] as i64)`.
+/// Returns `0` for empty inputs. Exact for any slice length: the i64
+/// accumulator cannot overflow in addressable memory (each product is
+/// ≤ 16384, so overflow would need > 5.6e14 elements).
 ///
 /// Caller guarantees equal lengths (zip stops at the shorter otherwise).
 #[inline]
-pub(crate) fn dot_i8(a: &[i8], b: &[i8]) -> i32 {
+pub(crate) fn dot_i8(a: &[i8], b: &[i8]) -> i64 {
     a.iter()
         .zip(b.iter())
-        .map(|(&x, &y)| i32::from(x) * i32::from(y))
+        .map(|(&x, &y)| i64::from(x) * i64::from(y))
         .sum()
 }
 
-/// i8 sum with i32 accumulation: `sum(values[i] as i32)`.
-/// Returns `0` for an empty slice.
+/// i8 sum with i64 accumulation: `sum(values[i] as i64)`.
+/// Returns `0` for an empty slice. Exact for any slice length.
 #[inline]
-pub(crate) fn sum_i8(values: &[i8]) -> i32 {
-    values.iter().map(|&x| i32::from(x)).sum()
+pub(crate) fn sum_i8(values: &[i8]) -> i64 {
+    values.iter().map(|&x| i64::from(x)).sum()
 }
 
 /// Kullback–Leibler divergence kernel (f32): `sum(p[i] * ln(p[i] / q[i]))`.

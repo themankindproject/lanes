@@ -393,6 +393,81 @@ crate::simd_reduce2_count!(
     (usize, usize)
 );
 
+// --- i8 family: widening integer reductions (i8 -> i16 -> i32 -> i64) -----
+
+/// Fold eight i32 partials into four i64 counter lanes.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn widen_i32x8_into(acc: __m256i, v: __m256i) -> __m256i {
+    unsafe {
+        let lo = _mm256_cvtepi32_epi64(_mm256_castsi256_si128(v));
+        let hi = _mm256_cvtepi32_epi64(_mm256_extracti128_si256(v, 1));
+        _mm256_add_epi64(acc, _mm256_add_epi64(lo, hi))
+    }
+}
+
+/// Horizontal sum of the four i64 counter lanes.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn hsum_256_i64(v: __m256i) -> i64 {
+    unsafe {
+        let mut t = [0i64; 4];
+        _mm256_storeu_si256(t.as_mut_ptr().cast::<__m256i>(), v);
+        t[0] + t[1] + t[2] + t[3]
+    }
+}
+
+// i8 dot: sign-extend to i16 (`vpmovsxbw`), `vpmaddwd` (pairwise i16
+// multiply-add) to i32, widen to i64 counters every 1024 chunks
+// (per-lane bound 1024 * 2 * 16384 = 33.5M, ~64x below i32 overflow).
+crate::simd_reduce2_wide!(
+    dot_i8,
+    i8,
+    ["avx2"],
+    32,
+    |p: *const i8| unsafe { _mm256_loadu_si256(p.cast::<__m256i>()) },
+    _mm256_setzero_si256(),
+    _mm256_setzero_si256(),
+    1024,
+    |narrow: __m256i, va: __m256i, vb: __m256i| unsafe {
+        let alo = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(va));
+        let ahi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(va, 1));
+        let blo = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(vb));
+        let bhi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(vb, 1));
+        _mm256_add_epi32(
+            narrow,
+            _mm256_add_epi32(_mm256_madd_epi16(alo, blo), _mm256_madd_epi16(ahi, bhi)),
+        )
+    },
+    |acc: __m256i, narrow: __m256i| unsafe { widen_i32x8_into(acc, narrow) },
+    |v: __m256i| unsafe { hsum_256_i64(v) },
+    |r: i64, a: i8, b: i8| r + i64::from(a) * i64::from(b)
+);
+
+// i8 sum: sign-extend to i16 and add into i16 lanes; widen via
+// `vpmaddwd` with 1s (adjacent-pair sum to i32) every 64 chunks
+// (per-lane bound 64 * 256 = 16384, 2x below i16 overflow).
+crate::simd_reduce_wide!(
+    sum_i8,
+    i8,
+    ["avx2"],
+    32,
+    |p: *const i8| unsafe { _mm256_loadu_si256(p.cast::<__m256i>()) },
+    _mm256_setzero_si256(),
+    _mm256_setzero_si256(),
+    64,
+    |narrow: __m256i, v: __m256i| unsafe {
+        let lo = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(v));
+        let hi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(v, 1));
+        _mm256_add_epi16(narrow, _mm256_add_epi16(lo, hi))
+    },
+    |acc: __m256i, narrow: __m256i| unsafe {
+        widen_i32x8_into(acc, _mm256_madd_epi16(narrow, _mm256_set1_epi16(1)))
+    },
+    |v: __m256i| unsafe { hsum_256_i64(v) },
+    |r: i64, v: i8| r + i64::from(v)
+);
+
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
 // Uses the crate's `no_std` `exp`, so available in all builds.
 crate::simd_softmax!(

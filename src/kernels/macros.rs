@@ -197,6 +197,139 @@ macro_rules! simd_reduce2_count {
     };
 }
 
+/// Generate a single-input **widening integer** reduction kernel.
+///
+/// Integer sibling of [`simd_reduce!`]: the per-chunk combine produces a
+/// vector of narrow partials (e.g. 8×i16) which `$widen` folds into the
+/// i64 counter accumulator. `$period` chunks share one narrow accumulator
+/// before it is widened — it must be chosen so the narrow lanes cannot
+/// overflow within an epoch (i16 lanes holding i8 products saturate at
+/// period 2). Reductions are exact — summation order never matters.
+///
+/// Parameters:
+/// * `$name` — generated function name.
+/// * `$t` — element type (`i8`, …).
+/// * `[$($feat),+]` — `target_feature` list.
+/// * `$lanes` — elements consumed per iteration.
+/// * `$load` — `fn(*const $t) -> Vec` loader.
+/// * `$acc_ident` — i64 counter identity (e.g. a zeroed counter vector).
+/// * `$acc_zero` — narrow-accumulator identity (reused every epoch).
+/// * `$period` — chunks per narrow accumulator before widening.
+/// * `$combine` — `fn(NarrowAcc, Vec) -> NarrowAcc`.
+/// * `$widen` — `fn(CounterVec, NarrowAcc) -> CounterVec`; folds the
+///   narrow partials into the i64 counters.
+/// * `$reduce` — `fn(CounterVec) -> i64` horizontal sum.
+/// * `$tail` — `fn(i64, $t) -> i64` scalar tail fold.
+///
+/// # Safety contract of generated fns
+/// Caller must guarantee the CPU features are available.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! simd_reduce_wide {
+    ($name:ident, $t:ty, [$( $feat:literal ),+], $lanes:expr, $load:expr,
+     $acc_ident:expr, $acc_zero:expr, $period:expr, $combine:expr,
+     $widen:expr, $reduce:expr, $tail:expr) => {
+        /// SIMD widening integer reduction kernel. See the enclosing
+        /// module for semantics.
+        ///
+        /// # Safety
+        /// Caller must guarantee the CPU features are available.
+        #[target_feature($(enable = $feat),*)]
+        pub(crate) unsafe fn $name(values: &[$t]) -> i64 {
+            let len = values.len();
+            let ptr = values.as_ptr();
+            let chunks = len / $lanes;
+            let remainder = len % $lanes;
+
+            let mut acc = $acc_ident;
+            let mut narrow = $acc_zero;
+            for i in 0..chunks {
+                // SAFETY: i * $lanes + ($lanes - 1) < chunks * $lanes <= len.
+                let v = $load(unsafe { ptr.add(i * $lanes) });
+                narrow = $combine(narrow, v);
+                if i % $period == $period - 1 {
+                    acc = $widen(acc, narrow);
+                    narrow = $acc_zero;
+                }
+            }
+            if chunks % $period != 0 {
+                acc = $widen(acc, narrow);
+            }
+
+            let mut result = $reduce(acc);
+
+            let tail_start = chunks * $lanes;
+            for i in 0..remainder {
+                // SAFETY: tail_start + i < len, so the read is in bounds.
+                let v = unsafe { *values.get_unchecked(tail_start + i) };
+                result = $tail(result, v);
+            }
+            result
+        }
+    };
+}
+
+/// Generate a two-input **widening integer** reduction kernel.
+///
+/// Two-input sibling of [`simd_reduce_wide!`] — same epoch/widening
+/// structure, with `$combine` receiving one chunk from each input
+/// (e.g. an i8×i8 → i16 multiply).
+///
+/// # Safety contract of generated fns
+/// Caller must guarantee the CPU features are available and that `a` and
+/// `b` have equal lengths.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! simd_reduce2_wide {
+    ($name:ident, $t:ty, [$( $feat:literal ),+], $lanes:expr, $load:expr,
+     $acc_ident:expr, $acc_zero:expr, $period:expr, $combine:expr,
+     $widen:expr, $reduce:expr, $tail:expr) => {
+        /// SIMD two-input widening integer reduction kernel. See the
+        /// enclosing module for semantics.
+        ///
+        /// # Safety
+        /// Caller must guarantee the CPU features are available and that
+        /// `a` and `b` have equal lengths.
+        #[target_feature($(enable = $feat),*)]
+        pub(crate) unsafe fn $name(a: &[$t], b: &[$t]) -> i64 {
+            debug_assert_eq!(a.len(), b.len());
+            let len = a.len();
+            let a_ptr = a.as_ptr();
+            let b_ptr = b.as_ptr();
+            let chunks = len / $lanes;
+            let remainder = len % $lanes;
+
+            let mut acc = $acc_ident;
+            let mut narrow = $acc_zero;
+            for i in 0..chunks {
+                // SAFETY: i * $lanes + ($lanes - 1) < chunks * $lanes <= len,
+                // so both pointers are in bounds.
+                let va = $load(unsafe { a_ptr.add(i * $lanes) });
+                let vb = $load(unsafe { b_ptr.add(i * $lanes) });
+                narrow = $combine(narrow, va, vb);
+                if i % $period == $period - 1 {
+                    acc = $widen(acc, narrow);
+                    narrow = $acc_zero;
+                }
+            }
+            if chunks % $period != 0 {
+                acc = $widen(acc, narrow);
+            }
+
+            let mut result = $reduce(acc);
+
+            let tail_start = chunks * $lanes;
+            for i in 0..remainder {
+                // SAFETY: tail_start + i < len, so both reads are in bounds.
+                let va = unsafe { *a.get_unchecked(tail_start + i) };
+                let vb = unsafe { *b.get_unchecked(tail_start + i) };
+                result = $tail(result, va, vb);
+            }
+            result
+        }
+    };
+}
+
 /// Generate a softmax kernel (three-pass map: max → exp+sum → scale).
 ///
 /// Softmax is not a reduction, so it needs its own skeleton. Each backend

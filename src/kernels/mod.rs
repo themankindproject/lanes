@@ -391,11 +391,11 @@ dispatch!(
 dispatch!(
     dispatch_dot_i8,
     [a: &[i8], b: &[i8]],
-    i32,
+    i64,
     scalar::dot_i8,
-    scalar::dot_i8,
-    scalar::dot_i8,
-    scalar::dot_i8,
+    x86::sse2::dot_i8,
+    x86::avx2::dot_i8,
+    x86::avx512::dot_i8,
     scalar::dot_i8,
     id
 );
@@ -403,11 +403,11 @@ dispatch!(
 dispatch!(
     dispatch_sum_i8,
     [values: &[i8]],
-    i32,
+    i64,
     scalar::sum_i8,
-    scalar::sum_i8,
-    scalar::sum_i8,
-    scalar::sum_i8,
+    x86::sse2::sum_i8,
+    x86::avx2::sum_i8,
+    x86::avx512::sum_i8,
     scalar::sum_i8,
     id
 );

@@ -389,6 +389,97 @@ crate::simd_reduce2_count!(
     (usize, usize)
 );
 
+// --- i8 family: widening integer reductions (i8 -> i16 -> i32 -> i64) -----
+
+/// Sign-extend 16×i8 into two 8×i16 vectors (pure SSE2: no `pmovsxbw`,
+/// which is SSE4.1). `_mm_cmpgt_epi8(0, v)` yields `0xFF` exactly where
+/// `v` is negative, so interleaving it with `v` fills each high byte with
+/// the sign bit.
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn sext_i8x16(v: __m128i) -> (__m128i, __m128i) {
+    unsafe {
+        let neg = _mm_cmpgt_epi8(_mm_setzero_si128(), v);
+        (
+            _mm_unpacklo_epi8(v, neg),
+            _mm_unpackhi_epi8(v, neg),
+        )
+    }
+}
+
+/// Fold four i32 partials into two i64 counter lanes (sign-extending
+/// each i32 via unpack with its arithmetic-shifted sign word).
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn widen_i32x4_into(acc: __m128i, v: __m128i) -> __m128i {
+    unsafe {
+        let sign = _mm_srai_epi32(v, 31);
+        _mm_add_epi64(
+            acc,
+            _mm_add_epi64(_mm_unpacklo_epi32(v, sign), _mm_unpackhi_epi32(v, sign)),
+        )
+    }
+}
+
+/// Horizontal sum of the two i64 counter lanes.
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn hsum_128_i64(v: __m128i) -> i64 {
+    unsafe {
+        let mut t = [0i64; 2];
+        _mm_storeu_si128(t.as_mut_ptr().cast::<__m128i>(), v);
+        t[0] + t[1]
+    }
+}
+
+// i8 dot: sign-extend to i16, `pmaddwd` (pairwise i16 multiply-add) to
+// i32, widen to i64 counters every 1024 chunks (per-lane bound
+// 1024 * 2 * 16384 = 33.5M, ~64x below i32 overflow).
+crate::simd_reduce2_wide!(
+    dot_i8,
+    i8,
+    ["sse2"],
+    16,
+    |p: *const i8| unsafe { _mm_loadu_si128(p.cast::<__m128i>()) },
+    _mm_setzero_si128(),
+    _mm_setzero_si128(),
+    1024,
+    |narrow: __m128i, va: __m128i, vb: __m128i| unsafe {
+        let (alo, ahi) = sext_i8x16(va);
+        let (blo, bhi) = sext_i8x16(vb);
+        _mm_add_epi32(
+            narrow,
+            _mm_add_epi32(_mm_madd_epi16(alo, blo), _mm_madd_epi16(ahi, bhi)),
+        )
+    },
+    |acc: __m128i, narrow: __m128i| unsafe { widen_i32x4_into(acc, narrow) },
+    |v: __m128i| unsafe { hsum_128_i64(v) },
+    |r: i64, a: i8, b: i8| r + i64::from(a) * i64::from(b)
+);
+
+// i8 sum: sign-extend to i16 and add into i16 lanes; widen via
+// `pmaddwd` with 1s (adjacent-pair sum to i32) every 64 chunks
+// (per-lane bound 64 * 256 = 16384, 2x below i16 overflow).
+crate::simd_reduce_wide!(
+    sum_i8,
+    i8,
+    ["sse2"],
+    16,
+    |p: *const i8| unsafe { _mm_loadu_si128(p.cast::<__m128i>()) },
+    _mm_setzero_si128(),
+    _mm_setzero_si128(),
+    64,
+    |narrow: __m128i, v: __m128i| unsafe {
+        let (lo, hi) = sext_i8x16(v);
+        _mm_add_epi16(narrow, _mm_add_epi16(lo, hi))
+    },
+    |acc: __m128i, narrow: __m128i| unsafe {
+        widen_i32x4_into(acc, _mm_madd_epi16(narrow, _mm_set1_epi16(1)))
+    },
+    |v: __m128i| unsafe { hsum_128_i64(v) },
+    |r: i64, v: i8| r + i64::from(v)
+);
+
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar
 // (no vector exp intrinsic); the macro handles the chunk loop.
 // Uses the crate's `no_std` `exp`, so available in all builds.
