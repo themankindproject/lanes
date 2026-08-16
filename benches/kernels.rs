@@ -551,6 +551,71 @@ fn bench_sum_i8(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_sum_sq_i8(c: &mut Criterion) {
+    let mut group = c.benchmark_group("sum_sq_i8");
+    for &size in SIZES {
+        let v = random_i8_vec(size, 49);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes::stats::i8::sum_sq(black_box(&v)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| {
+                black_box(&v)
+                    .iter()
+                    .map(|&x| i64::from(x) * i64::from(x))
+                    .sum::<i64>()
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_min_i8(c: &mut Criterion) {
+    let mut group = c.benchmark_group("min_i8");
+    for &size in SIZES {
+        let v = random_i8_vec(size, 50);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes::stats::i8::min(black_box(&v)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| black_box(&v).iter().copied().min());
+        });
+    }
+    group.finish();
+}
+
+fn bench_max_i8(c: &mut Criterion) {
+    let mut group = c.benchmark_group("max_i8");
+    for &size in SIZES {
+        let v = random_i8_vec(size, 51);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes::stats::i8::max(black_box(&v)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| black_box(&v).iter().copied().max());
+        });
+    }
+    group.finish();
+}
+
+fn bench_count_zero_i8(c: &mut Criterion) {
+    let mut group = c.benchmark_group("count_zero_i8");
+    for &size in SIZES {
+        let v = random_i8_vec(size, 52);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes::stats::i8::count_zero(black_box(&v)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| black_box(&v).iter().filter(|&&x| x == 0).count());
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_sum,
@@ -572,6 +637,10 @@ criterion_group!(
     bench_hamming,
     bench_jaccard,
     bench_dot_i8,
-    bench_sum_i8
+    bench_sum_i8,
+    bench_sum_sq_i8,
+    bench_min_i8,
+    bench_max_i8,
+    bench_count_zero_i8
 );
 criterion_main!(benches);

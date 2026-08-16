@@ -1051,6 +1051,23 @@ mod tests {
     }
 
     #[test]
+    fn scalar_min_max_i8() {
+        assert_eq!(min_i8(&[]), None);
+        assert_eq!(max_i8(&[]), None);
+        assert_eq!(min_i8(&[3, 1, 4]), Some(1));
+        assert_eq!(max_i8(&[3, 1, 4]), Some(4));
+        assert_eq!(min_i8(&[-128, 127]), Some(-128));
+        assert_eq!(max_i8(&[-128, 127]), Some(127));
+    }
+
+    #[test]
+    fn scalar_count_zero_i8() {
+        assert_eq!(count_zero_i8(&[]), 0);
+        assert_eq!(count_zero_i8(&[0, 1, 0, -1, 0]), 3);
+        assert_eq!(count_zero_i8(&[1, 2, 3]), 0);
+    }
+
+    #[test]
     fn prod_single() {
         assert_eq!(prod(&[5.0]), 5.0);
     }

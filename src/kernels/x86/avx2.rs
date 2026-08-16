@@ -530,9 +530,7 @@ crate::simd_count!(
     "avx2",
     32,
     |p: *const i8| unsafe { _mm256_loadu_si256(p.cast::<__m256i>()) },
-    |v: __m256i| unsafe {
-        _mm256_movemask_epi8(_mm256_cmpeq_epi8(v, _mm256_setzero_si256()))
-    },
+    |v: __m256i| unsafe { _mm256_movemask_epi8(_mm256_cmpeq_epi8(v, _mm256_setzero_si256())) },
     |m: i32| m.count_ones() as usize,
     |x: i8| x == 0
 );

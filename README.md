@@ -57,7 +57,7 @@ let s64 = f64::sum(&[1.0, 2.0, 3.0]);        // 6.0
 - **`stats`** — `sum`, `prod`, `min`, `max`, `argmax`, `argmin`, `sum_sq`,
   `mean`, `variance`, `std_dev`, `geometric_mean`, `dot`, `count_zero`,
   `count_nan`, `count_infinite` (the `i8` submodule adds exact integer
-  `dot`/`sum` with `i64` accumulation)
+  `dot`/`sum`/`sum_sq`/`min`/`max`/`count_zero` with `i64` accumulation)
 - **`distance`** — `l1_norm`, `l2_norm`, `max_norm`, `squared_distance`,
   `kl_divergence`, `js_divergence`
 - **`binary`** — `hamming`, `jaccard` (bit-level distances over packed
@@ -113,8 +113,12 @@ expression compiled with identical settings. Reproduce with
 | `distance` | `js_divergence` | 223.5 µs | 1307.1 µs | **5.8×** |
 | `binary` | `hamming` | 4.7 µs | 122.5 µs | **25.8×** |
 | `binary` | `jaccard` | 8.6 µs | 239.9 µs | **28.0×** |
-| `stats::i8` | `dot` | 5.3 µs | 46.5 µs | **8.8×** |
-| `stats::i8` | `sum` | 4.4 µs | 22.1 µs | **5.1×** |
+| `stats::i8` | `dot` | 5.2 µs | 47.4 µs | **9.1×** |
+| `stats::i8` | `sum` | 4.3 µs | 21.7 µs | **5.1×** |
+| `stats::i8` | `sum_sq` | 4.8 µs | 37.0 µs | **7.7×** |
+| `stats::i8` | `min` | 1.3 µs | 5.3 µs | **4.0×** |
+| `stats::i8` | `max` | 1.3 µs | 5.3 µs | **4.0×** |
+| `stats::i8` | `count_zero` | 8.6 µs | 48.4 µs | **5.6×** |
 | `math` | `sqrt` | 27.6 µs | 27.6 µs | 1.0× |
 | `math` | `clip` | 11.3 µs | 14.0 µs | 1.2× |
 | `math` | `rsqrt` | 50.5 µs | 55.0 µs | 1.1× |

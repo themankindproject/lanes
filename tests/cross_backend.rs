@@ -778,7 +778,10 @@ fn cross_i8_sum_sq() {
 #[test]
 fn cross_i8_min_max() {
     for &n in I8_SIZES {
-        let v: Vec<i8> = lcg_bytes(0x1111_1111, n).into_iter().map(|b| b as i8).collect();
+        let v: Vec<i8> = lcg_bytes(0x1111_1111, n)
+            .into_iter()
+            .map(|b| b as i8)
+            .collect();
         assert_eq!(
             lanes::stats::i8::min(&v),
             v.iter().copied().min(),

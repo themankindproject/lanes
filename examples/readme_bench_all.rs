@@ -268,6 +268,30 @@ fn main() {
         time_us(|| lanes::stats::i8::sum(&ia)),
         time_us(|| ia.iter().map(|&x| i64::from(x)).sum::<i64>()),
     );
+    row(
+        "stats::i8",
+        "sum_sq",
+        time_us(|| lanes::stats::i8::sum_sq(&ia)),
+        time_us(|| ia.iter().map(|&x| i64::from(x) * i64::from(x)).sum::<i64>()),
+    );
+    row(
+        "stats::i8",
+        "min",
+        time_us(|| lanes::stats::i8::min(&ia)),
+        time_us(|| ia.iter().copied().min()),
+    );
+    row(
+        "stats::i8",
+        "max",
+        time_us(|| lanes::stats::i8::max(&ia)),
+        time_us(|| ia.iter().copied().max()),
+    );
+    row(
+        "stats::i8",
+        "count_zero",
+        time_us(|| lanes::stats::i8::count_zero(&ia)),
+        time_us(|| ia.iter().filter(|&&x| x == 0).count()),
+    );
 
     // ---------------- math ----------------
     row(

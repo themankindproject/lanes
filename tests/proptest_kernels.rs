@@ -1003,4 +1003,22 @@ proptest! {
             );
         }
     }
+
+    #[test]
+    fn prop_sum_sq_i8_matches_naive(a in proptest::collection::vec(any::<i8>(), 0..=4200)) {
+        let naive: i64 = a.iter().map(|&x| i64::from(x) * i64::from(x)).sum();
+        prop_assert_eq!(lanes::stats::i8::sum_sq(&a), naive);
+    }
+
+    #[test]
+    fn prop_min_max_i8_match_naive(a in proptest::collection::vec(any::<i8>(), 0..=4200)) {
+        prop_assert_eq!(lanes::stats::i8::min(&a), a.iter().copied().min());
+        prop_assert_eq!(lanes::stats::i8::max(&a), a.iter().copied().max());
+    }
+
+    #[test]
+    fn prop_count_zero_i8_matches_naive(a in proptest::collection::vec(any::<i8>(), 0..=4200)) {
+        let naive = a.iter().filter(|&&x| x == 0).count();
+        prop_assert_eq!(lanes::stats::i8::count_zero(&a), naive);
+    }
 }
