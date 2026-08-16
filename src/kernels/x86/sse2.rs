@@ -551,6 +551,69 @@ crate::simd_count!(
     |x: i8| x == 0
 );
 
+/// Absolute value of 8×i16 lanes (pure SSE2: no `pabsb`/`pabsw`, which are
+/// SSSE3). `max(x, 0 - x)`; safe for sign-extended `i8` inputs, whose
+/// negation always fits in `i16`.
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn abs_i16x8(v: __m128i) -> __m128i {
+    unsafe { _mm_max_epi16(v, _mm_sub_epi16(_mm_setzero_si128(), v)) }
+}
+
+// i8 l1_norm: sign-extend to i16, absolute-value, add into i16 lanes;
+// widen via `pmaddwd` with 1s every 64 chunks (per-lane bound
+// 64 * 2 * 128 = 16384, 2x below i16 overflow).
+crate::simd_reduce_wide!(
+    l1_norm_i8,
+    i8,
+    ["sse2"],
+    16,
+    |p: *const i8| unsafe { _mm_loadu_si128(p.cast::<__m128i>()) },
+    _mm_setzero_si128(),
+    _mm_setzero_si128(),
+    64,
+    |narrow: __m128i, v: __m128i| unsafe {
+        let (lo, hi) = sext_i8x16(v);
+        _mm_add_epi16(narrow, _mm_add_epi16(abs_i16x8(lo), abs_i16x8(hi)))
+    },
+    |acc: __m128i, narrow: __m128i| unsafe {
+        widen_i32x4_into(acc, _mm_madd_epi16(narrow, _mm_set1_epi16(1)))
+    },
+    |v: __m128i| unsafe { hsum_128_i64(v) },
+    |r: i64, v: i8| r + i64::from(v.unsigned_abs())
+);
+
+// i8 squared_distance: sign-extend both inputs, subtract in i16 (each
+// difference fits in [-255, 255]), then `pmaddwd` self-multiply pairwise
+// squares-and-sums to i32; widen to i64 counters every 1024 chunks
+// (per-lane bound 1024 * 2 * 65025 = 133M, ~16x below i32 overflow).
+crate::simd_reduce2_wide!(
+    squared_distance_i8,
+    i8,
+    ["sse2"],
+    16,
+    |p: *const i8| unsafe { _mm_loadu_si128(p.cast::<__m128i>()) },
+    _mm_setzero_si128(),
+    _mm_setzero_si128(),
+    1024,
+    |narrow: __m128i, va: __m128i, vb: __m128i| unsafe {
+        let (alo, ahi) = sext_i8x16(va);
+        let (blo, bhi) = sext_i8x16(vb);
+        let dlo = _mm_sub_epi16(alo, blo);
+        let dhi = _mm_sub_epi16(ahi, bhi);
+        _mm_add_epi32(
+            narrow,
+            _mm_add_epi32(_mm_madd_epi16(dlo, dlo), _mm_madd_epi16(dhi, dhi)),
+        )
+    },
+    |acc: __m128i, narrow: __m128i| unsafe { widen_i32x4_into(acc, narrow) },
+    |v: __m128i| unsafe { hsum_128_i64(v) },
+    |r: i64, a: i8, b: i8| {
+        let d = i64::from(a) - i64::from(b);
+        r + d * d
+    }
+);
+
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar
 // (no vector exp intrinsic); the macro handles the chunk loop.
 // Uses the crate's `no_std` `exp`, so available in all builds.

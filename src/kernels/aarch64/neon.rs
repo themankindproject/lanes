@@ -522,6 +522,60 @@ crate::simd_count!(
     |x: i8| x == 0
 );
 
+// i8 l1_norm: `vabdl_s8` against zero gives |v| widened to i16 per half
+// (handles |i8::MIN| = 128 exactly); accumulate in i16 lanes, widen to i64
+// counters every 128 chunks (per-lane bound 128 * 128 = 16384, 2x below
+// i16 overflow).
+crate::simd_reduce_wide!(
+    l1_norm_i8,
+    i8,
+    ["neon"],
+    16,
+    |p: *const i8| unsafe { vld1q_s8(p) },
+    vdupq_n_s64(0),
+    vdupq_n_s16(0),
+    128,
+    |narrow: int16x8_t, v: int8x16_t| unsafe {
+        let lo = vabdl_s8(vget_low_s8(v), vdup_n_s8(0));
+        let hi = vabdl_s8(vget_high_s8(v), vdup_n_s8(0));
+        vaddq_s16(narrow, vaddq_s16(lo, hi))
+    },
+    |acc: int64x2_t, narrow: int16x8_t| unsafe { vaddq_s64(acc, vpaddlq_s32(vpaddlq_s16(narrow))) },
+    |v: int64x2_t| unsafe { hsum_neon_i64(v) },
+    |r: i64, v: i8| r + i64::from(v.unsigned_abs())
+);
+
+// i8 squared_distance: `vabdl_s8` gives |a - b| widened to i16 per half
+// (each difference fits in [0, 255]); square via `vmull_s16` to i32 lanes,
+// widen to i64 counters every 1024 chunks (per-lane bound
+// 1024 * 65025 = 66.6M, ~32x below i32 overflow).
+crate::simd_reduce2_wide!(
+    squared_distance_i8,
+    i8,
+    ["neon"],
+    16,
+    |p: *const i8| unsafe { vld1q_s8(p) },
+    vdupq_n_s64(0),
+    vdupq_n_s32(0),
+    1024,
+    |narrow: int32x4_t, va: int8x16_t, vb: int8x16_t| unsafe {
+        let dlo = vabdl_s8(vget_low_s8(va), vget_low_s8(vb));
+        let dhi = vabdl_s8(vget_high_s8(va), vget_high_s8(vb));
+        // Square all four i16 halves (each vmull covers 4 lanes).
+        let sq0 = vmull_s16(vget_low_s16(dlo), vget_low_s16(dlo));
+        let sq1 = vmull_s16(vget_high_s16(dlo), vget_high_s16(dlo));
+        let sq2 = vmull_s16(vget_low_s16(dhi), vget_low_s16(dhi));
+        let sq3 = vmull_s16(vget_high_s16(dhi), vget_high_s16(dhi));
+        vaddq_s32(narrow, vaddq_s32(vaddq_s32(sq0, sq1), vaddq_s32(sq2, sq3)))
+    },
+    |acc: int64x2_t, narrow: int32x4_t| unsafe { vaddq_s64(acc, vpaddlq_s32(narrow)) },
+    |v: int64x2_t| unsafe { hsum_neon_i64(v) },
+    |r: i64, a: i8, b: i8| {
+        let d = i64::from(a) - i64::from(b);
+        r + d * d
+    }
+);
+
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
 // Uses the crate's `no_std` `exp`, so available in all builds.
 crate::simd_softmax!(

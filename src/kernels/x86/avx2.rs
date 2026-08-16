@@ -535,6 +535,66 @@ crate::simd_count!(
     |x: i8| x == 0
 );
 
+// i8 l1_norm: sign-extend to i16, native `vpabsw`, add into i16 lanes;
+// widen via `vpmaddwd` with 1s every 64 chunks (per-lane bound
+// 64 * 2 * 128 = 16384, 2x below i16 overflow).
+crate::simd_reduce_wide!(
+    l1_norm_i8,
+    i8,
+    ["avx2"],
+    32,
+    |p: *const i8| unsafe { _mm256_loadu_si256(p.cast::<__m256i>()) },
+    _mm256_setzero_si256(),
+    _mm256_setzero_si256(),
+    64,
+    |narrow: __m256i, v: __m256i| unsafe {
+        let lo = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(v));
+        let hi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(v, 1));
+        _mm256_add_epi16(
+            narrow,
+            _mm256_add_epi16(_mm256_abs_epi16(lo), _mm256_abs_epi16(hi)),
+        )
+    },
+    |acc: __m256i, narrow: __m256i| unsafe {
+        widen_i32x8_into(acc, _mm256_madd_epi16(narrow, _mm256_set1_epi16(1)))
+    },
+    |v: __m256i| unsafe { hsum_256_i64(v) },
+    |r: i64, v: i8| r + i64::from(v.unsigned_abs())
+);
+
+// i8 squared_distance: sign-extend both inputs, subtract in i16 (each
+// difference fits in [-255, 255]), then `vpmaddwd` self-multiply pairwise
+// squares-and-sums to i32; widen to i64 counters every 1024 chunks
+// (per-lane bound 1024 * 2 * 65025 = 133M, ~16x below i32 overflow).
+crate::simd_reduce2_wide!(
+    squared_distance_i8,
+    i8,
+    ["avx2"],
+    32,
+    |p: *const i8| unsafe { _mm256_loadu_si256(p.cast::<__m256i>()) },
+    _mm256_setzero_si256(),
+    _mm256_setzero_si256(),
+    1024,
+    |narrow: __m256i, va: __m256i, vb: __m256i| unsafe {
+        let alo = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(va));
+        let ahi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(va, 1));
+        let blo = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(vb));
+        let bhi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(vb, 1));
+        let dlo = _mm256_sub_epi16(alo, blo);
+        let dhi = _mm256_sub_epi16(ahi, bhi);
+        _mm256_add_epi32(
+            narrow,
+            _mm256_add_epi32(_mm256_madd_epi16(dlo, dlo), _mm256_madd_epi16(dhi, dhi)),
+        )
+    },
+    |acc: __m256i, narrow: __m256i| unsafe { widen_i32x8_into(acc, narrow) },
+    |v: __m256i| unsafe { hsum_256_i64(v) },
+    |r: i64, a: i8, b: i8| {
+        let d = i64::from(a) - i64::from(b);
+        r + d * d
+    }
+);
+
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
 // Uses the crate's `no_std` `exp`, so available in all builds.
 crate::simd_softmax!(

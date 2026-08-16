@@ -453,10 +453,10 @@ dispatch!(
     [values: &[i8]],
     i64,
     scalar::l1_norm_i8,
-    scalar::l1_norm_i8,
-    scalar::l1_norm_i8,
-    scalar::l1_norm_i8,
-    scalar::l1_norm_i8,
+    x86::sse2::l1_norm_i8,
+    x86::avx2::l1_norm_i8,
+    x86::avx512::l1_norm_i8,
+    aarch64::neon::l1_norm_i8,
     id
 );
 
@@ -465,10 +465,10 @@ dispatch!(
     [a: &[i8], b: &[i8]],
     i64,
     scalar::squared_distance_i8,
-    scalar::squared_distance_i8,
-    scalar::squared_distance_i8,
-    scalar::squared_distance_i8,
-    scalar::squared_distance_i8,
+    x86::sse2::squared_distance_i8,
+    x86::avx2::squared_distance_i8,
+    x86::avx512::squared_distance_i8,
+    aarch64::neon::squared_distance_i8,
     id
 );
 
