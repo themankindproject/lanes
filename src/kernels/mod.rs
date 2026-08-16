@@ -7,6 +7,7 @@
 //! The scalar module is always available and serves as the reference
 //! implementation and universal fallback.
 
+pub(crate) mod erf;
 pub(crate) mod exp;
 pub(crate) mod hypot;
 pub(crate) mod ln;
