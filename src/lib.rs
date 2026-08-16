@@ -48,6 +48,7 @@
 //!
 //! The `binary` family is the exception: it operates on packed `&[u8]`
 //! bitmaps with bit-level semantics and has no precision submodules.
+//! Integer reductions live in `stats::i8` (exact `i64` accumulation).
 //!
 //! ## Supported backends
 //!
@@ -153,7 +154,7 @@ pub use error::Error;
 /// `geometric_mean`, `dot`, `count_zero`, `count_nan`, `count_infinite`.
 ///
 /// Precision is selected via the [`f32`] or [`f64`] submodule; the [`i8`]
-/// submodule offers exact integer reductions with `i32` accumulation.
+/// submodule offers exact integer reductions with `i64` accumulation.
 pub mod stats {
     pub use crate::algorithms::stats::{f32, f64, i8};
 }

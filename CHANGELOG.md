@@ -16,6 +16,11 @@ so it is all listed as additions.
   `hamming` (popcount of XOR) and `jaccard` (intersection-over-union
   similarity, `Ok(None)` on empty union) over packed `&[u8]` bitmaps,
   with scalar/SSE2/AVX2/AVX-512/NEON backends.
+- New `stats::i8` submodule — the first general integer reductions:
+  `dot` and `sum` over `&[i8]` with exact `i64` accumulation (no
+  overflow for any slice that fits in memory). Backends: scalar, SSE2
+  (`pmaddwd`), AVX2 (`vpmovsxbw` + `vpmaddwd`), AVX-512 (AVX2 kernels),
+  NEON (`vmull_s8`/`vpadalq`).
 
 ## [0.1.0] - 2026-08-16
 

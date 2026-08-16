@@ -503,6 +503,54 @@ fn bench_jaccard(c: &mut Criterion) {
     );
 }
 
+/// Deterministic random i8 data for the i8 family.
+fn random_i8_vec(n: usize, seed: u64) -> Vec<i8> {
+    let mut rng = XorShift64::new(seed);
+    (0..n).map(|_| rng.next_u64() as i8).collect()
+}
+
+fn naive_dot_i8(a: &[i8], b: &[i8]) -> i64 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| i64::from(x) * i64::from(y))
+        .sum()
+}
+
+fn naive_sum_i8(v: &[i8]) -> i64 {
+    v.iter().map(|&x| i64::from(x)).sum()
+}
+
+fn bench_dot_i8(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dot_i8");
+    for &size in SIZES {
+        let a = random_i8_vec(size, 47);
+        let b = random_i8_vec(size, 125);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes::stats::i8::dot(black_box(&a), black_box(&b)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| naive_dot_i8(black_box(&a), black_box(&b)));
+        });
+    }
+    group.finish();
+}
+
+fn bench_sum_i8(c: &mut Criterion) {
+    let mut group = c.benchmark_group("sum_i8");
+    for &size in SIZES {
+        let v = random_i8_vec(size, 48);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes::stats::i8::sum(black_box(&v)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| naive_sum_i8(black_box(&v)));
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_sum,
@@ -522,6 +570,8 @@ criterion_group!(
     bench_js_divergence_f64,
     bench_count_zero,
     bench_hamming,
-    bench_jaccard
+    bench_jaccard,
+    bench_dot_i8,
+    bench_sum_i8
 );
 criterion_main!(benches);

@@ -1433,9 +1433,15 @@ fn binary_jaccard_length_mismatch() {
 #[test]
 fn i8_dot_known_values() {
     // Mixed signs: 1*5 + (-2)*3 + 3*(-1) + (-4)*(-2) = 5 - 6 - 3 + 8 = 4.
-    assert_eq!(lanes::stats::i8::dot(&[1, -2, 3, -4], &[5, 3, -1, -2]), Ok(4));
+    assert_eq!(
+        lanes::stats::i8::dot(&[1, -2, 3, -4], &[5, 3, -1, -2]),
+        Ok(4)
+    );
     // Extremes: (-128)*(-128) = 16384, needs the i32 accumulator.
-    assert_eq!(lanes::stats::i8::dot(&[-128, 127], &[-128, 127]), Ok(16384 + 16129));
+    assert_eq!(
+        lanes::stats::i8::dot(&[-128, 127], &[-128, 127]),
+        Ok(16384 + 16129)
+    );
     assert_eq!(lanes::stats::i8::dot(&[], &[]), Ok(0));
     assert_eq!(lanes::stats::i8::dot(&[7; 8], &[3; 8]), Ok(168));
 }

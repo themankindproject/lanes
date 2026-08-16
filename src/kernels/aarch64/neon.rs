@@ -476,9 +476,7 @@ crate::simd_reduce_wide!(
     vdupq_n_s16(0),
     64,
     |narrow: int16x8_t, v: int8x16_t| unsafe { vpadalq_s8(narrow, v) },
-    |acc: int64x2_t, narrow: int16x8_t| unsafe {
-        vaddq_s64(acc, vpaddlq_s32(vpaddlq_s16(narrow)))
-    },
+    |acc: int64x2_t, narrow: int16x8_t| unsafe { vaddq_s64(acc, vpaddlq_s32(vpaddlq_s16(narrow))) },
     |v: int64x2_t| unsafe { hsum_neon_i64(v) },
     |r: i64, v: i8| r + i64::from(v)
 );

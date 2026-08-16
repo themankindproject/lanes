@@ -400,10 +400,7 @@ crate::simd_reduce2_count!(
 unsafe fn sext_i8x16(v: __m128i) -> (__m128i, __m128i) {
     unsafe {
         let neg = _mm_cmpgt_epi8(_mm_setzero_si128(), v);
-        (
-            _mm_unpacklo_epi8(v, neg),
-            _mm_unpackhi_epi8(v, neg),
-        )
+        (_mm_unpacklo_epi8(v, neg), _mm_unpackhi_epi8(v, neg))
     }
 }
 

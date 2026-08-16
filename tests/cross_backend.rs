@@ -734,8 +734,14 @@ const I8_SIZES: &[usize] = &[
 #[test]
 fn cross_i8_dot() {
     for &n in I8_SIZES {
-        let a: Vec<i8> = lcg_bytes(0x18_D07, n).into_iter().map(|b| b as i8).collect();
-        let b: Vec<i8> = lcg_bytes(0x5EED_18, n).into_iter().map(|b| b as i8).collect();
+        let a: Vec<i8> = lcg_bytes(0x18D0_0007, n)
+            .into_iter()
+            .map(|b| b as i8)
+            .collect();
+        let b: Vec<i8> = lcg_bytes(0x5EED_1800, n)
+            .into_iter()
+            .map(|b| b as i8)
+            .collect();
         assert_eq!(
             lanes::stats::i8::dot(&a, &b),
             Ok(naive_dot_i8(&a, &b)),

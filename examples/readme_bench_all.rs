@@ -41,6 +41,9 @@ fn main() {
     // Packed bitmaps for the binary family.
     let ba: Vec<u8> = (0..N).map(|i| (i * 31) as u8).collect();
     let bb: Vec<u8> = (0..N).map(|i| (i * 17) as u8).collect();
+    // Signed bytes for the i8 family.
+    let ia: Vec<i8> = (0..N).map(|i| ((i * 31) % 251) as i8 - 125).collect();
+    let ib: Vec<i8> = (0..N).map(|i| ((i * 17) % 251) as i8 - 125).collect();
 
     // ---------------- stats ----------------
     row(
@@ -245,6 +248,25 @@ fn main() {
             }
             (union != 0).then(|| inter as f32 / union as f32)
         }),
+    );
+
+    // ---------------- stats::i8 ----------------
+    row(
+        "stats::i8",
+        "dot",
+        time_us(|| lanes::stats::i8::dot(&ia, &ib).unwrap()),
+        time_us(|| {
+            ia.iter()
+                .zip(&ib)
+                .map(|(&x, &y)| i64::from(x) * i64::from(y))
+                .sum::<i64>()
+        }),
+    );
+    row(
+        "stats::i8",
+        "sum",
+        time_us(|| lanes::stats::i8::sum(&ia)),
+        time_us(|| ia.iter().map(|&x| i64::from(x)).sum::<i64>()),
     );
 
     // ---------------- math ----------------
