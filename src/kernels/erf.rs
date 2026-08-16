@@ -49,6 +49,10 @@ pub(crate) const XMAX: f64 = 27.23;
 /// 2^-56: below this, `erfc(x) = 1 − x` is correctly rounded (the cubic
 /// term of the series is < ½ ulp of 1).
 pub(crate) const T_TINY: f64 = 1.387_778_780_781_445_7e-17;
+/// z-trick mask: clears the low 32 fraction bits of an f64 bit pattern.
+pub(crate) const Z_MASK: u64 = 0xFFFF_FFFF_0000_0000;
+/// `Z_MASK` as an `i64` bit pattern for the SIMD `set1_epi64x` splats.
+pub(crate) const Z_MASK_I64: i64 = Z_MASK as i64;
 
 /// R(t) ≈ (erf(x)−x)/x, t = x², on [0, 0.84375²]. Remez fit, ascending
 /// powers; R(0) = 2/√π − 1 so `x + x·R(x²)` is exact at 0. Fit error
@@ -189,7 +193,7 @@ fn erfc_pos(x: f64) -> f64 {
         // first exp argument carries no rounding error; the residual
         // (z−x)(z+x) is tiny and goes into the second exp with the L
         // correction.
-        let z = f64::from_bits(x.to_bits() & 0xFFFF_FFFF_0000_0000);
+        let z = f64::from_bits(x.to_bits() & Z_MASK);
         let u = 1.0 / (x * x);
         let l = if x < T_SPLIT {
             horner(&LA_NUM, u) / horner(&LA_DEN, u)
@@ -350,7 +354,7 @@ mod tests {
                 // only stores x ≥ 0; allow that single rounding ulp.
                 let gc_neg = erfc(-x);
                 let comp = 2.0 - gc;
-                let u = (gc_neg.to_bits() as i64 - comp.to_bits() as i64).unsigned_abs();
+                let u = (i64::from(gc_neg.to_bits()) - i64::from(comp.to_bits())).unsigned_abs();
                 assert!(u <= 1, "erfc({}) = {gc_neg} want {comp} ({u} ulps)", -x);
             }
         }

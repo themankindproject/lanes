@@ -308,7 +308,7 @@ fn erf_erfc_f64_ulp_contract() {
     let mut erfc_out = vec![0.0_f64; xs.len()];
     lanes::special::f64::erf_into(&xs, &mut erf_out).unwrap();
     lanes::special::f64::erfc_into(&xs, &mut erfc_out).unwrap();
-    for (i, &(x, we, wc)) in xs
+    for (i, &(_x, we, wc)) in xs
         .iter()
         .enumerate()
         .map(|(i, &x)| (i, REF.iter().find(|&&(r, _, _)| r == x.abs()).unwrap()))

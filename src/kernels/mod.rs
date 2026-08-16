@@ -7,6 +7,7 @@
 //! The scalar module is always available and serves as the reference
 //! implementation and universal fallback.
 
+#[cfg(feature = "alloc")]
 pub(crate) mod erf;
 pub(crate) mod exp;
 pub(crate) mod hypot;
@@ -1018,8 +1019,8 @@ dispatch!(
     scalar::erf,
     x86::sse2::erf,
     x86::avx2::erf,
-    scalar::erf,
-    scalar::erf,
+    x86::avx512::erf,
+    aarch64::neon::erf,
     id,
     alloc
 );
@@ -1031,8 +1032,8 @@ dispatch!(
     scalar::erfc,
     x86::sse2::erfc,
     x86::avx2::erfc,
-    scalar::erfc,
-    scalar::erfc,
+    x86::avx512::erfc,
+    aarch64::neon::erfc,
     id,
     alloc
 );
@@ -1044,8 +1045,8 @@ dispatch!(
     scalar::erf_f64,
     x86::sse2::erf_f64,
     x86::avx2::erf_f64,
-    scalar::erf_f64,
-    scalar::erf_f64,
+    x86::avx512::erf_f64,
+    aarch64::neon::erf_f64,
     id,
     alloc
 );
@@ -1057,8 +1058,8 @@ dispatch!(
     scalar::erfc_f64,
     x86::sse2::erfc_f64,
     x86::avx2::erfc_f64,
-    scalar::erfc_f64,
-    scalar::erfc_f64,
+    x86::avx512::erfc_f64,
+    aarch64::neon::erfc_f64,
     id,
     alloc
 );

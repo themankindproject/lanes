@@ -1913,6 +1913,275 @@ crate::simd_rms_norm!(
     crate::kernels::sqrt::sqrt_f64
 );
 
+// --- erf/erfc family (f64 piecewise SIMD, f32 widen-to-f64) ----------------
+//
+// 128-bit NEON port of the SSE2 kernels (see `x86/sse2.rs` for the region
+// notes): same piecewise regions, identical clean-room Remez coefficients
+// from `kernels::erf`, lane-for-lane mirror of the scalar oracle. f64 erf
+// ≤ 1 ulp, f64 erfc ≤ 3 ulp; f32 widens to f64 and rounds once. NEON
+// selects use `vbslq_f64` on `uint64x2_t` comparison masks.
+
+/// Horner evaluation of the small-region R polynomial (`ERF_R`, ascending
+/// powers) at `x2` = x², shared by the erf and erfc small-region forms.
+///
+/// # Safety
+/// Caller must ensure NEON is available (implied by the `target_feature`
+/// gate on every caller).
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn horner_r_128d(x2: float64x2_t) -> float64x2_t {
+    let r = crate::kernels::erf::ERF_R;
+    let mut acc = unsafe { vdupq_n_f64(r[13]) };
+    let mut i = 12;
+    loop {
+        acc = unsafe { vaddq_f64(vdupq_n_f64(r[i]), vmulq_f64(acc, x2)) };
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+    acc
+}
+
+/// Horner evaluation of the middle-region rational P(s)/Q(s)
+/// (`ERFC1_NUM`/`ERFC1_DEN`, ascending powers), shared by erf and erfc.
+///
+/// # Safety
+/// Caller must ensure NEON is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn erfc1_pq_128d(s: float64x2_t) -> float64x2_t {
+    let num = crate::kernels::erf::ERFC1_NUM;
+    let den = crate::kernels::erf::ERFC1_DEN;
+    let mut p = unsafe { vdupq_n_f64(num[9]) };
+    let mut q = unsafe { vdupq_n_f64(den[9]) };
+    let mut i = 8;
+    loop {
+        p = unsafe { vaddq_f64(vdupq_n_f64(num[i]), vmulq_f64(p, s)) };
+        q = unsafe { vaddq_f64(vdupq_n_f64(den[i]), vmulq_f64(q, s)) };
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+    unsafe { vdivq_f64(p, q) }
+}
+
+/// Tail-region L(u) rational, u = 1/x²: `LA` for x < 1/0.35, `LB`
+/// otherwise (both ascending powers). Shared by erf and erfc.
+///
+/// # Safety
+/// Caller must ensure NEON is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn tail_l_128d(a: float64x2_t, u: float64x2_t) -> float64x2_t {
+    let mut an = unsafe { vdupq_n_f64(crate::kernels::erf::LA_NUM[10]) };
+    let mut ad = unsafe { vdupq_n_f64(crate::kernels::erf::LA_DEN[10]) };
+    let mut i = 9;
+    loop {
+        an = unsafe {
+            vaddq_f64(
+                vdupq_n_f64(crate::kernels::erf::LA_NUM[i]),
+                vmulq_f64(an, u),
+            )
+        };
+        ad = unsafe {
+            vaddq_f64(
+                vdupq_n_f64(crate::kernels::erf::LA_DEN[i]),
+                vmulq_f64(ad, u),
+            )
+        };
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+    // NB: LB_NUM has 12 coefficients, LB_DEN has 11 — separate loops, or
+    // the shared counter seeds the denominator's top coefficient twice.
+    let mut bn = unsafe { vdupq_n_f64(crate::kernels::erf::LB_NUM[11]) };
+    let mut j = 10;
+    loop {
+        bn = unsafe {
+            vaddq_f64(
+                vdupq_n_f64(crate::kernels::erf::LB_NUM[j]),
+                vmulq_f64(bn, u),
+            )
+        };
+        if j == 0 {
+            break;
+        }
+        j -= 1;
+    }
+    let mut bd = unsafe { vdupq_n_f64(crate::kernels::erf::LB_DEN[10]) };
+    let mut j = 9;
+    loop {
+        bd = unsafe {
+            vaddq_f64(
+                vdupq_n_f64(crate::kernels::erf::LB_DEN[j]),
+                vmulq_f64(bd, u),
+            )
+        };
+        if j == 0 {
+            break;
+        }
+        j -= 1;
+    }
+    let m = unsafe { vcltq_f64(a, vdupq_n_f64(crate::kernels::erf::T_SPLIT)) };
+    unsafe { vbslq_f64(m, vdivq_f64(an, ad), vdivq_f64(bn, bd)) }
+}
+
+/// erfc(x) for 2 lanes, full domain (sign, specials, NaN). Lane-for-lane
+/// mirror of the scalar `erfc_f64` (see the SSE2 `verfc_128d` for the
+/// region-by-region notes).
+///
+/// # Safety
+/// Caller must ensure NEON is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn verfc_128d(v: float64x2_t) -> float64x2_t {
+    let a = unsafe { vabsq_f64(v) }; // |x|
+    let nan = unsafe { veorq_u64(vceqq_f64(v, v), vdupq_n_u64(u64::MAX)) }; // NaN → all-ones
+
+    // --- small region: split forms (mirror of erfc_pos) ----------------
+    let x2 = unsafe { vmulq_f64(v, v) }; // x² is sign-free
+    let xr = unsafe { vmulq_f64(a, horner_r_128d(x2)) };
+    // tiny: 1 − a (correctly rounded below 2^-56)
+    let tiny_val = unsafe { vsubq_f64(vdupq_n_f64(1.0), a) };
+    // low: 1 − (a + xr)
+    let lo_val = unsafe { vsubq_f64(vdupq_n_f64(1.0), vaddq_f64(a, xr)) };
+    // high: 0.5 − ((a − 0.5) + xr) — Sterbenz-exact split, no cancellation
+    let hi_val = unsafe {
+        vsubq_f64(
+            vdupq_n_f64(0.5),
+            vaddq_f64(vsubq_f64(a, vdupq_n_f64(0.5)), xr),
+        )
+    };
+    let m_tiny = unsafe { vcltq_f64(a, vdupq_n_f64(crate::kernels::erf::T_TINY)) };
+    let m_quarter = unsafe { vcltq_f64(a, vdupq_n_f64(0.25)) };
+    let small_val = unsafe { vbslq_f64(m_tiny, tiny_val, vbslq_f64(m_quarter, lo_val, hi_val)) };
+
+    // --- middle region: P(s)/Q(s), s = |x| − 1 --------------------------
+    let mid_val = unsafe { erfc1_pq_128d(vsubq_f64(a, vdupq_n_f64(1.0))) };
+
+    // --- tail: z-trick ---------------------------------------------------
+    let z = unsafe {
+        vreinterpretq_f64_u64(vandq_u64(
+            vreinterpretq_u64_f64(a),
+            vdupq_n_u64(0xFFFF_FFFF_0000_0000),
+        ))
+    };
+    let u = unsafe { vdivq_f64(vdupq_n_f64(1.0), vmulq_f64(a, a)) };
+    let l = unsafe { tail_l_128d(a, u) };
+    let e1 = unsafe {
+        vexp_128d(vsubq_f64(
+            vsubq_f64(vdupq_n_f64(0.0), vmulq_f64(z, z)),
+            vdupq_n_f64(0.5625),
+        ))
+    };
+    let e2 = unsafe { vexp_128d(vaddq_f64(vmulq_f64(vsubq_f64(z, a), vaddq_f64(z, a)), l)) };
+    let tail_val = unsafe { vdivq_f64(vmulq_f64(e1, e2), a) };
+    // |x| > XMAX (incl. +∞ and NaN fall-through): 0
+    let m_xmax = unsafe { vcleq_f64(a, vdupq_n_f64(crate::kernels::erf::XMAX)) };
+    let tail_val =
+        unsafe { vreinterpretq_f64_u64(vandq_u64(vreinterpretq_u64_f64(tail_val), m_xmax)) };
+
+    // --- assemble erfc(|x|), then sign -----------------------------------
+    let m_small = unsafe { vcltq_f64(a, vdupq_n_f64(crate::kernels::erf::T_SMALL)) };
+    let m_mid = unsafe { vcltq_f64(a, vdupq_n_f64(crate::kernels::erf::T_MID)) };
+    let c = unsafe { vbslq_f64(m_small, small_val, vbslq_f64(m_mid, mid_val, tail_val)) };
+    let neg = unsafe { vcltq_f64(v, vdupq_n_f64(0.0)) };
+    let out = unsafe { vbslq_f64(neg, vsubq_f64(vdupq_n_f64(2.0), c), c) };
+    unsafe { vbslq_f64(nan, vdupq_n_f64(f64::NAN), out) } // NaN in → NaN out
+}
+
+/// erf(x) for 2 lanes, full domain. Mirror of the scalar `erf_f64` (see
+/// the SSE2 `verf_128d` for the sign-handling notes).
+///
+/// # Safety
+/// Caller must ensure NEON is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn verf_128d(v: float64x2_t) -> float64x2_t {
+    let a = unsafe { vabsq_f64(v) }; // |x|
+    let nan = unsafe { veorq_u64(vceqq_f64(v, v), vdupq_n_u64(u64::MAX)) }; // NaN → all-ones
+
+    // small: erf(x) = x + x·R(x²) — already signed (uses v, not |v|).
+    let x2 = unsafe { vmulq_f64(v, v) };
+    let small_val = unsafe { vaddq_f64(v, vmulq_f64(v, horner_r_128d(x2))) };
+
+    // big: 1 − erfc(|x|), sign flip on the big region only.
+    let big_val = unsafe { vsubq_f64(vdupq_n_f64(1.0), verfc_128d(a)) };
+    let neg = unsafe { vcltq_f64(v, vdupq_n_f64(0.0)) };
+    let big_val = unsafe { vbslq_f64(neg, vnegq_f64(big_val), big_val) };
+
+    let m_small = unsafe { vcltq_f64(a, vdupq_n_f64(crate::kernels::erf::T_SMALL)) };
+    let y = unsafe { vbslq_f64(m_small, small_val, big_val) };
+    unsafe { vbslq_f64(nan, vdupq_n_f64(f64::NAN), y) }
+}
+
+crate::simd_map!(
+    erf_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    |v: float64x2_t| unsafe { verf_128d(v) },
+    |x: f64| crate::kernels::erf::erf_f64(x)
+);
+
+crate::simd_map!(
+    erfc_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    |v: float64x2_t| unsafe { verfc_128d(v) },
+    |x: f64| crate::kernels::erf::erfc_f64(x)
+);
+
+// f32 erf/erfc: widen 4 floats to two f64 pairs, run the f64 vector op,
+// round once back to f32 (the perfectly-rounded f32 contract).
+crate::simd_map!(
+    erf,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    |v: float32x4_t| unsafe {
+        let lo = vcvt_f64_f32(vget_low_f32(v));
+        let hi = vcvt_f64_f32(vget_high_f32(v));
+        let rlo = vcvt_f32_f64(verf_128d(lo));
+        let rhi = vcvt_f32_f64(verf_128d(hi));
+        vcombine_f32(rlo, rhi)
+    },
+    |x: f32| crate::kernels::erf::erf(x)
+);
+
+crate::simd_map!(
+    erfc,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    |v: float32x4_t| unsafe {
+        let lo = vcvt_f64_f32(vget_low_f32(v));
+        let hi = vcvt_f64_f32(vget_high_f32(v));
+        let rlo = vcvt_f32_f64(verfc_128d(lo));
+        let rhi = vcvt_f32_f64(verfc_128d(hi));
+        vcombine_f32(rlo, rhi)
+    },
+    |x: f32| crate::kernels::erf::erfc(x)
+);
+
 #[cfg(test)]
 #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 mod tests {

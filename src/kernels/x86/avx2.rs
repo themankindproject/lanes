@@ -2216,36 +2216,52 @@ unsafe fn erfc1_pq_256d(s: __m256d) -> __m256d {
 #[inline]
 #[target_feature(enable = "avx2")]
 unsafe fn tail_l_256d(a: __m256d, u: __m256d) -> __m256d {
-    let la_n = crate::kernels::erf::LA_NUM;
-    let la_d = crate::kernels::erf::LA_DEN;
-    let mut an = unsafe { _mm256_set1_pd(la_n[10]) };
-    let mut ad = unsafe { _mm256_set1_pd(la_d[10]) };
+    let mut an = unsafe { _mm256_set1_pd(crate::kernels::erf::LA_NUM[10]) };
+    let mut ad = unsafe { _mm256_set1_pd(crate::kernels::erf::LA_DEN[10]) };
     let mut i = 9;
     loop {
-        an = unsafe { _mm256_add_pd(_mm256_set1_pd(la_n[i]), _mm256_mul_pd(an, u)) };
-        ad = unsafe { _mm256_add_pd(_mm256_set1_pd(la_d[i]), _mm256_mul_pd(ad, u)) };
+        an = unsafe {
+            _mm256_add_pd(
+                _mm256_set1_pd(crate::kernels::erf::LA_NUM[i]),
+                _mm256_mul_pd(an, u),
+            )
+        };
+        ad = unsafe {
+            _mm256_add_pd(
+                _mm256_set1_pd(crate::kernels::erf::LA_DEN[i]),
+                _mm256_mul_pd(ad, u),
+            )
+        };
         if i == 0 {
             break;
         }
         i -= 1;
     }
-    let lb_n = crate::kernels::erf::LB_NUM;
-    let lb_d = crate::kernels::erf::LB_DEN;
     // NB: LB_NUM has 12 coefficients, LB_DEN has 11 — separate loops, or
     // the shared counter seeds the denominator's top coefficient twice.
-    let mut bn = unsafe { _mm256_set1_pd(lb_n[11]) };
+    let mut bn = unsafe { _mm256_set1_pd(crate::kernels::erf::LB_NUM[11]) };
     let mut j = 10;
     loop {
-        bn = unsafe { _mm256_add_pd(_mm256_set1_pd(lb_n[j]), _mm256_mul_pd(bn, u)) };
+        bn = unsafe {
+            _mm256_add_pd(
+                _mm256_set1_pd(crate::kernels::erf::LB_NUM[j]),
+                _mm256_mul_pd(bn, u),
+            )
+        };
         if j == 0 {
             break;
         }
         j -= 1;
     }
-    let mut bd = unsafe { _mm256_set1_pd(lb_d[10]) };
+    let mut bd = unsafe { _mm256_set1_pd(crate::kernels::erf::LB_DEN[10]) };
     let mut j = 9;
     loop {
-        bd = unsafe { _mm256_add_pd(_mm256_set1_pd(lb_d[j]), _mm256_mul_pd(bd, u)) };
+        bd = unsafe {
+            _mm256_add_pd(
+                _mm256_set1_pd(crate::kernels::erf::LB_DEN[j]),
+                _mm256_mul_pd(bd, u),
+            )
+        };
         if j == 0 {
             break;
         }
@@ -2311,7 +2327,7 @@ unsafe fn verfc_256d(v: __m256d) -> __m256d {
     let z = unsafe {
         _mm256_and_pd(
             a,
-            _mm256_castsi256_pd(_mm256_set1_epi64x(0xFFFF_FFFF_0000_0000_u64 as i64)),
+            _mm256_castsi256_pd(_mm256_set1_epi64x(crate::kernels::erf::Z_MASK_I64)),
         )
     };
     let u = unsafe { _mm256_div_pd(_mm256_set1_pd(1.0), _mm256_mul_pd(a, a)) };
