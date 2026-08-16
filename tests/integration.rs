@@ -1550,3 +1550,63 @@ fn i8_squared_distance_length_mismatch() {
         other => panic!("expected LengthMismatch, got {other:?}"),
     }
 }
+
+#[cfg(feature = "alloc")]
+#[test]
+fn erf_erfc_known_and_saturation() {
+    // known values (mpmath dps=80, correctly rounded)
+    let v = [0.0_f32, 0.5, 1.0, 2.0, 4.0];
+    let got = lanes::special::f32::erf(&v);
+    let want = [0.0_f32, 0.5204999, 0.8427008, 0.9953223, 0.99999998];
+    for (g, w) in got.iter().zip(want) {
+        assert!((g - w).abs() < 1e-6, "erf: {g} vs {w}");
+    }
+    let got = lanes::special::f32::erfc(&[9.0_f32, 10.0, 28.0, f32::INFINITY]);
+    assert!(got[0] < 1e-36 && got[0] > 0.0, "erfc(9)={}", got[0]);
+    assert!(got[1] < 1e-44 && got[1] > 0.0, "erfc(10)={}", got[1]);
+    assert_eq!(got[2], 0.0); // erfc(28) underflows f64 -> 0
+    assert_eq!(got[3], 0.0);
+    assert!(lanes::special::f32::erf(&[]).is_empty());
+    assert!(lanes::special::f32::erfc(&[]).is_empty());
+
+    // symmetry / saturation / specials (f64)
+    assert_eq!(lanes::special::f64::erf(&[f64::INFINITY]), [1.0]);
+    assert_eq!(lanes::special::f64::erf(&[f64::NEG_INFINITY]), [-1.0]);
+    assert_eq!(lanes::special::f64::erfc(&[f64::NEG_INFINITY]), [2.0]);
+    assert_eq!(lanes::special::f64::erfc(&[f64::INFINITY]), [0.0]);
+    assert!(lanes::special::f64::erf(&[f64::NAN])[0].is_nan());
+    assert!(lanes::special::f64::erfc(&[f64::NAN])[0].is_nan());
+    // odd symmetry of erf, and erf(x) + erfc(x) = 1 in the middle range
+    let x = [0.3_f64, -0.3, 1.7, -1.7];
+    let e = lanes::special::f64::erf(&x);
+    assert_eq!(e[0], -e[1]);
+    assert_eq!(e[2], -e[3]);
+    let c = lanes::special::f64::erfc(&[0.3_f64, 1.7]);
+    assert!((e[0] + c[0] - 1.0).abs() < 1e-15);
+    assert!((e[2] + c[1] - 1.0).abs() < 1e-15);
+    assert!(lanes::special::f64::erf(&[]).is_empty());
+    assert!(lanes::special::f64::erfc(&[]).is_empty());
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn erf_erfc_length_mismatch() {
+    let mut out = [0.0_f32; 3];
+    assert!(matches!(
+        lanes::special::f32::erf_into(&[0.0; 4], &mut out),
+        Err(lanes::Error::LengthMismatch { .. })
+    ));
+    assert!(matches!(
+        lanes::special::f32::erfc_into(&[0.0; 4], &mut out),
+        Err(lanes::Error::LengthMismatch { .. })
+    ));
+    let mut out64 = [0.0_f64; 3];
+    assert!(matches!(
+        lanes::special::f64::erf_into(&[0.0; 4], &mut out64),
+        Err(lanes::Error::LengthMismatch { .. })
+    ));
+    assert!(matches!(
+        lanes::special::f64::erfc_into(&[0.0; 4], &mut out64),
+        Err(lanes::Error::LengthMismatch { .. })
+    ));
+}

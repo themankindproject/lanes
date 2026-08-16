@@ -66,15 +66,18 @@ let s64 = f64::sum(&[1.0, 2.0, 3.0]);        // 6.0
   dimensions)
 - **`math`** — `sqrt`, `clip`, `rsqrt`, `exp`, `ln`, `tanh`, `hypot`,
   `powi`, `abs_sub` (each also as `*_into`)
+- **`special`** — `erf`, `erfc` (f64: ≤ 1 ulp / ≤ 3 ulp; f32: perfectly
+  rounded via compute-in-f64-and-round-once)
 - **`ml`** — `softmax`, `log_softmax`, `sigmoid`, `silu`, `gelu`, `relu`,
   `softplus`, `rms_norm`, `layer_norm`, `cosine_similarity`, `logsumexp`
   (every map-style op also as `*_into`)
 
 Reductions (`stats`, `distance`) return scalars and mostly work without
 `alloc` (exceptions: `variance`, `std_dev`, `geometric_mean` need an
-internal buffer); `math`/`ml` return `Vec`s and need the `alloc`
-feature. The `_into` variants write into a caller-provided buffer
-instead of allocating — reuse the buffer across calls in hot loops:
+internal buffer); `math`/`special`/`ml` return `Vec`s and need the
+`alloc` feature. The `_into` variants write into a caller-provided
+buffer instead of allocating — reuse the buffer across calls in hot
+loops:
 
 ```rust
 let mut buf = vec![0.0_f32; 1024];
@@ -88,6 +91,14 @@ Measured on the same machine as the summary table (f32, n = 65,536,
 AVX-512F backend, release build). "naive" is the plain iterator
 expression compiled with identical settings. Reproduce with
 `cargo run --release --example readme_bench_all`.
+
+Note: `erf`/`erfc` have no `std` baseline, so their naive column is the
+Abramowitz–Stegun 7.1.26 polynomial (~1e-7 accuracy) — a *speed*
+reference only, not the same accuracy class as the `lanes` kernels.
+They also run below that baseline here: the shared bench distribution
+(arcsine on [−2, 2]) is tail-heavy for erf, and every tail element
+pays two correctly-rounded vector `exp`s to hold the ≤ 1 ulp / ≤ 3 ulp
+contract. On small/mid-heavy inputs the kernels run at SIMD speed.
 
 | Family | Function | `lanes` | naive | speedup |
 | --- | --- | ---: | ---: | ---: |
@@ -129,6 +140,8 @@ expression compiled with identical settings. Reproduce with
 | `math` | `exp` | 95.1 µs | 355.9 µs | **3.7×** |
 | `math` | `ln` | 87.7 µs | 452.4 µs | **5.2×** |
 | `math` | `tanh` | 146.7 µs | 774.4 µs | **5.3×** |
+| `special` | `erf` | 782.8 µs | 488.0 µs | 0.6× |
+| `special` | `erfc` | 763.4 µs | 491.1 µs | 0.6× |
 | `math` | `hypot` | 50.5 µs | 367.2 µs | **7.3×** |
 | `math` | `powi` | 11.3 µs | 12.7 µs | 1.1× |
 | `math` | `abs_sub` | 16.6 µs | 20.4 µs | 1.2× |
@@ -215,8 +228,8 @@ Without `std`, the architecture-guaranteed SIMD tier is selected
 statically — SSE2 on x86-64, NEON on aarch64 (both mandatory baselines,
 so no runtime probing), scalar elsewhere. The `stats` and `distance`
 families work as-is (except `variance`/`std_dev`/`geometric_mean`,
-which need `alloc`); enable `alloc` for the `Vec`-returning `math`/`ml`
-families:
+which need `alloc`); enable `alloc` for the `Vec`-returning
+`math`/`special`/`ml` families:
 
 ```rust
 use lanes::stats::f32 as stats;
@@ -229,6 +242,10 @@ let norm = lanes::distance::f32::l2_norm(&data);
 
 - `exp`, `ln`, `tanh`, `sqrt`, `rsqrt` — ≤ 1 ulp vs `std`
   (fdlibm/SLEEF/musl-derived reductions), on every backend
+- `erf` — ≤ 1 ulp (f64), perfectly rounded (f32); `erfc` — ≤ 3 ulp
+  (f64, the structural floor of the exp-product tail form), perfectly
+  rounded (f32). Clean-room Remez coefficients fitted against an
+  arbitrary-precision oracle
 - `hypot` — overflow-safe (scales by `max(|a|, |b|)`), 1–2 ulp vs
   `std::hypot`, identical NaN/inf propagation
 - `powi` — bit-exact with `std::powi`, including specials

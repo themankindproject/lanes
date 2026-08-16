@@ -24,3 +24,7 @@ pub mod binary;
 // Elementwise math functions (per-element maps).
 #[cfg(feature = "alloc")]
 pub mod math;
+
+// Special functions (erf/erfc elementwise maps).
+#[cfg(feature = "alloc")]
+pub mod special;

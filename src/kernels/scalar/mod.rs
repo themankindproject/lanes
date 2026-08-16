@@ -987,6 +987,34 @@ pub(crate) fn layer_norm_f64(values: &[f64], eps: f64, out: &mut [f64]) {
     }
 }
 
+/// Elementwise error function into `out` (f32, f64-widened kernel).
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn erf(values: &[f32], out: &mut [f32]) {
+    map(values, out, crate::kernels::erf::erf);
+}
+
+/// Elementwise complementary error function into `out` (f32, f64-widened).
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn erfc(values: &[f32], out: &mut [f32]) {
+    map(values, out, crate::kernels::erf::erfc);
+}
+
+/// Elementwise error function into `out` (f64).
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn erf_f64(values: &[f64], out: &mut [f64]) {
+    map_f64(values, out, crate::kernels::erf::erf_f64);
+}
+
+/// Elementwise complementary error function into `out` (f64).
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn erfc_f64(values: &[f64], out: &mut [f64]) {
+    map_f64(values, out, crate::kernels::erf::erfc_f64);
+}
+
 #[cfg(test)]
 #[allow(clippy::float_cmp)]
 mod tests {

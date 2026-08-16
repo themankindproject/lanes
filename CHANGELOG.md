@@ -12,6 +12,12 @@ so it is all listed as additions.
 
 ### Added
 
+- New `special` kernel family — `erf` and `erfc` for f32 and f64 with
+  scalar/SSE2/AVX2/AVX-512/NEON backends. Clean-room Remez coefficients
+  fitted against an arbitrary-precision oracle; accuracy: f64 `erf`
+  ≤ 1 ulp, f64 `erfc` ≤ 3 ulp (structural floor of the exp-product
+  tail), f32 both perfectly rounded via compute-in-f64-and-round-once.
+  Unblocks exact GELU (#9) and normal CDF (#11).
 - New `binary` kernel family — the first integer kernels: bit-level
   `hamming` (popcount of XOR) and `jaccard` (intersection-over-union
   similarity, `Ok(None)` on empty union) over packed `&[u8]` bitmaps,
@@ -26,10 +32,16 @@ so it is all listed as additions.
 - New `distance::i8` submodule — exact integer norms: `l1_norm`,
   `max_norm` (returns `Option<u8>` since `|i8::MIN| = 128` does not fit
   in `i8`), `squared_distance`. All widen to `i16` before any operation
-  that could overflow; `max_norm` is composed from the `min`/`max`
-  kernels (no dedicated kernel needed). Backends: scalar, SSE2
-  (sign-extend + `pmaxsw`-abs idiom), AVX2 (`vpabsw`), AVX-512 (AVX2
-  kernels), NEON (`vabdl_s8`).
+ that could overflow; `max_norm` is composed from the `min`/`max`
+ kernels (no dedicated kernel needed). Backends: scalar, SSE2
+ (sign-extend + `pmaxsw`-abs idiom), AVX2 (`vpabsw`), AVX-512 (AVX2
+ kernels), NEON (`vabdl_s8`).
+
+### Fixed
+
+- `simd_exp_f64!` (vector f64 exp) now returns denormals for results
+  below 2^-1022, matching the scalar `exp_f64` contract (previously
+  clamped to 0, diverging from scalar for inputs in (−745.13, −708.4)).
 
 ## [0.1.0] - 2026-08-16
 

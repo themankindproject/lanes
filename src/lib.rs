@@ -33,9 +33,9 @@
 //!
 //! ## Precision families
 //!
-//! Every family (`stats`, `distance`, `math`, `ml`) is split into an `f32`
-//! (single-precision) and an `f64` (double-precision) submodule. Pick the
-//! precision at the call site:
+//! Every family (`stats`, `distance`, `math`, `special`, `ml`) is split
+//! into an `f32` (single-precision) and an `f64` (double-precision)
+//! submodule. Pick the precision at the call site:
 //!
 //! ```rust
 //! use lanes::stats::{f32, f64};
@@ -185,6 +185,13 @@ pub mod binary {
 #[cfg(feature = "alloc")]
 pub mod math {
     pub use crate::algorithms::math::{f32, f64};
+}
+
+/// Special functions (`erf`, `erfc`) — elementwise maps over slices.
+/// Select precision via the [`f32`] or [`f64`] submodule.
+#[cfg(feature = "alloc")]
+pub mod special {
+    pub use crate::algorithms::special::{f32, f64};
 }
 
 /// ML kernels built on the `lanes` core (`softmax`, `log_softmax`,
