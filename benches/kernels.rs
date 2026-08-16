@@ -441,6 +441,68 @@ fn bench_count_zero(c: &mut Criterion) {
     group.finish();
 }
 
+/// Deterministic random byte data (packed bitmaps) for the binary family.
+fn random_u8_vec(n: usize, seed: u64) -> Vec<u8> {
+    let mut rng = XorShift64::new(seed);
+    (0..n).map(|_| rng.next_u64() as u8).collect()
+}
+
+fn naive_hamming(a: &[u8], b: &[u8]) -> usize {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| (x ^ y).count_ones() as usize)
+        .sum()
+}
+
+fn naive_jaccard(a: &[u8], b: &[u8]) -> Option<f32> {
+    let mut inter = 0usize;
+    let mut union = 0usize;
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        inter += (x & y).count_ones() as usize;
+        union += (x | y).count_ones() as usize;
+    }
+    (union != 0).then(|| inter as f32 / union as f32)
+}
+
+fn bench_binary_pair<R, F, G>(c: &mut Criterion, name: &str, lanes: F, naive: G)
+where
+    R: Copy,
+    F: Fn(&[u8], &[u8]) -> R + Copy,
+    G: Fn(&[u8], &[u8]) -> R + Copy,
+{
+    let mut group = c.benchmark_group(name);
+    for &size in SIZES {
+        let a = random_u8_vec(size, 46);
+        let b = random_u8_vec(size, 124);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes(black_box(&a), black_box(&b)));
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| naive(black_box(&a), black_box(&b)));
+        });
+    }
+    group.finish();
+}
+
+fn bench_hamming(c: &mut Criterion) {
+    bench_binary_pair(
+        c,
+        "hamming",
+        |a, b| lanes::binary::hamming(a, b).unwrap(),
+        naive_hamming,
+    );
+}
+
+fn bench_jaccard(c: &mut Criterion) {
+    bench_binary_pair(
+        c,
+        "jaccard",
+        |a, b| lanes::binary::jaccard(a, b).unwrap(),
+        naive_jaccard,
+    );
+}
+
 criterion_group!(
     benches,
     bench_sum,
@@ -458,6 +520,8 @@ criterion_group!(
     bench_js_divergence,
     bench_kl_divergence_f64,
     bench_js_divergence_f64,
-    bench_count_zero
+    bench_count_zero,
+    bench_hamming,
+    bench_jaccard
 );
 criterion_main!(benches);

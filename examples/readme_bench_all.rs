@@ -38,6 +38,9 @@ fn main() {
     let near1: Vec<f32> = (0..N)
         .map(|i| 1.0 + 0.001 * (i as f32 * 0.001).sin())
         .collect();
+    // Packed bitmaps for the binary family.
+    let ba: Vec<u8> = (0..N).map(|i| (i * 31) as u8).collect();
+    let bb: Vec<u8> = (0..N).map(|i| (i * 17) as u8).collect();
 
     // ---------------- stats ----------------
     row(
@@ -214,6 +217,33 @@ fn main() {
                 })
                 .sum::<f32>()
                 * 0.5
+        }),
+    );
+
+    // ---------------- binary ----------------
+    row(
+        "binary",
+        "hamming",
+        time_us(|| lanes::binary::hamming(&ba, &bb).unwrap()),
+        time_us(|| {
+            ba.iter()
+                .zip(&bb)
+                .map(|(&x, &y)| (x ^ y).count_ones() as usize)
+                .sum::<usize>()
+        }),
+    );
+    row(
+        "binary",
+        "jaccard",
+        time_us(|| lanes::binary::jaccard(&ba, &bb).unwrap()),
+        time_us(|| {
+            let mut inter = 0usize;
+            let mut union = 0usize;
+            for (&x, &y) in ba.iter().zip(&bb) {
+                inter += (x & y).count_ones() as usize;
+                union += (x | y).count_ones() as usize;
+            }
+            (union != 0).then(|| inter as f32 / union as f32)
         }),
     );
 

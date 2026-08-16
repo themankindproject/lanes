@@ -20,6 +20,8 @@
     clippy::excessive_precision,    // ln2/log2e split constants are full-precision
     clippy::approx_constant,
     clippy::cast_lossless,
+    clippy::cast_ptr_alignment, // unaligned loads/stores via `.cast()` are intentional
+    clippy::cast_possible_truncation, // u64 counters → usize: counts fit by construction
 )]
 #![allow(unused_unsafe)]
 
@@ -311,6 +313,80 @@ crate::simd_reduce2!(
         r + a * crate::kernels::ln::ln(a / m) + b * crate::kernels::ln::ln(b / m)
     },
     _mm_add_ps
+);
+
+// --- binary family: popcount-based two-input reductions -------------------
+
+/// Lookup-free per-register popcount (SSE2 only — `pshufb` is SSSE3 and
+/// forbidden in this backend). Muła's bit-counting: pairwise bit sums via
+/// shift/subtract/mask, then `psadbw` sums the per-byte counts (0..8) into
+/// two u64 lanes. The `0x55/0x33/0x0F` masks kill the cross-byte bits that
+/// the 16-bit shifts bleed between byte lanes — that is what makes the
+/// 16-bit shifts safe here.
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn popcnt_128(x: __m128i) -> __m128i {
+    unsafe {
+        let m1 = _mm_set1_epi8(0x55);
+        let m2 = _mm_set1_epi8(0x33);
+        let m4 = _mm_set1_epi8(0x0F);
+        let t1 = _mm_sub_epi8(x, _mm_and_si128(_mm_srli_epi16(x, 1), m1));
+        let t2 = _mm_add_epi8(
+            _mm_and_si128(t1, m2),
+            _mm_and_si128(_mm_srli_epi16(t1, 2), m2),
+        );
+        let t3 = _mm_and_si128(_mm_add_epi8(t2, _mm_srli_epi16(t2, 4)), m4);
+        _mm_sad_epu8(t3, _mm_setzero_si128())
+    }
+}
+
+/// Horizontal sum of the two u64 counter lanes produced by [`popcnt_128`].
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn hsum_128_u64(v: __m128i) -> usize {
+    unsafe {
+        let mut t = [0u64; 2];
+        _mm_storeu_si128(t.as_mut_ptr().cast::<__m128i>(), v);
+        (t[0] + t[1]) as usize
+    }
+}
+
+// Hamming: popcount of XOR, 16 bytes per iteration.
+crate::simd_reduce2_count!(
+    hamming_popcount,
+    ["sse2"],
+    16,
+    |p: *const u8| unsafe { _mm_loadu_si128(p.cast::<__m128i>()) },
+    _mm_setzero_si128(),
+    |acc: __m128i, va: __m128i, vb: __m128i| unsafe {
+        _mm_add_epi64(acc, popcnt_128(_mm_xor_si128(va, vb)))
+    },
+    |v: __m128i| unsafe { hsum_128_u64(v) },
+    |r: usize, a: u8, b: u8| r + (a ^ b).count_ones() as usize,
+    usize
+);
+
+// Jaccard counts: (popcount of AND, popcount of OR) per chunk.
+crate::simd_reduce2_count!(
+    jaccard_counts,
+    ["sse2"],
+    16,
+    |p: *const u8| unsafe { _mm_loadu_si128(p.cast::<__m128i>()) },
+    (_mm_setzero_si128(), _mm_setzero_si128()),
+    |acc: (__m128i, __m128i), va: __m128i, vb: __m128i| unsafe {
+        (
+            _mm_add_epi64(acc.0, popcnt_128(_mm_and_si128(va, vb))),
+            _mm_add_epi64(acc.1, popcnt_128(_mm_or_si128(va, vb))),
+        )
+    },
+    |v: (__m128i, __m128i)| unsafe { (hsum_128_u64(v.0), hsum_128_u64(v.1)) },
+    |r: (usize, usize), a: u8, b: u8| {
+        (
+            r.0 + (a & b).count_ones() as usize,
+            r.1 + (a | b).count_ones() as usize,
+        )
+    },
+    (usize, usize)
 );
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar

@@ -46,6 +46,9 @@
 //! assert_eq!(s64, 6.0_f64);
 //! ```
 //!
+//! The `binary` family is the exception: it operates on packed `&[u8]`
+//! bitmaps with bit-level semantics and has no precision submodules.
+//!
 //! ## Supported backends
 //!
 //! | Architecture | Backend | Selection |
@@ -90,7 +93,8 @@
 //! so callers can branch on the exact failure mode:
 //!
 //! * Two-input operations (`dot`, `squared_distance`, `abs_sub`, `hypot`,
-//!   `cosine_similarity`, `kl_divergence`, `js_divergence`) return
+//!   `cosine_similarity`, `kl_divergence`, `js_divergence`, `hamming`,
+//!   `jaccard`) return
 //!   `Err(`[`Error::LengthMismatch`]`)` when their operands disagree in
 //!   length.
 //! * Every `_into` variant returns `Err(`[`Error::LengthMismatch`]`)` when
@@ -159,6 +163,14 @@ pub mod stats {
 /// Precision is selected via the [`f32`] or [`f64`] submodule.
 pub mod distance {
     pub use crate::algorithms::distance::{f32, f64};
+}
+
+/// Binary (bit-packed) vector distances: [`binary::hamming`],
+/// [`binary::jaccard`]. Both operate on `&[u8]` bitmaps with bit-level
+/// semantics (a slice of `n` bytes is a binary vector of `8n` dimensions)
+/// and are `no_std`-clean.
+pub mod binary {
+    pub use crate::algorithms::binary::{hamming, jaccard};
 }
 
 /// Elementwise math functions (per-element maps): `sqrt`, `clip`, `rsqrt`,

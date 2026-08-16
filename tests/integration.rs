@@ -1366,3 +1366,62 @@ fn divergence_matches_scalar_on_chunked_lengths() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// binary family: hamming / jaccard over packed bitmaps
+// ---------------------------------------------------------------------------
+
+#[test]
+fn binary_hamming_known_values() {
+    // Bit-level, not byte-level: 0b01 vs 0b11 differ in exactly 1 bit.
+    assert_eq!(lanes::binary::hamming(&[0b01], &[0b11]), Ok(1));
+    assert_eq!(
+        lanes::binary::hamming(&[0b1010_1010], &[0b0110_0110]),
+        Ok(4)
+    );
+    assert_eq!(lanes::binary::hamming(&[], &[]), Ok(0));
+    assert_eq!(lanes::binary::hamming(&[0xFF; 4], &[0x00; 4]), Ok(32));
+    assert_eq!(lanes::binary::hamming(&[0xAA, 0x55], &[0xAA, 0x55]), Ok(0));
+}
+
+#[test]
+fn binary_hamming_length_mismatch() {
+    match lanes::binary::hamming(&[1, 2, 3], &[1, 2]) {
+        Err(lanes::Error::LengthMismatch { expected, actual }) => {
+            assert_eq!(expected, 3);
+            assert_eq!(actual, 2);
+        }
+        other => panic!("expected LengthMismatch, got {other:?}"),
+    }
+}
+
+#[test]
+fn binary_jaccard_known_values() {
+    // a = 0b1010_1010, b = 0b0110_0110:
+    // AND = 0b0010_0010 (2 bits), OR = 0b1110_1110 (6 bits) -> 2/6 = 1/3.
+    let j = lanes::binary::jaccard(&[0b1010_1010], &[0b0110_0110])
+        .unwrap()
+        .unwrap();
+    assert!((j - 1.0 / 3.0).abs() < 1e-6);
+
+    // Identical non-zero bitmaps -> similarity 1.
+    assert_eq!(lanes::binary::jaccard(&[0xFF], &[0xFF]), Ok(Some(1.0)));
+
+    // Disjoint bitmaps -> similarity 0.
+    assert_eq!(lanes::binary::jaccard(&[0xF0], &[0x0F]), Ok(Some(0.0)));
+
+    // All-zero union -> None (including the empty case).
+    assert_eq!(lanes::binary::jaccard(&[0x00], &[0x00]), Ok(None));
+    assert_eq!(lanes::binary::jaccard(&[], &[]), Ok(None));
+}
+
+#[test]
+fn binary_jaccard_length_mismatch() {
+    match lanes::binary::jaccard(&[1], &[1, 2]) {
+        Err(lanes::Error::LengthMismatch { expected, actual }) => {
+            assert_eq!(expected, 1);
+            assert_eq!(actual, 2);
+        }
+        other => panic!("expected LengthMismatch, got {other:?}"),
+    }
+}

@@ -422,6 +422,48 @@ pub(crate) fn squared_distance(a: &[f32], b: &[f32]) -> f32 {
         .sum()
 }
 
+/// Hamming distance kernel for packed bitmaps: `sum(popcount(a[i] ^ b[i]))`,
+/// i.e. the number of differing **bits**. Returns `0` for empty inputs.
+///
+/// Caller guarantees equal lengths (zip stops at the shorter otherwise).
+#[inline]
+pub(crate) fn hamming_popcount(a: &[u8], b: &[u8]) -> usize {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| (x ^ y).count_ones() as usize)
+        .sum()
+}
+
+/// Jaccard counts kernel for packed bitmaps:
+/// `(popcount(a & b), popcount(a | b))` — the intersection and union bit
+/// counts. Returns `(0, 0)` for empty inputs. This is the shared
+/// intermediate form every backend reduces to; the final similarity
+/// `intersection / union` (or `None` on empty union) is applied by the
+/// dispatch wrapper.
+///
+/// Caller guarantees equal lengths (zip stops at the shorter otherwise).
+#[inline]
+pub(crate) fn jaccard_counts(a: &[u8], b: &[u8]) -> (usize, usize) {
+    let mut intersection = 0usize;
+    let mut union = 0usize;
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        intersection += (x & y).count_ones() as usize;
+        union += (x | y).count_ones() as usize;
+    }
+    (intersection, union)
+}
+
+/// Jaccard kernel for packed bitmaps: reduces
+/// `(popcount(a & b), popcount(a | b))` to the similarity
+/// `intersection / union`, or `None` when the union is empty (both
+/// bitmaps all-zero, including the empty case).
+///
+/// Caller guarantees equal lengths (zip stops at the shorter otherwise).
+#[inline]
+pub(crate) fn jaccard(a: &[u8], b: &[u8]) -> Option<f32> {
+    super::jaccard_similarity(jaccard_counts(a, b))
+}
+
 /// Kullback–Leibler divergence kernel (f32): `sum(p[i] * ln(p[i] / q[i]))`.
 /// Returns `0.0` for empty inputs.
 ///
@@ -921,6 +963,35 @@ mod tests {
     #[test]
     fn prod_empty() {
         assert_eq!(prod(&[]), 1.0);
+    }
+
+    #[test]
+    fn scalar_hamming_popcount() {
+        assert_eq!(hamming_popcount(&[], &[]), 0);
+        assert_eq!(hamming_popcount(&[0b01], &[0b11]), 1);
+        assert_eq!(hamming_popcount(&[0xFF; 4], &[0x00; 4]), 32);
+        assert_eq!(hamming_popcount(&[0xAA, 0x55], &[0x55, 0xAA]), 16);
+    }
+
+    #[test]
+    fn scalar_jaccard_counts() {
+        assert_eq!(jaccard_counts(&[], &[]), (0, 0));
+        assert_eq!(jaccard_counts(&[0x00], &[0x00]), (0, 0));
+        assert_eq!(jaccard_counts(&[0xFF], &[0xFF]), (8, 8));
+        assert_eq!(jaccard_counts(&[0xF0], &[0x0F]), (0, 8));
+        // AND = 0b0010_0010 (2), OR = 0b1110_1110 (6).
+        assert_eq!(jaccard_counts(&[0b1010_1010], &[0b0110_0110]), (2, 6));
+    }
+
+    #[test]
+    fn scalar_jaccard() {
+        assert_eq!(jaccard(&[], &[]), None);
+        assert_eq!(jaccard(&[0x00], &[0x00]), None);
+        assert_eq!(jaccard(&[0xFF], &[0xFF]), Some(1.0));
+        assert_eq!(jaccard(&[0xF0], &[0x0F]), Some(0.0));
+        // AND = 0b0010_0010 (2), OR = 0b1110_1110 (6) -> 1/3.
+        let j = jaccard(&[0b1010_1010], &[0b0110_0110]).unwrap();
+        assert!((j - 1.0 / 3.0).abs() < 1e-6);
     }
 
     #[test]

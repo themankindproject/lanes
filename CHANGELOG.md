@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The first release: everything below shipped with `0.1.0`,
 so it is all listed as additions.
 
+## [Unreleased]
+
+### Added
+
+- New `binary` kernel family — the first integer kernels: bit-level
+  `hamming` (popcount of XOR) and `jaccard` (intersection-over-union
+  similarity, `Ok(None)` on empty union) over packed `&[u8]` bitmaps,
+  with scalar/SSE2/AVX2/AVX-512/NEON backends.
+
 ## [0.1.0] - 2026-08-16
 
 ### Added
