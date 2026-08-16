@@ -422,6 +422,39 @@ pub(crate) fn squared_distance(a: &[f32], b: &[f32]) -> f32 {
         .sum()
 }
 
+/// Hamming distance kernel for packed bitmaps: `sum(popcount(a[i] ^ b[i]))`,
+/// i.e. the number of differing **bits**. Returns `0` for empty inputs.
+///
+/// Caller guarantees equal lengths (zip stops at the shorter otherwise).
+#[inline]
+pub(crate) fn hamming_popcount(a: &[u8], b: &[u8]) -> usize {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| (x ^ y).count_ones() as usize)
+        .sum()
+}
+
+/// Jaccard kernel for packed bitmaps: reduces
+/// `(popcount(a & b), popcount(a | b))` to the similarity
+/// `intersection / union`, or `None` when the union is empty (both
+/// bitmaps all-zero, including the empty case).
+///
+/// Caller guarantees equal lengths (zip stops at the shorter otherwise).
+#[inline]
+pub(crate) fn jaccard(a: &[u8], b: &[u8]) -> Option<f32> {
+    let mut intersection = 0usize;
+    let mut union = 0usize;
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        intersection += (x & y).count_ones() as usize;
+        union += (x | y).count_ones() as usize;
+    }
+    if union == 0 {
+        None
+    } else {
+        Some(intersection as f32 / union as f32)
+    }
+}
+
 /// Kullback–Leibler divergence kernel (f32): `sum(p[i] * ln(p[i] / q[i]))`.
 /// Returns `0.0` for empty inputs.
 ///

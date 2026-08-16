@@ -350,6 +350,30 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_hamming,
+    [a: &[u8], b: &[u8]],
+    usize,
+    scalar::hamming_popcount,
+    scalar::hamming_popcount,
+    scalar::hamming_popcount,
+    scalar::hamming_popcount,
+    scalar::hamming_popcount,
+    id
+);
+
+dispatch!(
+    dispatch_jaccard,
+    [a: &[u8], b: &[u8]],
+    Option<f32>,
+    scalar::jaccard,
+    scalar::jaccard,
+    scalar::jaccard,
+    scalar::jaccard,
+    scalar::jaccard,
+    id
+);
+
+dispatch!(
     dispatch_softmax,
     [values: &[f32], out: &mut [f32]],
     (),

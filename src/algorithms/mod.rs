@@ -18,6 +18,9 @@ pub mod stats;
 // Distance and norm functions.
 pub mod distance;
 
+// Binary (bit-packed) vector distances.
+pub mod binary;
+
 // Elementwise math functions (per-element maps).
 #[cfg(feature = "alloc")]
 pub mod math;

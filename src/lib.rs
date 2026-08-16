@@ -161,6 +161,14 @@ pub mod distance {
     pub use crate::algorithms::distance::{f32, f64};
 }
 
+/// Binary (bit-packed) vector distances: [`binary::hamming`],
+/// [`binary::jaccard`]. Both operate on `&[u8]` bitmaps with bit-level
+/// semantics (a slice of `n` bytes is a binary vector of `8n` dimensions)
+/// and are `no_std`-clean.
+pub mod binary {
+    pub use crate::algorithms::binary::{hamming, jaccard};
+}
+
 /// Elementwise math functions (per-element maps): `sqrt`, `clip`, `rsqrt`,
 /// `exp`, `ln`, `tanh`, `hypot`, `powi`, `abs_sub`. Each also has an
 /// allocation-free `_into` variant
