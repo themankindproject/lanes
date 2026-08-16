@@ -707,3 +707,161 @@ proptest! {
         );
     }
 }
+
+/// Strategy for divergence inputs: strictly positive and bounded away from
+/// zero so `ln(p/q)` stays finite and the summation-order tolerance is
+/// meaningful. Magnitudes keep 512-term sums far from overflow.
+fn positive_f32_vec() -> impl Strategy<Value = Vec<f32>> {
+    proptest::collection::vec(1e-3_f32..10.0, 0..512)
+}
+
+/// `f64` twin of [`positive_f32_vec`].
+fn positive_f64_vec() -> impl Strategy<Value = Vec<f64>> {
+    proptest::collection::vec(1e-6_f64..10.0, 0..512)
+}
+
+/// Tolerance for the divergence properties: the SIMD and naive results use
+/// the same term formula but (a) sum in different orders and (b) use
+/// different ≤1-ulp `ln` implementations (crate fdlibm vs libm), so each
+/// term can differ by ~2 ulp of its magnitude before summation. Bound the
+/// accumulated difference by `2^-23 * Σ|term|` with slack, plus an absolute
+/// floor for near-zero results.
+fn divergence_tol_f32(term_abs_sum: f64) -> f64 {
+    term_abs_sum * 2_f64.powi(-23) * 16.0 + 1e-6
+}
+
+proptest! {
+    #[test]
+    fn prop_kl_divergence_matches_naive(p in positive_f32_vec()) {
+        let q: Vec<f32> = p.iter().rev().copied().collect();
+        let got = lanes::distance::f32::kl_divergence(&p, &q).unwrap();
+        let mut naive = 0.0_f32;
+        let mut term_abs = 0.0_f64;
+        for (&a, &b) in p.iter().zip(q.iter()) {
+            let t = a * (a / b).ln();
+            naive += t;
+            term_abs += f64::from(t.abs());
+        }
+        let tol = divergence_tol_f32(term_abs);
+        prop_assert!(
+            (f64::from(got) - f64::from(naive)).abs() <= tol,
+            "got {got}, naive {naive}, tol {tol}, len {}", p.len()
+        );
+    }
+}
+
+proptest! {
+    #[test]
+    fn prop_js_divergence_matches_naive(p in positive_f32_vec()) {
+        let q: Vec<f32> = p.iter().rev().copied().collect();
+        let got = lanes::distance::f32::js_divergence(&p, &q).unwrap();
+        let mut naive = 0.0_f32;
+        let mut term_abs = 0.0_f64;
+        for (&a, &b) in p.iter().zip(q.iter()) {
+            let m = (a + b) * 0.5;
+            let t = a * (a / m).ln() + b * (b / m).ln();
+            naive += t;
+            term_abs += f64::from(t.abs());
+        }
+        naive *= 0.5;
+        let tol = divergence_tol_f32(term_abs);
+        prop_assert!(
+            (f64::from(got) - f64::from(naive)).abs() <= tol,
+            "got {got}, naive {naive}, tol {tol}, len {}", p.len()
+        );
+    }
+}
+
+proptest! {
+    #[test]
+    fn prop_js_divergence_symmetric(p in positive_f32_vec()) {
+        let q: Vec<f32> = p.iter().rev().copied().collect();
+        let js_pq = lanes::distance::f32::js_divergence(&p, &q).unwrap();
+        let js_qp = lanes::distance::f32::js_divergence(&q, &p).unwrap();
+        let tol = (f64::from(js_pq.abs()) * 1e-5) + 1e-6;
+        prop_assert!(
+            (f64::from(js_pq) - f64::from(js_qp)).abs() <= tol,
+            "js(p,q)={js_pq} vs js(q,p)={js_qp}"
+        );
+    }
+}
+
+proptest! {
+    #[test]
+    fn prop_divergence_self_is_zero(p in positive_f32_vec()) {
+        // Every term is p·ln(1) = 0 exactly (ln(1) = 0 in fdlibm), so the
+        // result is exactly 0.0 regardless of summation order.
+        prop_assert_eq!(lanes::distance::f32::kl_divergence(&p, &p), Ok(0.0));
+        prop_assert_eq!(lanes::distance::f32::js_divergence(&p, &p), Ok(0.0));
+    }
+}
+
+proptest! {
+    #[test]
+    fn prop_divergence_nonnegative(p in positive_f32_vec()) {
+        let q: Vec<f32> = p.iter().rev().copied().collect();
+        let kl = lanes::distance::f32::kl_divergence(&p, &q).unwrap();
+        let js = lanes::distance::f32::js_divergence(&p, &q).unwrap();
+        // KL >= 0 up to the summation/ln tolerance; JS >= 0 likewise.
+        prop_assert!(kl > -1e-4, "kl = {kl}");
+        prop_assert!(js >= -1e-6, "js = {js}");
+    }
+}
+
+proptest! {
+    #[test]
+    fn prop_kl_divergence_f64_matches_naive(p in positive_f64_vec()) {
+        let q: Vec<f64> = p.iter().rev().copied().collect();
+        let got = lanes::distance::f64::kl_divergence(&p, &q).unwrap();
+        let mut naive = 0.0_f64;
+        let mut term_abs = 0.0_f64;
+        for (&a, &b) in p.iter().zip(q.iter()) {
+            let t = a * (a / b).ln();
+            naive += t;
+            term_abs += t.abs();
+        }
+        let tol = term_abs * 2_f64.powi(-48) * 16.0 + 1e-12;
+        prop_assert!(
+            (got - naive).abs() <= tol,
+            "got {got}, naive {naive}, tol {tol}, len {}", p.len()
+        );
+    }
+}
+
+proptest! {
+    #[test]
+    fn prop_js_divergence_f64_matches_naive(p in positive_f64_vec()) {
+        let q: Vec<f64> = p.iter().rev().copied().collect();
+        let got = lanes::distance::f64::js_divergence(&p, &q).unwrap();
+        let mut naive = 0.0_f64;
+        let mut term_abs = 0.0_f64;
+        for (&a, &b) in p.iter().zip(q.iter()) {
+            let m = (a + b) * 0.5;
+            let t = a * (a / m).ln() + b * (b / m).ln();
+            naive += t;
+            term_abs += t.abs();
+        }
+        naive *= 0.5;
+        let tol = term_abs * 2_f64.powi(-48) * 16.0 + 1e-12;
+        prop_assert!(
+            (got - naive).abs() <= tol,
+            "got {got}, naive {naive}, tol {tol}, len {}", p.len()
+        );
+    }
+}
+
+proptest! {
+    #[test]
+    fn prop_divergence_f64_self_zero_and_symmetric(p in positive_f64_vec()) {
+        let q: Vec<f64> = p.iter().rev().copied().collect();
+        prop_assert_eq!(lanes::distance::f64::kl_divergence(&p, &p), Ok(0.0));
+        prop_assert_eq!(lanes::distance::f64::js_divergence(&p, &p), Ok(0.0));
+        let js_pq = lanes::distance::f64::js_divergence(&p, &q).unwrap();
+        let js_qp = lanes::distance::f64::js_divergence(&q, &p).unwrap();
+        let tol = js_pq.abs() * 1e-12 + 1e-15;
+        prop_assert!(
+            (js_pq - js_qp).abs() <= tol,
+            "js(p,q)={js_pq} vs js(q,p)={js_qp}"
+        );
+    }
+}
