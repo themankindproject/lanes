@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lanes — interactive benchmarks</title>
+<meta name="description" content="Interactive benchmark charts for the lanes SIMD crate: speedup bars, a log-scale regime map, and the erf accuracy curve. f32, n=65536, AVX-512F, i5-1135G7.">
+<script>
+(function () {
+  var t = localStorage.getItem("lanes-theme");
+  if (t !== "dark" && t !== "light") {
+    t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  document.documentElement.dataset.theme = t;
+})();
+</script>
+<style>
+/* ── tokens ─────────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+  --paper: #faf7f2;
+  --ink: #191713;
+  --muted: #6e6759;
+  --faint: #9a9284;
+  --line: #e6e0d4;
+  --line-strong: #d5cdbb;
+  --accent: #b4502a;
+  --code-bg: #f4f0e7;
+  --row-hover: rgba(0, 0, 0, 0.018);
+  --serif: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  --measure: 62ch;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #16130e;
+  --ink: #ece7dc;
+  --muted: #a59b89;
+  --faint: #7d7466;
+  --line: #2a251c;
+  --line-strong: #3b3427;
+  --accent: #d9814f;
+  --code-bg: #1d1912;
+  --row-hover: rgba(255, 255, 255, 0.035);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+code, pre, .mono { font-family: var(--mono); }
+.wrap { max-width: 920px; margin: 0 auto; padding: 0 28px; }
+p { max-width: var(--measure); }
+
+/* ── nav ────────────────────────────────────────────────── */
+nav { border-bottom: 1px solid var(--line); }
+.nav-inner { display: flex; align-items: baseline; gap: 24px; padding: 20px 0; }
+.brand { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--ink); letter-spacing: -0.01em; }
+.brand:hover { text-decoration: none; }
+.brand .caret { color: var(--accent); }
+.nav-right { margin-left: auto; display: flex; align-items: baseline; gap: 22px; }
+.nav-links { display: flex; gap: 22px; }
+#theme-toggle {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+  letter-spacing: 0.02em;
+}
+#theme-toggle:hover { color: var(--accent); }
+.nav-links a {
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.nav-links a:hover { color: var(--ink); text-decoration: none; }
+@media (max-width: 720px) { .nav-links { display: none; } }
+
+/* ── hero ───────────────────────────────────────────────── */
+.hero { padding: 72px 0 48px; }
+.kicker {
+  font-family: var(--mono); font-size: 12px; color: var(--accent);
+  letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 18px;
+}
+h1 {
+  font-family: var(--serif);
+  font-size: clamp(32px, 5vw, 50px);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+  max-width: 22ch;
+  text-wrap: balance;
+}
+.lede { margin-top: 22px; font-size: 16.5px; color: var(--muted); max-width: 60ch; }
+.lede strong { color: var(--ink); font-weight: 600; }
+.lede code { font-size: 13.5px; background: var(--code-bg); padding: 1px 6px; border-radius: 3px; color: var(--ink); }
+
+/* ── sections ───────────────────────────────────────────── */
+section { padding: 56px 0; border-top: 1px solid var(--line); }
+.sec-head { display: flex; align-items: baseline; gap: 18px; margin-bottom: 12px; }
+.sec-head .idx { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+h2 { font-family: var(--serif); font-size: 26px; font-weight: 500; letter-spacing: -0.01em; }
+.sec-sub { color: var(--muted); margin-bottom: 30px; font-size: 15px; max-width: var(--measure); }
+.sec-sub code { font-size: 13px; background: var(--code-bg); padding: 1px 6px; border-radius: 3px; color: var(--ink); }
+
+/* ── controls ───────────────────────────────────────────── */
+.controls {
+  display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: center;
+  padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  margin-bottom: 8px;
+}
+.ctl-group { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.ctl-label { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--faint); }
+.ctl-group button {
+  background: none; border: none; padding: 0;
+  font-family: var(--mono); font-size: 12.5px; color: var(--faint);
+  cursor: pointer; letter-spacing: 0.02em;
+}
+.ctl-group button:hover { color: var(--ink); }
+.ctl-group button.on { color: var(--accent); border-bottom: 1px solid var(--accent); padding-bottom: 2px; }
+
+/* ── chart frame ────────────────────────────────────────── */
+.chart { position: relative; margin-top: 24px; }
+.chart-svg { width: 100%; height: auto; display: block; }
+.grid { stroke: var(--line); stroke-width: 1; }
+.axis { stroke: var(--line-strong); stroke-width: 1; }
+.tick { fill: var(--faint); font-family: var(--mono); font-size: 10px; }
+.axis-label { fill: var(--faint); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; }
+.parity { stroke: var(--faint); stroke-width: 1; stroke-dasharray: 4 4; }
+
+/* ── tooltip ────────────────────────────────────────────── */
+#tip {
+  position: fixed; z-index: 50; pointer-events: none;
+  background: var(--paper); border: 1px solid var(--line-strong);
+  padding: 8px 12px; border-radius: 3px;
+  font-family: var(--mono); font-size: 12px; color: var(--ink);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.10);
+  opacity: 0; transform: translateY(4px); transition: opacity 0.12s ease, transform 0.12s ease;
+  max-width: 280px; line-height: 1.5;
+}
+#tip.show { opacity: 1; transform: none; }
+#tip .t-fam { color: var(--faint); }
+#tip .t-val { color: var(--accent); font-weight: 600; }
+
+/* ── speedup bars ───────────────────────────────────────── */
+.bars { border-top: 1px solid var(--line); }
+.bar-row {
+  display: grid; grid-template-columns: 200px 1fr 64px;
+  gap: 16px; align-items: center;
+  padding: 7px 0; border-bottom: 1px solid var(--line);
+  cursor: default;
+}
+.bar-row:hover { background: var(--row-hover); }
+.bar-name {
+  font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bar-track { position: relative; height: 12px; }
+.bar-fill {
+  position: absolute; left: 0; top: 3px; height: 6px; width: 100%;
+  transform-origin: left center; transform: scaleX(0);
+  transition: transform 0.8s cubic-bezier(0.22, 0.61, 0.36, 1);
+  background: var(--accent);
+}
+.bar-fill.slow { background: var(--line-strong); }
+.bar-val { font-family: var(--mono); font-size: 12.5px; text-align: right; color: var(--faint); }
+.bar-val.win { color: var(--ink); font-weight: 600; }
+@media (max-width: 640px) { .bar-row { grid-template-columns: 120px 1fr 52px; gap: 10px; } }
+
+/* ── scatter ────────────────────────────────────────────── */
+.dot { fill: var(--accent); opacity: 0.75; cursor: default; transition: opacity 0.12s ease; }
+.dot:hover { opacity: 1; }
+.dot.slow { fill: var(--faint); }
+
+/* ── erf plot ───────────────────────────────────────────── */
+.erf-svg { cursor: crosshair; }
+.erf-curve { stroke: var(--accent); stroke-width: 2; fill: none; }
+.erf-cross { stroke: var(--faint); stroke-width: 1; stroke-dasharray: 3 3; }
+.erf-dot { fill: var(--accent); }
+.erf-readout {
+  position: absolute; top: 10px; left: 10px;
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+  background: var(--paper); border: 1px solid var(--line);
+  padding: 3px 10px; border-radius: 3px;
+}
+
+/* ── tables ─────────────────────────────────────────────── */
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th {
+  text-align: left;
+  font-family: var(--mono); font-size: 11px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--faint);
+  padding: 0 16px 12px 0;
+  border-bottom: 1px solid var(--line-strong);
+}
+td { padding: 11px 16px 11px 0; border-bottom: 1px solid var(--line); color: var(--muted); vertical-align: top; }
+td code { font-size: 13px; color: var(--ink); }
+th.num, td.num { text-align: right; font-family: var(--mono); font-size: 13px; }
+td.num { color: var(--ink); }
+tr:last-child td { border-bottom: none; }
+tbody tr { transition: background 0.12s ease; }
+tbody tr:hover { background: var(--row-hover); }
+.fam { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+.speedup { font-family: var(--mono); font-size: 13px; color: var(--faint); }
+.speedup.win { color: var(--ink); font-weight: 600; }
+
+/* note */
+.note {
+  margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line);
+  font-size: 13.5px; color: var(--faint); max-width: 76ch;
+}
+.note strong { color: var(--muted); font-weight: 600; }
+.note code { font-size: 12px; color: var(--muted); }
+
+/* ── footer ─────────────────────────────────────────────── */
+footer { border-top: 1px solid var(--line); padding: 36px 0 64px; }
+footer .wrap {
+  display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: baseline;
+  font-family: var(--mono); font-size: 12px; color: var(--faint);
+}
+footer .links { margin-left: auto; display: flex; gap: 22px; }
+footer a { color: var(--muted); }
+footer a:hover { color: var(--accent); }
+@media (max-width: 640px) { footer .links { margin-left: 0; } }
+
+/* reveals */
+.js-reveal { opacity: 0; transform: translateY(14px); transition: opacity 0.65s ease, transform 0.65s ease; }
+.js-reveal.in { opacity: 1; transform: none; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="brand" href="index.html">lanes<span class="caret">::</span></a>
+    <div class="nav-right">
+      <div class="nav-links">
+        <a href="index.html">← landing</a>
+        <a href="#bars">speedup</a>
+        <a href="#regime">regime map</a>
+        <a href="#erf">erf</a>
+        <a href="#table">table</a>
+        <a href="https://docs.rs/lanes">docs.rs ↗</a>
+      </div>
+      <button id="theme-toggle" aria-label="Switch color theme">dark</button>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div class="kicker">Interactive benchmarks</div>
+    <h1>Every public function, measured — and pictured.</h1>
+    <p class="lede">
+      <strong>f32, n = 65 536, AVX-512F</strong> backend on an i5-1135G7, release build.
+      “naive” is the plain iterator expression compiled with identical settings. Filter, sort,
+      and hover for exact numbers. Reproduce with <code>cargo run --release --example readme_bench_all</code>.
+    </p>
+  </div>
+</header>
+
+<section id="bars">
+  <div class="wrap">
+    <div class="sec-head"><span class="idx">01</span><h2>Speedup over naive</h2></div>
+    <p class="sec-sub">
+      One bar per function, ordered by the control below. Accent bars are ≥ 2× wins;
+      muted bars are the memory-bandwidth-bound ~1× regime and the two honest
+      <code>erf</code>/<code>erfc</code> losses. Hover any bar for exact timings.
+    </p>
+    <div class="controls">
+      <div class="ctl-group" id="fam-filter">
+        <span class="ctl-label">family</span>
+        <button class="on" data-fam="all">all</button>
+        <button data-fam="stats">stats</button>
+        <button data-fam="distance">distance</button>
+        <button data-fam="binary">binary</button>
+        <button data-fam="math">math</button>
+        <button data-fam="special">special</button>
+        <button data-fam="ml">ml</button>
+      </div>
+      <div class="ctl-group" id="sort-ctl">
+        <span class="ctl-label">sort</span>
+        <button class="on" data-sort="speedup">speedup</button>
+        <button data-sort="lanes">lanes µs</button>
+        <button data-sort="naive">naive µs</button>
+      </div>
+    </div>
+    <div class="bars" id="bars-chart"></div>
+  </div>
+</section>
+
+<section id="regime">
+  <div class="wrap">
+    <div class="sec-head"><span class="idx">02</span><h2>The regime map</h2></div>
+    <p class="sec-sub">
+      Naive time (log scale) on the x-axis, speedup on the y-axis. The dashed line is parity.
+      Left cluster: trivial elementwise ops where the compiler auto-vectorizes the baseline too,
+      so both sit at ~1×. Right cluster: compute-heavy kernels where lanes' vectorized
+      approximations pull far ahead. Hover a point for the full row.
+    </p>
+    <div class="chart" id="scatter-chart"></div>
+  </div>
+</section>
+
+<section id="erf">
+  <div class="wrap">
+    <div class="sec-head"><span class="idx">03</span><h2>The erf accuracy curve</h2></div>
+    <p class="sec-sub">
+      <code>erf</code> ≤ 1 ulp in f64, perfectly rounded in f32. Hover to read values off the
+      curve — the same function the benchmark above measures.
+    </p>
+    <div class="chart erf-wrap">
+      <div class="erf-readout" id="erf-readout">hover the curve</div>
+      <div id="erf-fig"></div>
+    </div>
+  </div>
+</section>
+
+<section id="table">
+  <div class="wrap">
+    <div class="sec-head"><span class="idx">04</span><h2>The full table</h2></div>
+    <p class="sec-sub">All 54 rows, following the family filter above.</p>
+    <div class="table-scroll">
+      <table id="bench-table">
+        <thead>
+          <tr><th>family</th><th>function</th><th class="num">lanes</th><th class="num">naive</th><th class="num">speedup</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="note">
+      <strong>Two regimes, read honestly.</strong> Reductions and transcendentals win 3–25×:
+      LLVM can't auto-vectorize FP reductions without fast-math, so the naive baseline stays
+      scalar, and compute-heavy maps are dominated by vectorized polynomial approximations.
+      Trivial elementwise ops (<code>relu</code>, <code>clip</code>, <code>sqrt</code>) sit at ~1×
+      because the compiler auto-vectorizes the baseline too — both are memory-bandwidth bound.
+      <code>erf</code>/<code>erfc</code> have no <code>std</code> baseline: their naive column is the
+      Abramowitz–Stegun 7.1.26 polynomial, a speed reference of a far less accurate algorithm,
+      and the bench distribution is tail-heavy, where lanes pays two correctly-rounded vector
+      <code>exp</code>s to hold its accuracy contract (2–3× faster on small/mid-heavy inputs).
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>lanes v0.1.2 · MIT OR Apache-2.0 · MSRV 1.89</span>
+    <div class="links">
+      <a href="index.html">landing</a>
+      <a href="https://crates.io/crates/lanes">crates.io</a>
+      <a href="https://docs.rs/lanes">docs.rs</a>
+      <a href="https://github.com/themankindproject/lanes">github</a>
+      <a href="https://codecov.io/gh/themankindproject/lanes">coverage</a>
+    </div>
+  </div>
+</footer>
+
+<div id="tip" role="status"></div>
+
+<script>
+// benchmark data — from README.md (f32, n=65536, AVX-512F, i5-1135G7)
+const BENCH = [
+  ["stats","sum",6.2,146.6,23.8],["stats","prod",9.3,146.8,15.9],
+  ["stats","min",11.6,295.5,25.4],["stats","max",11.6,292.9,25.2],
+  ["stats","argmax",18.8,147.4,7.8],["stats","argmin",18.2,148.7,8.2],
+  ["stats","sum_sq",7.2,147.8,20.4],["stats","mean",6.4,147.7,23.0],
+  ["stats","variance",25.4,295.7,11.6],["stats","std_dev",24.0,293.8,12.3],
+  ["stats","geometric_mean",142.3,425.1,3.0],["stats","dot",12.3,146.9,11.9],
+  ["stats","count_zero",25.1,26.9,1.1],["stats","count_nan",25.1,26.2,1.0],
+  ["stats","count_infinite",26.1,33.5,1.3],
+  ["distance","l1_norm",6.9,147.4,21.5],["distance","l2_norm",6.9,147.3,21.4],
+  ["distance","max_norm",11.6,289.5,25.0],["distance","squared_distance",12.5,147.0,11.8],
+  ["distance","kl_divergence",104.4,538.9,5.2],["distance","js_divergence",223.5,1307.1,5.8],
+  ["binary","hamming",4.7,122.5,25.8],["binary","jaccard",8.6,239.9,28.0],
+  ["stats","i8::dot",5.2,47.4,9.1],["stats","i8::sum",4.3,21.7,5.1],
+  ["stats","i8::sum_sq",4.8,37.0,7.7],["stats","i8::min",1.3,5.3,4.0],
+  ["stats","i8::max",1.3,5.3,4.0],["stats","i8::count_zero",8.6,48.4,5.6],
+  ["distance","i8::l1_norm",4.9,48.5,9.9],["distance","i8::max_norm",2.6,3.0,1.1],
+  ["distance","i8::squared_distance",6.1,66.8,10.9],
+  ["math","sqrt",27.6,27.6,1.0],["math","clip",11.3,14.0,1.2],
+  ["math","rsqrt",50.5,55.0,1.1],["math","exp",95.1,355.9,3.7],
+  ["math","ln",87.7,452.4,5.2],["math","tanh",146.7,774.4,5.3],
+  ["special","erf",782.8,488.0,0.6],["special","erfc",763.4,491.1,0.6],
+  ["math","hypot",50.5,367.2,7.3],["math","powi",11.3,12.7,1.1],
+  ["math","abs_sub",16.6,20.4,1.2],
+  ["ml","softmax",140.6,845.6,6.0],["ml","log_softmax",143.5,690.8,4.8],
+  ["ml","sigmoid",114.6,372.5,3.3],["ml","silu",113.2,372.4,3.3],
+  ["ml","gelu",155.0,1140.9,7.4],["ml","relu",10.9,12.5,1.2],
+  ["ml","softplus",350.8,1492.2,4.3],["ml","rms_norm",20.1,159.4,7.9],
+  ["ml","layer_norm",28.1,307.0,10.9],["ml","cosine_similarity",25.9,439.4,17.0],
+  ["ml","logsumexp",134.8,707.1,5.2]
+];
+
+const state = { fam: "all", sort: "speedup" };
+const tip = document.getElementById("tip");
+
+function fmt(x) { return x.toFixed(1) + " µs"; }
+function rows() { return BENCH.filter(r => state.fam === "all" || r[0] === state.fam); }
+function sorted() {
+  const key = state.sort === "lanes" ? 2 : state.sort === "naive" ? 3 : 4;
+  return rows().slice().sort((a, b) =>
+    state.sort === "speedup" ? b[key] - a[key] : a[key] - b[key]);
+}
+
+// ── tooltip ──
+function showTip(html, x, y) {
+  tip.innerHTML = html;
+  tip.classList.add("show");
+  const pad = 14;
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let tx = x + pad, ty = y + pad;
+  if (tx + w > innerWidth - 8) tx = x - w - pad;
+  if (ty + h > innerHeight - 8) ty = y - h - pad;
+  tip.style.left = tx + "px";
+  tip.style.top = ty + "px";
+}
+function hideTip() { tip.classList.remove("show"); }
+function tipHtml(r) {
+  return `<span class="t-fam">${r[0]}::</span>${r[1]}<br>` +
+    `lanes <span class="t-val">${fmt(r[2])}</span> · naive ${fmt(r[3])}<br>` +
+    `speedup <span class="t-val">${r[4].toFixed(1)}×</span>`;
+}
+
+// ── speedup bars ──
+const barsEl = document.getElementById("bars-chart");
+let barsSeen = false;
+function renderBars() {
+  const data = sorted();
+  const maxSp = Math.max(...data.map(r => r[4]));
+  barsEl.innerHTML = data
+    .map((r, i) => `<div class="bar-row" data-i="${BENCH.indexOf(r)}">
+      <div class="bar-name" title="${r[0]}::${r[1]}">${r[0]}::${r[1]}</div>
+      <div class="bar-track">
+        <div class="bar-fill${r[4] < 2 ? " slow" : ""}" data-w="${(r[4] / maxSp) * 100}" style="transition-delay:${Math.min(i * 22, 600)}ms"></div>
+      </div>
+      <div class="bar-val${r[4] >= 2 ? " win" : ""}">${r[4].toFixed(1)}×</div>
+    </div>`).join("");
+  barsEl.querySelectorAll(".bar-row").forEach(row => {
+    const r = BENCH[+row.dataset.i];
+    row.addEventListener("mousemove", e => showTip(tipHtml(r), e.clientX, e.clientY));
+    row.addEventListener("mouseleave", hideTip);
+  });
+  if (barsSeen) requestAnimationFrame(() => requestAnimationFrame(growBars));
+}
+function growBars() {
+  barsEl.querySelectorAll("[data-w]").forEach(el => {
+    el.style.transform = "scaleX(" + (parseFloat(el.dataset.w) / 100) + ")";
+  });
+}
+new IntersectionObserver((entries, ob) => {
+  entries.forEach(en => { if (en.isIntersecting) { barsSeen = true; growBars(); ob.disconnect(); } });
+}, { threshold: 0.1 }).observe(barsEl);
+
+// ── regime scatter ──
+const scatterEl = document.getElementById("scatter-chart");
+function renderScatter() {
+  const W = 860, H = 380, ML = 52, MR = 20, MT = 16, MB = 44;
+  const iw = W - ML - MR, ih = H - MT - MB;
+  const XMIN = 1, XMAX = 2000, YMIN = 0, YMAX = 30;
+  const lx = x => ML + ((Math.log10(x) - Math.log10(XMIN)) / (Math.log10(XMAX) - Math.log10(XMIN))) * iw;
+  const ly = y => MT + ih - ((y - YMIN) / (YMAX - YMIN)) * ih;
+  let s = `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Scatter plot of speedup versus naive time on a log scale">`;
+  // x grid at powers of 10
+  [1, 10, 100, 1000].forEach(gx => {
+    s += `<line class="grid" x1="${lx(gx)}" y1="${MT}" x2="${lx(gx)}" y2="${MT + ih}"/>`;
+    s += `<text class="tick" x="${lx(gx)}" y="${MT + ih + 18}" text-anchor="middle">${gx}</text>`;
+  });
+  // y grid
+  for (let gy = 0; gy <= 30; gy += 5) {
+    s += `<line class="grid" x1="${ML}" y1="${ly(gy)}" x2="${ML + iw}" y2="${ly(gy)}"/>`;
+    s += `<text class="tick" x="${ML - 8}" y="${ly(gy) + 3.5}" text-anchor="end">${gy}×</text>`;
+  }
+  // parity line at 1×
+  s += `<line class="parity" x1="${ML}" y1="${ly(1)}" x2="${ML + iw}" y2="${ly(1)}"/>`;
+  s += `<text class="tick" x="${ML + iw - 4}" y="${ly(1) - 6}" text-anchor="end">parity 1×</text>`;
+  // axes
+  s += `<line class="axis" x1="${ML}" y1="${MT + ih}" x2="${ML + iw}" y2="${MT + ih}"/>`;
+  s += `<line class="axis" x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + ih}"/>`;
+  s += `<text class="axis-label" x="${ML + iw / 2}" y="${H - 8}" text-anchor="middle">naive time, µs (log)</text>`;
+  s += `<text class="axis-label" x="14" y="${MT + ih / 2}" text-anchor="middle" transform="rotate(-90 14 ${MT + ih / 2})">speedup</text>`;
+  // points
+  rows().forEach(r => {
+    const cx = lx(Math.max(XMIN, r[3])), cy = ly(Math.min(YMAX, r[4]));
+    s += `<circle class="dot${r[4] < 2 ? " slow" : ""}" data-i="${BENCH.indexOf(r)}" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4.5"/>`;
+  });
+  s += `</svg>`;
+  scatterEl.innerHTML = s;
+  scatterEl.querySelectorAll(".dot").forEach(d => {
+    const r = BENCH[+d.dataset.i];
+    d.addEventListener("mousemove", e => { showTip(tipHtml(r), e.clientX, e.clientY); d.setAttribute("r", 6.5); });
+    d.addEventListener("mouseleave", () => { hideTip(); d.setAttribute("r", 4.5); });
+  });
+}
+
+// ── erf curve ──
+(function buildErf() {
+  const W = 860, H = 320, XMIN = -3.5, XMAX = 3.5, YMIN = -1.25, YMAX = 1.25;
+  const px = x => ((x - XMIN) / (XMAX - XMIN)) * W;
+  const py = y => H - ((y - YMIN) / (YMAX - YMIN)) * H;
+  function erf(x) {
+    const sg = x < 0 ? -1 : 1;
+    x = Math.abs(x);
+    const t = 1 / (1 + 0.3275911 * x);
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return sg * y;
+  }
+  const pts = [];
+  for (let i = 0; i <= 280; i++) {
+    const x = XMIN + (i / 280) * (XMAX - XMIN);
+    pts.push(px(x).toFixed(1) + "," + py(erf(x)).toFixed(1));
+  }
+  let s = `<svg class="chart-svg erf-svg" id="erf-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Plot of the error function erf from x = -3.5 to 3.5">`;
+  for (let gx = -3; gx <= 3; gx++) s += `<line class="grid" x1="${px(gx)}" y1="0" x2="${px(gx)}" y2="${H}"/>`;
+  [-1, -0.5, 0.5, 1].forEach(gy => { s += `<line class="grid" x1="0" y1="${py(gy)}" x2="${W}" y2="${py(gy)}"/>`; });
+  s += `<line class="axis" x1="0" y1="${py(0)}" x2="${W}" y2="${py(0)}"/>`;
+  s += `<line class="axis" x1="${px(0)}" y1="0" x2="${px(0)}" y2="${H}"/>`;
+  for (let gx = -3; gx <= 3; gx++) if (gx !== 0) s += `<text class="tick" x="${px(gx)}" y="${py(0) + 14}" text-anchor="middle">${gx}</text>`;
+  [-1, 1].forEach(gy => { s += `<text class="tick" x="${px(0) + 6}" y="${py(gy) - 5}">${gy}</text>`; });
+  s += `<path class="erf-curve" d="M${pts.join(" L")}"/>`;
+  s += `<line class="erf-cross" id="erf-cross" x1="0" y1="0" x2="0" y2="${H}" visibility="hidden"/>`;
+  s += `<circle class="erf-dot" id="erf-dot" r="3.5" visibility="hidden"/>`;
+  s += `</svg>`;
+  document.getElementById("erf-fig").innerHTML = s;
+  const svg = document.getElementById("erf-svg");
+  const cross = document.getElementById("erf-cross");
+  const dot = document.getElementById("erf-dot");
+  const readout = document.getElementById("erf-readout");
+  svg.addEventListener("mousemove", e => {
+    const r = svg.getBoundingClientRect();
+    const x = Math.max(XMIN, Math.min(XMAX, XMIN + ((e.clientX - r.left) / r.width) * (XMAX - XMIN)));
+    const y = erf(x);
+    cross.setAttribute("x1", px(x)); cross.setAttribute("x2", px(x));
+    cross.setAttribute("visibility", "visible");
+    dot.setAttribute("cx", px(x)); dot.setAttribute("cy", py(y));
+    dot.setAttribute("visibility", "visible");
+    readout.textContent = "erf(" + x.toFixed(3) + ") = " + y.toFixed(6);
+  });
+  svg.addEventListener("mouseleave", () => {
+    cross.setAttribute("visibility", "hidden");
+    dot.setAttribute("visibility", "hidden");
+    readout.textContent = "hover the curve";
+  });
+})();
+
+// ── full table ──
+function renderTable() {
+  const tb = document.querySelector("#bench-table tbody");
+  tb.innerHTML = rows()
+    .map(r => `<tr>
+      <td class="fam">${r[0]}</td>
+      <td><code>${r[1]}</code></td>
+      <td class="num">${fmt(r[2])}</td>
+      <td class="num">${fmt(r[3])}</td>
+      <td class="num"><span class="speedup${r[4] >= 2 ? " win" : ""}">${r[4].toFixed(1)}×</span></td>
+    </tr>`).join("");
+}
+
+// ── controls ──
+document.querySelectorAll("#fam-filter button").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#fam-filter button").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+    state.fam = b.dataset.fam;
+    renderAll();
+  });
+});
+document.querySelectorAll("#sort-ctl button").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#sort-ctl button").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+    state.sort = b.dataset.sort;
+    renderBars();
+  });
+});
+
+function renderAll() { renderBars(); renderScatter(); renderTable(); }
+renderAll();
+
+// ── theme toggle ──
+const themeToggle = document.getElementById("theme-toggle");
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  themeToggle.textContent = t === "dark" ? "light" : "dark";
+  themeToggle.setAttribute("aria-label", "Switch to " + (t === "dark" ? "light" : "dark") + " theme");
+}
+applyTheme(document.documentElement.dataset.theme || "light");
+themeToggle.addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  localStorage.setItem("lanes-theme", next);
+  applyTheme(next);
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", e => {
+  if (!localStorage.getItem("lanes-theme")) applyTheme(e.matches ? "dark" : "light");
+});
+
+// ── scroll reveals ──
+(function reveals() {
+  const els = document.querySelectorAll("section");
+  els.forEach(el => el.classList.add("js-reveal"));
+  const ob = new IntersectionObserver(entries => {
+    entries.forEach(en => { if (en.isIntersecting) { en.target.classList.add("in"); ob.unobserve(en.target); } });
+  }, { threshold: 0.06 });
+  els.forEach(el => ob.observe(el));
+})();
+</script>
+</body>
+</html>

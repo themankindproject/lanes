@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lanes — runtime-dispatched SIMD numerical kernels for Rust</title>
+<meta name="description" content="High-performance numerical kernels with runtime SIMD dispatch: write once, lanes picks the best backend for the CPU. Zero dependencies, no_std-friendly, nothing panics.">
+<style>
+/* ── tokens ─────────────────────────────────────────────── */
+:root {
+  --bg: #0b0e13;
+  --surface: #11151d;
+  --surface-2: #161b25;
+  --border: #232a37;
+  --border-strong: #2f3846;
+  --ink: #e8ecf3;
+  --ink-2: #9aa4b5;
+  --ink-3: #6b7688;
+  --accent: #f5a623;
+  --accent-ink: #1a1204;
+  --success: #3fb950;
+  --warning: #d29922;
+  --danger: #f85149;
+  --info: #58a6ff;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --radius: 10px;
+  --maxw: 1080px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--info); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre, .mono { font-family: var(--mono); }
+.wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+section { padding: 64px 0; border-top: 1px solid var(--border); }
+h2 { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; margin-bottom: 8px; }
+.sub { color: var(--ink-2); margin-bottom: 28px; max-width: 70ch; }
+
+/* ── nav ────────────────────────────────────────────────── */
+nav {
+  position: sticky; top: 0; z-index: 10;
+  background: rgba(11, 14, 19, 0.88);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.nav-inner { display: flex; align-items: center; gap: 20px; height: 56px; }
+.brand { font-family: var(--mono); font-weight: 700; font-size: 17px; color: var(--ink); }
+.brand:hover { text-decoration: none; }
+.brand .caret { color: var(--accent); }
+.nav-links { display: flex; gap: 18px; margin-left: auto; font-size: 14px; }
+.nav-links a { color: var(--ink-2); }
+.nav-links a:hover { color: var(--ink); text-decoration: none; }
+@media (max-width: 760px) { .nav-links { display: none; } }
+
+/* ── hero ───────────────────────────────────────────────── */
+.hero { border-top: none; padding: 88px 0 72px; position: relative; overflow: hidden; }
+.hero::before {
+  content: "";
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 46px,
+    rgba(245, 166, 35, 0.045) 46px 48px
+  );
+  mask-image: linear-gradient(180deg, rgba(0,0,0,0.9), transparent 75%);
+  pointer-events: none;
+}
+.hero .wrap { position: relative; }
+h1 {
+  font-family: var(--mono);
+  font-size: clamp(44px, 7vw, 72px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+h1 .caret { color: var(--accent); }
+.tagline { font-size: 19px; color: var(--ink-2); margin: 20px 0 28px; max-width: 62ch; }
+.tagline strong { color: var(--ink); font-weight: 600; }
+.pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 32px; }
+
+/* pills — canvas vocabulary */
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+  padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--ink-2); background: var(--surface);
+  white-space: nowrap;
+}
+.pill.success { color: var(--success); border-color: rgba(63,185,80,0.4); background: rgba(63,185,80,0.08); }
+.pill.warning { color: var(--warning); border-color: rgba(210,153,34,0.4); background: rgba(210,153,34,0.08); }
+.pill.danger  { color: var(--danger);  border-color: rgba(248,81,73,0.4);  background: rgba(248,81,73,0.08); }
+.pill.info    { color: var(--info);    border-color: rgba(88,166,255,0.4); background: rgba(88,166,255,0.08); }
+.pill.accent  { color: var(--accent);  border-color: rgba(245,166,35,0.45); background: rgba(245,166,35,0.08); }
+
+/* stats — canvas Stat cards */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 8px; }
+@media (max-width: 760px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+.stat {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px 18px;
+}
+.stat .v { font-family: var(--mono); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
+.stat .v.success { color: var(--success); }
+.stat .v.accent { color: var(--accent); }
+.stat .v.info { color: var(--info); }
+.stat .l { font-size: 13px; color: var(--ink-3); margin-top: 2px; }
+
+/* install row */
+.install {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 16px; margin-top: 28px;
+  font-family: var(--mono); font-size: 14px;
+}
+.install .dollar { color: var(--ink-3); user-select: none; }
+.install button {
+  margin-left: auto; background: none; border: 1px solid var(--border-strong);
+  color: var(--ink-2); border-radius: 6px; padding: 4px 12px;
+  font-family: var(--mono); font-size: 12px; cursor: pointer;
+}
+.install button:hover { color: var(--ink); border-color: var(--ink-3); }
+
+/* ── code blocks ────────────────────────────────────────── */
+pre {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px 20px;
+  overflow-x: auto; font-size: 13.5px; line-height: 1.65;
+}
+pre .cm { color: var(--ink-3); }
+pre .kw { color: var(--info); }
+pre .fn { color: #d2a8ff; }
+pre .st { color: #a5d6ff; }
+pre .nu { color: var(--accent); }
+
+/* ── cards ──────────────────────────────────────────────── */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+@media (max-width: 900px) { .grid-3 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 640px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px;
+}
+.card h3 {
+  font-size: 15px; font-weight: 650; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.card h3 code { color: var(--accent); font-size: 14px; }
+.card p, .card li { font-size: 14px; color: var(--ink-2); }
+.card ul { padding-left: 18px; }
+.card code:not(h3 code) {
+  font-size: 12.5px; color: var(--ink);
+  background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
+}
+
+/* callout — canvas Callout */
+.callout {
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  padding: 16px 20px; font-size: 14.5px; color: var(--ink-2);
+  background: var(--surface);
+}
+.callout.info { border-color: rgba(88,166,255,0.4); background: rgba(88,166,255,0.06); }
+.callout.warning { border-color: rgba(210,153,34,0.4); background: rgba(210,153,34,0.06); }
+.callout strong { color: var(--ink); }
+
+/* ── tables ─────────────────────────────────────────────── */
+.table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th {
+  text-align: left; font-weight: 600; color: var(--ink-2);
+  padding: 10px 14px; background: var(--surface-2);
+  border-bottom: 1px solid var(--border-strong);
+  position: sticky; top: 0;
+}
+td { padding: 8px 14px; border-bottom: 1px solid var(--border); color: var(--ink-2); }
+tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--surface); }
+td.num, th.num { text-align: right; font-family: var(--mono); font-size: 12.5px; }
+td code { font-size: 12.5px; color: var(--ink); }
+tr.tone-success td:first-child { box-shadow: inset 3px 0 0 var(--success); }
+tr.tone-neutral td:first-child { box-shadow: inset 3px 0 0 var(--ink-3); }
+tr.tone-warning td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+.speedup { font-family: var(--mono); font-weight: 700; }
+.speedup.win { color: var(--success); }
+.speedup.flat { color: var(--ink-3); }
+.speedup.slow { color: var(--warning); }
+.fam { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+
+/* bench filter */
+.filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.filter-row button {
+  background: var(--surface); border: 1px solid var(--border-strong);
+  color: var(--ink-2); border-radius: 999px; padding: 5px 14px;
+  font-family: var(--mono); font-size: 12.5px; cursor: pointer;
+}
+.filter-row button:hover { color: var(--ink); }
+.filter-row button.on { color: var(--accent); border-color: rgba(245,166,35,0.5); background: rgba(245,166,35,0.08); }
+
+/* backends diagram */
+.dispatch {
+  display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
+  font-family: var(--mono); font-size: 13px;
+}
+.dispatch .node {
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  padding: 8px 14px; background: var(--surface-2); color: var(--ink);
+}
+.dispatch .node.hot { border-color: rgba(245,166,35,0.5); color: var(--accent); }
+.dispatch .arrow { color: var(--ink-3); padding: 0 12px; }
+.dispatch .fan { display: flex; flex-direction: column; gap: 6px; }
+.dispatch .fan .node { padding: 4px 12px; font-size: 12px; }
+
+footer { border-top: 1px solid var(--border); padding: 40px 0 56px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 24px; align-items: center; color: var(--ink-3); font-size: 14px; }
+footer .links { margin-left: auto; display: flex; gap: 18px; }
+@media (max-width: 640px) { footer .links { margin-left: 0; } }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top">lanes<span class="caret">::</span></a>
+    <div class="nav-links">
+      <a href="#usage">Usage</a>
+      <a href="#families">Families</a>
+      <a href="#benchmarks">Benchmarks</a>
+      <a href="#backends">Backends</a>
+      <a href="#accuracy">Accuracy</a>
+      <a href="#errors">Errors</a>
+      <a href="https://docs.rs/lanes">docs.rs ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <h1>lanes<span class="caret">::</span></h1>
+    <p class="tagline">
+      High-performance numerical kernels with <strong>runtime SIMD dispatch</strong>:
+      write once, <code class="mono">lanes</code> picks the best backend for the CPU —
+      scalar, SSE2, AVX2, AVX-512F, NEON. Zero dependencies, <code class="mono">no_std</code>-friendly,
+      and nothing panics on bad input.
+    </p>
+    <div class="pill-row">
+      <span class="pill accent">v0.1.2</span>
+      <span class="pill">MIT OR Apache-2.0</span>
+      <span class="pill info">MSRV 1.89</span>
+      <span class="pill success">0 dependencies</span>
+      <span class="pill success">no_std</span>
+      <span class="pill">forbid(unsafe_code) in the algorithm layer</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="v success">23.8×</div><div class="l">peak speedup vs naive iterator (sum, f32, n=65 536)</div></div>
+      <div class="stat"><div class="v accent">5</div><div class="l">backends, picked once at runtime and cached</div></div>
+      <div class="stat"><div class="v info">≤ 1 ulp</div><div class="l">accuracy on exp · ln · tanh · sqrt · erf (f64)</div></div>
+      <div class="stat"><div class="v">0</div><div class="l">panics — fallible kernels return Result</div></div>
+    </div>
+    <div class="install">
+      <span class="dollar">$</span>
+      <span id="install-cmd">cargo add lanes</span>
+      <button onclick="copyInstall(this)">copy</button>
+    </div>
+  </div>
+</header>
+
+<section id="usage">
+  <div class="wrap">
+    <h2>Chain kernels in the hot loop</h2>
+    <p class="sub">
+      Every function comes in <code class="mono">f32</code> and <code class="mono">f64</code> via family submodules.
+      The real value is the allocation-free <code class="mono">_into</code> form — here a
+      transformer-style activation path over one buffer set, reused across calls:
+    </p>
+<pre><span class="kw">use</span> lanes::ml::f32;
+
+<span class="kw">let</span> hidden = <span class="fn">vec!</span>[<span class="nu">0.5_f32</span>; <span class="nu">512</span>]; <span class="cm">// activations in</span>
+<span class="kw">let mut</span> normed    = <span class="fn">vec!</span>[<span class="nu">0.0_f32</span>; <span class="nu">512</span>];
+<span class="kw">let mut</span> activated = <span class="fn">vec!</span>[<span class="nu">0.0_f32</span>; <span class="nu">512</span>];
+<span class="kw">let mut</span> probs     = <span class="fn">vec!</span>[<span class="nu">0.0_f32</span>; <span class="nu">512</span>];
+
+f32::<span class="fn">layer_norm_into</span>(&amp;hidden, <span class="nu">1e-5</span>, &amp;<span class="kw">mut</span> normed).<span class="fn">unwrap</span>();
+f32::<span class="fn">gelu_into</span>(&amp;normed, &amp;<span class="kw">mut</span> activated).<span class="fn">unwrap</span>();
+f32::<span class="fn">softmax_into</span>(&amp;activated, &amp;<span class="kw">mut</span> probs).<span class="fn">unwrap</span>();
+<span class="cm">// `probs` is a valid distribution — three SIMD kernels, zero per-call</span>
+<span class="cm">// allocations, one backend picked at startup.</span></pre>
+  </div>
+</section>
+
+<section id="families">
+  <div class="wrap">
+    <h2>Six families, one dispatch</h2>
+    <p class="sub">Reductions return scalars and mostly work without <code class="mono">alloc</code>; map-style families return <code class="mono">Vec</code>s or write into your buffer via <code class="mono">_into</code>.</p>
+    <div class="grid-3">
+      <div class="card">
+        <h3><code>stats</code></h3>
+        <p><code>sum</code> <code>prod</code> <code>min</code> <code>max</code> <code>argmax</code> <code>argmin</code> <code>sum_sq</code> <code>mean</code> <code>variance</code> <code>std_dev</code> <code>geometric_mean</code> <code>dot</code> <code>count_zero</code> <code>count_nan</code> <code>count_infinite</code> — plus an <code>i8</code> submodule with exact integer ops and <code>i64</code> accumulation.</p>
+      </div>
+      <div class="card">
+        <h3><code>distance</code></h3>
+        <p><code>l1_norm</code> <code>l2_norm</code> <code>max_norm</code> <code>squared_distance</code> <code>kl_divergence</code> <code>js_divergence</code> — plus exact integer <code>i8</code> variants.</p>
+      </div>
+      <div class="card">
+        <h3><code>binary</code></h3>
+        <p><code>hamming</code> <code>jaccard</code> — bit-level distances over packed <code>&amp;[u8]</code> bitmaps: a slice of <code>n</code> bytes is a binary vector of <code>8n</code> dimensions.</p>
+      </div>
+      <div class="card">
+        <h3><code>math</code></h3>
+        <p><code>sqrt</code> <code>clip</code> <code>rsqrt</code> <code>exp</code> <code>ln</code> <code>tanh</code> <code>hypot</code> <code>powi</code> <code>abs_sub</code> — each also as <code>*_into</code>.</p>
+      </div>
+      <div class="card">
+        <h3><code>special</code> <span class="pill success">new in 0.1.2</span></h3>
+        <p><code>erf</code> <code>erfc</code> — f64: ≤ 1 ulp / ≤ 3 ulp; f32: perfectly rounded via compute-in-f64-and-round-once. Clean-room Remez coefficients fitted against an arbitrary-precision oracle.</p>
+      </div>
+      <div class="card">
+        <h3><code>ml</code></h3>
+        <p><code>softmax</code> <code>log_softmax</code> <code>sigmoid</code> <code>silu</code> <code>gelu</code> <code>relu</code> <code>softplus</code> <code>rms_norm</code> <code>layer_norm</code> <code>cosine_similarity</code> <code>logsumexp</code> — every map-style op also as <code>*_into</code>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="benchmarks">
+  <div class="wrap">
+    <h2>Benchmarks — every public function</h2>
+    <p class="sub">
+      f32, n = 65 536, AVX-512F backend on an i5-1135G7, release build. “naive” is the plain
+      iterator expression compiled with identical settings. Reproduce with
+      <code class="mono">cargo run --release --example readme_bench_all</code>.
+    </p>
+
+    <div class="callout warning" style="margin-bottom: 20px;">
+      <strong>Reading the table honestly — two regimes.</strong>
+      Reductions and transcendentals win big (3–25×): LLVM can’t auto-vectorize FP reductions
+      without fast-math, so the naive baseline stays scalar, and compute-heavy maps are dominated
+      by vectorized polynomial approximations. Trivial elementwise ops (<code class="mono">relu</code>,
+      <code class="mono">clip</code>, <code class="mono">sqrt</code>) are ~1× because the compiler
+      auto-vectorizes the baseline too — both are memory-bandwidth bound. <code class="mono">erf</code>/<code class="mono">erfc</code>
+      have no <code class="mono">std</code> baseline: their naive column is the Abramowitz–Stegun 7.1.26
+      polynomial, a <em>speed</em> reference of a far less accurate algorithm — the bench distribution
+      is tail-heavy, where lanes pays two correctly-rounded vector <code class="mono">exp</code>s to hold
+      its accuracy contract (measured 2–3× faster on small/mid-heavy inputs).
+    </div>
+
+    <div class="filter-row" id="fam-filter">
+      <button class="on" data-fam="all">all</button>
+      <button data-fam="stats">stats</button>
+      <button data-fam="distance">distance</button>
+      <button data-fam="binary">binary</button>
+      <button data-fam="math">math</button>
+      <button data-fam="special">special</button>
+      <button data-fam="ml">ml</button>
+    </div>
+
+    <div class="table-scroll">
+      <table id="bench-table">
+        <thead>
+          <tr><th>Family</th><th>Function</th><th class="num">lanes</th><th class="num">naive</th><th class="num">speedup</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="backends">
+  <div class="wrap">
+    <h2>Runtime dispatch, zero ceremony</h2>
+    <p class="sub">Detection runs once and is cached in a <code class="mono">OnceLock</code> — dispatch overhead after the first call is a single load. Unsafe SIMD code is isolated in the kernel layer behind <code class="mono">platform::supports</code> gates.</p>
+
+    <div class="dispatch">
+      <span class="node">your call</span>
+      <span class="arrow">→</span>
+      <span class="node hot">dispatch (OnceLock)</span>
+      <span class="arrow">→</span>
+      <span class="fan">
+        <span class="node">AVX-512F</span>
+        <span class="node">AVX2 + FMA</span>
+        <span class="node">SSE2</span>
+        <span class="node">NEON</span>
+        <span class="node">scalar</span>
+      </span>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Architecture</th><th>Backend</th><th>Selection</th></tr></thead>
+        <tbody>
+          <tr><td>x86-64</td><td>AVX-512F</td><td>runtime detection (<code>avx512f</code>)</td></tr>
+          <tr><td>x86-64</td><td>AVX2 + FMA</td><td>runtime detection (<code>avx2</code> + <code>fma</code>)</td></tr>
+          <tr><td>x86-64</td><td>SSE2</td><td>runtime detection; mandatory x86-64 baseline</td></tr>
+          <tr><td>aarch64</td><td>NEON</td><td>mandatory on ARMv8-A</td></tr>
+          <tr><td>anything else</td><td>Scalar</td><td>always available</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid-2" style="margin-top: 16px;">
+      <div class="card">
+        <h3>Force a backend</h3>
+        <p><code>LANES_BACKEND=scalar|sse2|avx2|avx512|neon</code> pins the backend for benchmarking or debugging; <code>cargo run --example dispatch_info</code> prints what was detected and why.</p>
+      </div>
+      <div class="card">
+        <h3>no_std</h3>
+        <p>Without <code>std</code>, the architecture-guaranteed tier is picked statically — SSE2 on x86-64, NEON on aarch64, scalar elsewhere. <code>default-features = false</code>, add <code>alloc</code> for the Vec-returning families.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="accuracy">
+  <div class="wrap">
+    <h2>Accuracy contract</h2>
+    <p class="sub">Measured against <code class="mono">std</code> and arbitrary-precision oracles on every backend — not just the fast path.</p>
+    <div class="grid-2">
+      <div class="card">
+        <h3>Transcendentals <span class="pill success">≤ 1 ulp</span></h3>
+        <p><code>exp</code>, <code>ln</code>, <code>tanh</code>, <code>sqrt</code>, <code>rsqrt</code> — ≤ 1 ulp vs <code>std</code> (fdlibm/SLEEF/musl-derived reductions), on every backend.</p>
+      </div>
+      <div class="card">
+        <h3>Special functions <span class="pill success">perfectly rounded (f32)</span></h3>
+        <p><code>erf</code> ≤ 1 ulp (f64), <code>erfc</code> ≤ 3 ulp (f64 — the structural floor of the exp-product tail form); both perfectly rounded in f32. Clean-room Remez coefficients.</p>
+      </div>
+      <div class="card">
+        <h3>Overflow-safe <code>hypot</code></h3>
+        <p>Scales by <code>max(|a|, |b|)</code>; 1–2 ulp vs <code>std::hypot</code>, identical NaN/inf propagation. <code>powi</code> is bit-exact with <code>std::powi</code>, including specials.</p>
+      </div>
+      <div class="card">
+        <h3>Uniform NaN rules</h3>
+        <p><code>sum</code>/<code>dot</code> propagate NaN; <code>min</code>/<code>max</code> follow IEEE 754 <code>minNum</code>/<code>maxNum</code>; <code>max_norm</code> returns NaN if any input is NaN. Reduction order is backend-dependent: deterministic within a backend, last-ulp differences across backends.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="errors">
+  <div class="wrap">
+    <h2>Nothing panics</h2>
+    <p class="sub">Fallible kernels return <code class="mono">Result&lt;_, lanes::Error&gt;</code>. Infallible kernels (reductions like <code class="mono">sum</code>, single-input maps like <code class="mono">exp</code>) never fail.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Condition</th><th>Error</th></tr></thead>
+        <tbody>
+          <tr><td>Unequal operand lengths (two-input ops: <code>dot</code>, <code>squared_distance</code>, <code>abs_sub</code>, <code>hypot</code>, <code>cosine_similarity</code>, <code>kl_divergence</code>, <code>js_divergence</code>, <code>hamming</code>, <code>jaccard</code>)</td><td><code>Error::LengthMismatch { expected, actual }</code></td></tr>
+          <tr><td>Wrong output-buffer length (every <code>*_into</code> variant)</td><td><code>Error::LengthMismatch { .. }</code></td></tr>
+          <tr><td><code>geometric_mean</code> on an empty slice / value ≤ 0</td><td><code>Error::EmptyInput</code> / <code>Error::NonPositiveInput { index }</code></td></tr>
+          <tr><td><code>clip</code> with <code>lo &gt; hi</code> or a NaN bound</td><td><code>Error::InvalidBounds</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>lanes v0.1.2 · MIT OR Apache-2.0 · MSRV 1.89</span>
+    <div class="links">
+      <a href="https://crates.io/crates/lanes">crates.io</a>
+      <a href="https://docs.rs/lanes">docs.rs</a>
+      <a href="https://github.com/themankindproject/lanes">GitHub</a>
+      <a href="https://codecov.io/gh/themankindproject/lanes">Coverage</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+// benchmark data — from README.md (f32, n=65536, AVX-512F, i5-1135G7)
+const BENCH = [
+  ["stats","sum",6.2,146.6,23.8],["stats","prod",9.3,146.8,15.9],
+  ["stats","min",11.6,295.5,25.4],["stats","max",11.6,292.9,25.2],
+  ["stats","argmax",18.8,147.4,7.8],["stats","argmin",18.2,148.7,8.2],
+  ["stats","sum_sq",7.2,147.8,20.4],["stats","mean",6.4,147.7,23.0],
+  ["stats","variance",25.4,295.7,11.6],["stats","std_dev",24.0,293.8,12.3],
+  ["stats","geometric_mean",142.3,425.1,3.0],["stats","dot",12.3,146.9,11.9],
+  ["stats","count_zero",25.1,26.9,1.1],["stats","count_nan",25.1,26.2,1.0],
+  ["stats","count_infinite",26.1,33.5,1.3],
+  ["distance","l1_norm",6.9,147.4,21.5],["distance","l2_norm",6.9,147.3,21.4],
+  ["distance","max_norm",11.6,289.5,25.0],["distance","squared_distance",12.5,147.0,11.8],
+  ["distance","kl_divergence",104.4,538.9,5.2],["distance","js_divergence",223.5,1307.1,5.8],
+  ["binary","hamming",4.7,122.5,25.8],["binary","jaccard",8.6,239.9,28.0],
+  ["stats","i8::dot",5.2,47.4,9.1],["stats","i8::sum",4.3,21.7,5.1],
+  ["stats","i8::sum_sq",4.8,37.0,7.7],["stats","i8::min",1.3,5.3,4.0],
+  ["stats","i8::max",1.3,5.3,4.0],["stats","i8::count_zero",8.6,48.4,5.6],
+  ["distance","i8::l1_norm",4.9,48.5,9.9],["distance","i8::max_norm",2.6,3.0,1.1],
+  ["distance","i8::squared_distance",6.1,66.8,10.9],
+  ["math","sqrt",27.6,27.6,1.0],["math","clip",11.3,14.0,1.2],
+  ["math","rsqrt",50.5,55.0,1.1],["math","exp",95.1,355.9,3.7],
+  ["math","ln",87.7,452.4,5.2],["math","tanh",146.7,774.4,5.3],
+  ["special","erf",782.8,488.0,0.6],["special","erfc",763.4,491.1,0.6],
+  ["math","hypot",50.5,367.2,7.3],["math","powi",11.3,12.7,1.1],
+  ["math","abs_sub",16.6,20.4,1.2],
+  ["ml","softmax",140.6,845.6,6.0],["ml","log_softmax",143.5,690.8,4.8],
+  ["ml","sigmoid",114.6,372.5,3.3],["ml","silu",113.2,372.4,3.3],
+  ["ml","gelu",155.0,1140.9,7.4],["ml","relu",10.9,12.5,1.2],
+  ["ml","softplus",350.8,1492.2,4.3],["ml","rms_norm",20.1,159.4,7.9],
+  ["ml","layer_norm",28.1,307.0,10.9],["ml","cosine_similarity",25.9,439.4,17.0],
+  ["ml","logsumexp",134.8,707.1,5.2]
+];
+
+function tone(s) { return s >= 2 ? "win" : s >= 0.9 ? "flat" : "slow"; }
+function fmt(x) { return x.toFixed(1) + " µs"; }
+
+function render(fam) {
+  const tb = document.querySelector("#bench-table tbody");
+  tb.innerHTML = BENCH
+    .filter(r => fam === "all" || r[0] === fam)
+    .map(r => `<tr class="tone-${r[4] >= 2 ? "success" : r[4] >= 0.9 ? "neutral" : "warning"}">
+      <td class="fam">${r[0]}</td>
+      <td><code>${r[1]}</code></td>
+      <td class="num">${fmt(r[2])}</td>
+      <td class="num">${fmt(r[3])}</td>
+      <td class="num"><span class="speedup ${tone(r[4])}">${r[4].toFixed(1)}×</span></td>
+    </tr>`).join("");
+}
+
+document.querySelectorAll("#fam-filter button").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#fam-filter button").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+    render(b.dataset.fam);
+  });
+});
+render("all");
+
+function copyInstall(btn) {
+  navigator.clipboard.writeText("cargo add lanes").then(() => {
+    btn.textContent = "copied";
+    setTimeout(() => (btn.textContent = "copy"), 1500);
+  });
+}
+</script>
+</body>
+</html>
