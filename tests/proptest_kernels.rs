@@ -876,3 +876,85 @@ proptest! {
         );
     }
 }
+
+// --- binary family ---------------------------------------------------------
+
+/// Equal-length byte-vector pairs of length 0..=288 (covers every
+/// chunk/tail combination for the 16- and 32-byte kernels).
+fn byte_pairs() -> impl Strategy<Value = (Vec<u8>, Vec<u8>)> {
+    proptest::collection::vec((any::<u8>(), any::<u8>()), 0..=288)
+        .prop_map(|pairs| pairs.into_iter().unzip())
+}
+
+fn naive_hamming_ref(a: &[u8], b: &[u8]) -> usize {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| (x ^ y).count_ones() as usize)
+        .sum()
+}
+
+fn naive_jaccard_ref(a: &[u8], b: &[u8]) -> Option<f32> {
+    let mut inter = 0usize;
+    let mut union = 0usize;
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        inter += (x & y).count_ones() as usize;
+        union += (x | y).count_ones() as usize;
+    }
+    (union != 0).then(|| inter as f32 / union as f32)
+}
+
+proptest! {
+    #[test]
+    fn prop_hamming_matches_naive((a, b) in byte_pairs()) {
+        prop_assert_eq!(lanes::binary::hamming(&a, &b), Ok(naive_hamming_ref(&a, &b)));
+    }
+
+    #[test]
+    fn prop_jaccard_matches_naive((a, b) in byte_pairs()) {
+        prop_assert_eq!(lanes::binary::jaccard(&a, &b), Ok(naive_jaccard_ref(&a, &b)));
+    }
+
+    #[test]
+    fn prop_hamming_symmetric((a, b) in byte_pairs()) {
+        prop_assert_eq!(
+            lanes::binary::hamming(&a, &b),
+            lanes::binary::hamming(&b, &a)
+        );
+    }
+
+    #[test]
+    fn prop_jaccard_symmetric((a, b) in byte_pairs()) {
+        prop_assert_eq!(
+            lanes::binary::jaccard(&a, &b),
+            lanes::binary::jaccard(&b, &a)
+        );
+    }
+
+    #[test]
+    fn prop_hamming_self_is_zero(a in proptest::collection::vec(any::<u8>(), 0..=288)) {
+        prop_assert_eq!(lanes::binary::hamming(&a, &a), Ok(0));
+    }
+
+    #[test]
+    fn prop_hamming_bounded(a in proptest::collection::vec(any::<u8>(), 0..=288)) {
+        let b = vec![0u8; a.len()];
+        let d = lanes::binary::hamming(&a, &b).unwrap();
+        prop_assert!(d <= 8 * a.len());
+    }
+
+    #[test]
+    fn prop_jaccard_range_and_self((a, b) in byte_pairs()) {
+        if let Ok(Some(j)) = lanes::binary::jaccard(&a, &b) {
+            prop_assert!((0.0..=1.0).contains(&j));
+        }
+        // Self-similarity: 1.0 if any bit set, None if all-zero.
+        match lanes::binary::jaccard(&a, &a) {
+            Ok(Some(j)) => {
+                prop_assert_eq!(j, 1.0);
+                prop_assert!(a.iter().any(|&x| x != 0));
+            }
+            Ok(None) => prop_assert!(a.iter().all(|&x| x == 0)),
+            Err(_) => prop_assert!(false),
+        }
+    }
+}
