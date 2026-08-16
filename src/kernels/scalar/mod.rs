@@ -971,6 +971,35 @@ mod tests {
     }
 
     #[test]
+    fn scalar_hamming_popcount() {
+        assert_eq!(hamming_popcount(&[], &[]), 0);
+        assert_eq!(hamming_popcount(&[0b01], &[0b11]), 1);
+        assert_eq!(hamming_popcount(&[0xFF; 4], &[0x00; 4]), 32);
+        assert_eq!(hamming_popcount(&[0xAA, 0x55], &[0x55, 0xAA]), 16);
+    }
+
+    #[test]
+    fn scalar_jaccard_counts() {
+        assert_eq!(jaccard_counts(&[], &[]), (0, 0));
+        assert_eq!(jaccard_counts(&[0x00], &[0x00]), (0, 0));
+        assert_eq!(jaccard_counts(&[0xFF], &[0xFF]), (8, 8));
+        assert_eq!(jaccard_counts(&[0xF0], &[0x0F]), (0, 8));
+        // AND = 0b0010_0010 (2), OR = 0b1110_1110 (6).
+        assert_eq!(jaccard_counts(&[0b1010_1010], &[0b0110_0110]), (2, 6));
+    }
+
+    #[test]
+    fn scalar_jaccard() {
+        assert_eq!(jaccard(&[], &[]), None);
+        assert_eq!(jaccard(&[0x00], &[0x00]), None);
+        assert_eq!(jaccard(&[0xFF], &[0xFF]), Some(1.0));
+        assert_eq!(jaccard(&[0xF0], &[0x0F]), Some(0.0));
+        // AND = 0b0010_0010 (2), OR = 0b1110_1110 (6) -> 1/3.
+        let j = jaccard(&[0b1010_1010], &[0b0110_0110]).unwrap();
+        assert!((j - 1.0 / 3.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn prod_single() {
         assert_eq!(prod(&[5.0]), 5.0);
     }
