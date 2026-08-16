@@ -52,6 +52,26 @@ let dot_product = f32::dot(&a, &b).unwrap(); // 2048.0
 let s64 = f64::sum(&[1.0, 2.0, 3.0]);        // 6.0
 ```
 
+The real value is chaining kernels in a hot loop with the
+allocation-free `_into` forms — here a transformer-style activation
+path (layer norm → GELU → softmax) over one buffer set, reused across
+calls:
+
+```rust
+use lanes::ml::f32;
+
+let hidden = vec![0.5_f32; 512]; // activations in
+let mut normed = vec![0.0_f32; 512];
+let mut activated = vec![0.0_f32; 512];
+let mut probs = vec![0.0_f32; 512];
+
+f32::layer_norm_into(&hidden, 1e-5, &mut normed).unwrap();
+f32::gelu_into(&normed, &mut activated).unwrap();
+f32::softmax_into(&activated, &mut probs).unwrap();
+// `probs` is a valid distribution — three SIMD kernels, zero per-call
+// allocations, one backend picked at startup.
+```
+
 ## Functions
 
 - **`stats`** — `sum`, `prod`, `min`, `max`, `argmax`, `argmin`, `sum_sq`,
