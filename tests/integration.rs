@@ -1191,3 +1191,176 @@ fn distance_squared_distance_known_empty_and_mismatch() {
         Ok(25.0)
     );
 }
+
+// ---------------------------------------------------------------------------
+// kl_divergence / js_divergence (issue #5)
+// ---------------------------------------------------------------------------
+
+/// f64-precision reference for the known-vector tests (hand-checkable:
+/// KL(p‖q) = Σ pᵢ ln(pᵢ/qᵢ); JS = (KL(p‖m) + KL(q‖m))/2, m = (p+q)/2).
+fn ref_kl_f64(p: &[f64], q: &[f64]) -> f64 {
+    p.iter().zip(q).map(|(&a, &b)| a * (a / b).ln()).sum()
+}
+
+fn ref_js_f64(p: &[f64], q: &[f64]) -> f64 {
+    p.iter()
+        .zip(q)
+        .map(|(&a, &b)| {
+            let m = (a + b) * 0.5;
+            a * (a / m).ln() + b * (b / m).ln()
+        })
+        .sum::<f64>()
+        * 0.5
+}
+
+#[test]
+fn kl_divergence_known_vector() {
+    let p = [0.1_f32, 0.9];
+    let q = [0.2_f32, 0.8];
+    let got = lanes::distance::f32::kl_divergence(&p, &q).unwrap();
+    let want = ref_kl_f64(&[0.1, 0.9], &[0.2, 0.8]);
+    assert!(
+        (f64::from(got) - want).abs() < 1e-6,
+        "got {got}, want {want}"
+    );
+
+    let p64 = [0.1_f64, 0.9];
+    let q64 = [0.2_f64, 0.8];
+    let got64 = lanes::distance::f64::kl_divergence(&p64, &q64).unwrap();
+    assert!((got64 - want).abs() < 1e-12, "got {got64}, want {want}");
+}
+
+#[test]
+fn js_divergence_known_vector() {
+    let p = [0.1_f32, 0.9];
+    let q = [0.2_f32, 0.8];
+    let got = lanes::distance::f32::js_divergence(&p, &q).unwrap();
+    let want = ref_js_f64(&[0.1, 0.9], &[0.2, 0.8]);
+    assert!(
+        (f64::from(got) - want).abs() < 1e-6,
+        "got {got}, want {want}"
+    );
+
+    let p64 = [0.1_f64, 0.9];
+    let q64 = [0.2_f64, 0.8];
+    let got64 = lanes::distance::f64::js_divergence(&p64, &q64).unwrap();
+    assert!((got64 - want).abs() < 1e-12, "got {got64}, want {want}");
+}
+
+#[test]
+fn divergence_self_is_zero() {
+    let p = [0.25_f32, 0.25, 0.5];
+    // Every term is p·ln(1) = 0 exactly (ln(1) = 0 in fdlibm).
+    assert_eq!(lanes::distance::f32::kl_divergence(&p, &p), Ok(0.0));
+    assert_eq!(lanes::distance::f32::js_divergence(&p, &p), Ok(0.0));
+    let p64 = [0.25_f64, 0.25, 0.5];
+    assert_eq!(lanes::distance::f64::kl_divergence(&p64, &p64), Ok(0.0));
+    assert_eq!(lanes::distance::f64::js_divergence(&p64, &p64), Ok(0.0));
+}
+
+#[test]
+fn js_is_symmetric_kl_is_not() {
+    let p = [0.1_f32, 0.9];
+    let q = [0.2_f32, 0.8];
+    let js_pq = lanes::distance::f32::js_divergence(&p, &q).unwrap();
+    let js_qp = lanes::distance::f32::js_divergence(&q, &p).unwrap();
+    assert!(
+        (js_pq - js_qp).abs() < 1e-6,
+        "JS must be symmetric: {js_pq} vs {js_qp}"
+    );
+    let kl_pq = lanes::distance::f32::kl_divergence(&p, &q).unwrap();
+    let kl_qp = lanes::distance::f32::kl_divergence(&q, &p).unwrap();
+    assert!(
+        (kl_pq - kl_qp).abs() > 1e-4,
+        "KL must be asymmetric for this pair: {kl_pq} vs {kl_qp}"
+    );
+}
+
+#[test]
+fn divergence_empty_is_zero_and_mismatch_errors() {
+    assert_eq!(lanes::distance::f32::kl_divergence(&[], &[]), Ok(0.0));
+    assert_eq!(lanes::distance::f32::js_divergence(&[], &[]), Ok(0.0));
+    assert_eq!(lanes::distance::f64::kl_divergence(&[], &[]), Ok(0.0));
+    assert_eq!(lanes::distance::f64::js_divergence(&[], &[]), Ok(0.0));
+    assert_eq!(
+        lanes::distance::f32::kl_divergence(&[0.5, 0.5], &[1.0]),
+        Err(lanes::Error::LengthMismatch {
+            expected: 2,
+            actual: 1
+        })
+    );
+    assert_eq!(
+        lanes::distance::f32::js_divergence(&[0.5, 0.5], &[1.0]),
+        Err(lanes::Error::LengthMismatch {
+            expected: 2,
+            actual: 1
+        })
+    );
+    assert_eq!(
+        lanes::distance::f64::kl_divergence(&[0.5, 0.5], &[1.0]),
+        Err(lanes::Error::LengthMismatch {
+            expected: 2,
+            actual: 1
+        })
+    );
+}
+
+#[test]
+fn kl_zero_and_nan_semantics_documented() {
+    // p=0, q>0: naive IEEE term is 0 · ln(0) = 0 · -inf = NaN (documented;
+    // differs from scipy rel_entr's 0 convention).
+    let r = lanes::distance::f32::kl_divergence(&[0.0, 1.0], &[0.5, 0.5]).unwrap();
+    assert!(r.is_nan(), "expected NaN, got {r}");
+    // p>0, q=0: term is p · ln(+inf) = +inf (the divergence is unbounded).
+    let r = lanes::distance::f32::kl_divergence(&[1.0], &[0.0]).unwrap();
+    assert_eq!(r, f32::INFINITY);
+    // NaN input propagates.
+    let r = lanes::distance::f32::kl_divergence(&[f32::NAN, 0.5], &[0.5, 0.5]).unwrap();
+    assert!(r.is_nan());
+    let r = lanes::distance::f32::js_divergence(&[f32::NAN, 0.5], &[0.5, 0.5]).unwrap();
+    assert!(r.is_nan());
+    // f64 twins.
+    let r = lanes::distance::f64::kl_divergence(&[1.0], &[0.0]).unwrap();
+    assert_eq!(r, f64::INFINITY);
+    let r = lanes::distance::f64::kl_divergence(&[0.0, 1.0], &[0.5, 0.5]).unwrap();
+    assert!(r.is_nan());
+}
+
+#[test]
+fn divergence_matches_scalar_on_chunked_lengths() {
+    // Lengths crossing the 4/8/16-lane chunk boundaries plus a scalar tail,
+    // compared against the f64 reference with a summation-order tolerance.
+    for &n in &[7_usize, 8, 9, 15, 16, 17, 31, 32, 33, 100] {
+        let p: Vec<f32> = (1..=n).map(|i| (i as f32) * 0.001 + 0.01).collect();
+        let q: Vec<f32> = (1..=n)
+            .map(|i| ((n - i + 1) as f32) * 0.001 + 0.01)
+            .collect();
+        let p64: Vec<f64> = p.iter().map(|&x| f64::from(x)).collect();
+        let q64: Vec<f64> = q.iter().map(|&x| f64::from(x)).collect();
+
+        let kl = lanes::distance::f32::kl_divergence(&p, &q).unwrap();
+        let kl_ref = ref_kl_f64(&p64, &q64);
+        assert!(
+            (f64::from(kl) - kl_ref).abs() < 1e-4,
+            "n={n}: kl {kl} vs ref {kl_ref}"
+        );
+
+        let js = lanes::distance::f32::js_divergence(&p, &q).unwrap();
+        let js_ref = ref_js_f64(&p64, &q64);
+        assert!(
+            (f64::from(js) - js_ref).abs() < 1e-5,
+            "n={n}: js {js} vs ref {js_ref}"
+        );
+
+        let kl64 = lanes::distance::f64::kl_divergence(&p64, &q64).unwrap();
+        assert!(
+            (kl64 - kl_ref).abs() < 1e-9,
+            "n={n}: kl64 {kl64} vs ref {kl_ref}"
+        );
+        let js64 = lanes::distance::f64::js_divergence(&p64, &q64).unwrap();
+        assert!(
+            (js64 - js_ref).abs() < 1e-9,
+            "n={n}: js64 {js64} vs ref {js_ref}"
+        );
+    }
+}

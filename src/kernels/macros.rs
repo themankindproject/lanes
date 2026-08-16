@@ -701,7 +701,6 @@ macro_rules! simd_ln {
         /// special-case lanes (x ≤ 0, subnormal, inf, NaN); the enclosing
         /// map kernel's scalar tail handles those. This register path
         /// assumes normal positive finite `x`.
-        #[cfg(feature = "alloc")]
         #[inline]
         #[target_feature(enable = $feat)]
         unsafe fn $name(v: $vt) -> $vt {
@@ -805,7 +804,6 @@ macro_rules! simd_ln_f64 {
         /// # Safety
         /// Caller must ensure the CPU feature is available. Subnormal lanes
         /// are scaled by 2^54 branchlessly; special cases are masked.
-        #[cfg(feature = "alloc")]
         #[inline]
         #[target_feature(enable = $feat)]
         unsafe fn $name(v: $vt) -> $vt {

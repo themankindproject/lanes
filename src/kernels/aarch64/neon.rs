@@ -335,6 +335,45 @@ crate::simd_reduce2!(
     },
     vaddq_f32
 );
+// KL divergence: fused div → ln → mul → accumulate (dot skeleton). The
+// register-only fdlibm `ln` handles IEEE specials branch-free, so the
+// vector path matches the scalar reference term-for-term.
+crate::simd_reduce2!(
+    kl_divergence,
+    f32,
+    ["neon"],
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    vdupq_n_f32(0.0),
+    |acc: float32x4_t, vp: float32x4_t, vq: float32x4_t| unsafe {
+        let r = vln_neon(vdivq_f32(vp, vq));
+        vaddq_f32(acc, vmulq_f32(vp, r))
+    },
+    |v| unsafe { vaddvq_f32(v) },
+    |r: f32, a: f32, b: f32| r + a * crate::kernels::ln::ln(a / b),
+    vaddq_f32
+);
+// Jensen–Shannon divergence: raw two-sided sum (the wrapper halves it).
+crate::simd_reduce2!(
+    js_divergence,
+    f32,
+    ["neon"],
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    vdupq_n_f32(0.0),
+    |acc: float32x4_t, vp: float32x4_t, vq: float32x4_t| unsafe {
+        let m = vmulq_f32(vaddq_f32(vp, vq), vdupq_n_f32(0.5));
+        let tp = vmulq_f32(vp, vln_neon(vdivq_f32(vp, m)));
+        let tq = vmulq_f32(vq, vln_neon(vdivq_f32(vq, m)));
+        vaddq_f32(acc, vaddq_f32(tp, tq))
+    },
+    |v| unsafe { vaddvq_f32(v) },
+    |r: f32, a: f32, b: f32| {
+        let m = (a + b) * 0.5;
+        r + a * crate::kernels::ln::ln(a / m) + b * crate::kernels::ln::ln(b / m)
+    },
+    vaddq_f32
+);
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.
 // Uses the crate's `no_std` `exp`, so available in all builds.
@@ -1068,6 +1107,43 @@ crate::simd_reduce2!(
     |r: f64, a: f64, b: f64| {
         let d = a - b;
         r + d * d
+    },
+    vaddq_f64
+);
+// KL divergence (f64): fused div → ln → mul → accumulate (dot skeleton).
+crate::simd_reduce2!(
+    kl_divergence_f64,
+    f64,
+    ["neon"],
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    vdupq_n_f64(0.0),
+    |acc: float64x2_t, vp: float64x2_t, vq: float64x2_t| unsafe {
+        let r = vln_128d(vdivq_f64(vp, vq));
+        vaddq_f64(acc, vmulq_f64(vp, r))
+    },
+    |v| unsafe { hsum_128d(v) },
+    |r: f64, a: f64, b: f64| r + a * crate::kernels::ln::ln_f64(a / b),
+    vaddq_f64
+);
+// Jensen–Shannon divergence (f64): raw two-sided sum (wrapper halves it).
+crate::simd_reduce2!(
+    js_divergence_f64,
+    f64,
+    ["neon"],
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    vdupq_n_f64(0.0),
+    |acc: float64x2_t, vp: float64x2_t, vq: float64x2_t| unsafe {
+        let m = vmulq_f64(vaddq_f64(vp, vq), vdupq_n_f64(0.5));
+        let tp = vmulq_f64(vp, vln_128d(vdivq_f64(vp, m)));
+        let tq = vmulq_f64(vq, vln_128d(vdivq_f64(vq, m)));
+        vaddq_f64(acc, vaddq_f64(tp, tq))
+    },
+    |v| unsafe { hsum_128d(v) },
+    |r: f64, a: f64, b: f64| {
+        let m = (a + b) * 0.5;
+        r + a * crate::kernels::ln::ln_f64(a / m) + b * crate::kernels::ln::ln_f64(b / m)
     },
     vaddq_f64
 );
