@@ -41,6 +41,9 @@ fn main() {
     // Packed bitmaps for the binary family.
     let ba: Vec<u8> = (0..N).map(|i| (i * 31) as u8).collect();
     let bb: Vec<u8> = (0..N).map(|i| (i * 17) as u8).collect();
+    // Signed bytes for the i8 family.
+    let ia: Vec<i8> = (0..N).map(|i| ((i * 31) % 251) as i8 - 125).collect();
+    let ib: Vec<i8> = (0..N).map(|i| ((i * 17) % 251) as i8 - 125).collect();
 
     // ---------------- stats ----------------
     row(
@@ -244,6 +247,75 @@ fn main() {
                 union += (x | y).count_ones() as usize;
             }
             (union != 0).then(|| inter as f32 / union as f32)
+        }),
+    );
+
+    // ---------------- stats::i8 ----------------
+    row(
+        "stats::i8",
+        "dot",
+        time_us(|| lanes::stats::i8::dot(&ia, &ib).unwrap()),
+        time_us(|| {
+            ia.iter()
+                .zip(&ib)
+                .map(|(&x, &y)| i64::from(x) * i64::from(y))
+                .sum::<i64>()
+        }),
+    );
+    row(
+        "stats::i8",
+        "sum",
+        time_us(|| lanes::stats::i8::sum(&ia)),
+        time_us(|| ia.iter().map(|&x| i64::from(x)).sum::<i64>()),
+    );
+    row(
+        "stats::i8",
+        "sum_sq",
+        time_us(|| lanes::stats::i8::sum_sq(&ia)),
+        time_us(|| ia.iter().map(|&x| i64::from(x) * i64::from(x)).sum::<i64>()),
+    );
+    row(
+        "stats::i8",
+        "min",
+        time_us(|| lanes::stats::i8::min(&ia)),
+        time_us(|| ia.iter().copied().min()),
+    );
+    row(
+        "stats::i8",
+        "max",
+        time_us(|| lanes::stats::i8::max(&ia)),
+        time_us(|| ia.iter().copied().max()),
+    );
+    row(
+        "stats::i8",
+        "count_zero",
+        time_us(|| lanes::stats::i8::count_zero(&ia)),
+        time_us(|| ia.iter().filter(|&&x| x == 0).count()),
+    );
+    row(
+        "distance::i8",
+        "l1_norm",
+        time_us(|| lanes::distance::i8::l1_norm(&ia)),
+        time_us(|| ia.iter().map(|&x| i64::from(x.unsigned_abs())).sum::<i64>()),
+    );
+    row(
+        "distance::i8",
+        "max_norm",
+        time_us(|| lanes::distance::i8::max_norm(&ia)),
+        time_us(|| ia.iter().map(|&x| x.unsigned_abs()).max()),
+    );
+    row(
+        "distance::i8",
+        "squared_distance",
+        time_us(|| lanes::distance::i8::squared_distance(&ia, &ib)),
+        time_us(|| {
+            ia.iter()
+                .zip(ib.iter())
+                .map(|(&x, &y)| {
+                    let d = i64::from(x) - i64::from(y);
+                    d * d
+                })
+                .sum::<i64>()
         }),
     );
 

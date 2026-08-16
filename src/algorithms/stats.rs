@@ -602,3 +602,109 @@ pub mod f64 {
         kernels::dispatch_count_infinite_f64(backend, values)
     }
 }
+
+pub mod i8 {
+    //! 8-bit signed integer reductions with `i64` accumulation.
+    //!
+    //! The first general integer family: results are exact (no rounding)
+    //! and cannot overflow — every intermediate is widened to `i64`,
+    //! which holds the full result for any slice that fits in memory.
+
+    use crate::dispatch::Backend;
+    use crate::error::Error;
+    use crate::kernels;
+
+    /// Dot product of two equal-length `i8` slices, accumulated in `i64`.
+    ///
+    /// Returns `Ok(0)` for empty inputs.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::stats::i8::dot(&[1_i8, -2], &[3_i8, 4]), Ok(-5));
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
+    pub fn dot(a: &[i8], b: &[i8]) -> Result<i64, Error> {
+        if a.len() != b.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len(),
+            });
+        }
+        let backend = Backend::detect();
+        Ok(kernels::dispatch_dot_i8(backend, a, b))
+    }
+
+    /// Sum of all elements, accumulated in `i64`.
+    ///
+    /// Returns `0` for an empty slice.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::stats::i8::sum(&[1_i8, -2, 3]), 2);
+    /// ```
+    #[must_use]
+    pub fn sum(values: &[i8]) -> i64 {
+        let backend = Backend::detect();
+        kernels::dispatch_sum_i8(backend, values)
+    }
+
+    /// Sum of squares of all elements, accumulated in `i64`.
+    ///
+    /// Returns `0` for an empty slice. Implemented as `dot(values, values)`
+    /// — same exact result, same kernels.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::stats::i8::sum_sq(&[1_i8, -2, 3]), 14);
+    /// ```
+    #[must_use]
+    pub fn sum_sq(values: &[i8]) -> i64 {
+        let backend = Backend::detect();
+        kernels::dispatch_dot_i8(backend, values, values)
+    }
+
+    /// Minimum element, or [`None`] for an empty slice.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::stats::i8::min(&[3_i8, 1, 4]), Some(1));
+    /// ```
+    #[must_use]
+    pub fn min(values: &[i8]) -> Option<i8> {
+        if values.is_empty() {
+            return None;
+        }
+        let backend = Backend::detect();
+        kernels::dispatch_min_i8(backend, values)
+    }
+
+    /// Maximum element, or [`None`] for an empty slice.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::stats::i8::max(&[3_i8, 1, 4]), Some(4));
+    /// ```
+    #[must_use]
+    pub fn max(values: &[i8]) -> Option<i8> {
+        if values.is_empty() {
+            return None;
+        }
+        let backend = Backend::detect();
+        kernels::dispatch_max_i8(backend, values)
+    }
+
+    /// Count of elements equal to zero.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::stats::i8::count_zero(&[0_i8, 1, 0]), 2);
+    /// ```
+    #[must_use]
+    pub fn count_zero(values: &[i8]) -> usize {
+        let backend = Backend::detect();
+        kernels::dispatch_count_zero_i8(backend, values)
+    }
+}

@@ -464,6 +464,68 @@ pub(crate) fn jaccard(a: &[u8], b: &[u8]) -> Option<f32> {
     super::jaccard_similarity(jaccard_counts(a, b))
 }
 
+/// i8 dot product with i64 accumulation: `sum(a[i] * b[i] as i64)`.
+/// Returns `0` for empty inputs. Exact for any slice length: the i64
+/// accumulator cannot overflow in addressable memory (each product is
+/// ≤ 16384, so overflow would need > 5.6e14 elements).
+///
+/// Caller guarantees equal lengths (zip stops at the shorter otherwise).
+#[inline]
+pub(crate) fn dot_i8(a: &[i8], b: &[i8]) -> i64 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| i64::from(x) * i64::from(y))
+        .sum()
+}
+
+/// i8 sum with i64 accumulation: `sum(values[i] as i64)`.
+/// Returns `0` for an empty slice. Exact for any slice length.
+#[inline]
+pub(crate) fn sum_i8(values: &[i8]) -> i64 {
+    values.iter().map(|&v| i64::from(v)).sum()
+}
+
+/// i8 L1 norm with i64 accumulation: `sum(|values[i]| as i64)`.
+/// Returns `0` for an empty slice. `unsigned_abs` handles `i8::MIN`
+/// (whose magnitude 128 does not fit in `i8`). Exact for any length.
+#[inline]
+pub(crate) fn l1_norm_i8(values: &[i8]) -> i64 {
+    values.iter().map(|&v| i64::from(v.unsigned_abs())).sum()
+}
+
+/// i8 squared Euclidean distance with i64 accumulation:
+/// `sum((a[i] - b[i])^2)`. Returns `0` for empty inputs. Each difference
+/// fits in i16 (range [-255, 255]) and each square in i32; the i64
+/// accumulator is exact for any slice length.
+#[inline]
+pub(crate) fn squared_distance_i8(a: &[i8], b: &[i8]) -> i64 {
+    a.iter()
+        .zip(b)
+        .map(|(&x, &y)| {
+            let d = i64::from(x) - i64::from(y);
+            d * d
+        })
+        .sum()
+}
+
+/// Find the minimum i8 element. Returns [`None`] for an empty slice.
+#[inline]
+pub(crate) fn min_i8(values: &[i8]) -> Option<i8> {
+    values.iter().copied().min()
+}
+
+/// Find the maximum i8 element. Returns [`None`] for an empty slice.
+#[inline]
+pub(crate) fn max_i8(values: &[i8]) -> Option<i8> {
+    values.iter().copied().max()
+}
+
+/// Count i8 elements equal to zero.
+#[inline]
+pub(crate) fn count_zero_i8(values: &[i8]) -> usize {
+    values.iter().filter(|&&x| x == 0).count()
+}
+
 /// Kullback–Leibler divergence kernel (f32): `sum(p[i] * ln(p[i] / q[i]))`.
 /// Returns `0.0` for empty inputs.
 ///
@@ -992,6 +1054,57 @@ mod tests {
         // AND = 0b0010_0010 (2), OR = 0b1110_1110 (6) -> 1/3.
         let j = jaccard(&[0b1010_1010], &[0b0110_0110]).unwrap();
         assert!((j - 1.0 / 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scalar_dot_i8() {
+        assert_eq!(dot_i8(&[], &[]), 0);
+        assert_eq!(dot_i8(&[1, -2, 3, -4], &[5, 3, -1, -2]), 4);
+        // Extremes need the i64 accumulator.
+        assert_eq!(dot_i8(&[-128, 127], &[-128, 127]), 16384 + 16129);
+        assert_eq!(dot_i8(&[7; 8], &[3; 8]), 168);
+    }
+
+    #[test]
+    fn scalar_sum_i8() {
+        assert_eq!(sum_i8(&[]), 0);
+        assert_eq!(sum_i8(&[1, -2, 3, -4]), -2);
+        assert_eq!(sum_i8(&[127; 100]), 12700);
+        assert_eq!(sum_i8(&[-128; 3]), -384);
+        assert_eq!(sum_i8(&[-128; 100]), -12800);
+    }
+
+    #[test]
+    fn scalar_l1_norm_i8() {
+        assert_eq!(l1_norm_i8(&[]), 0);
+        assert_eq!(l1_norm_i8(&[-3, 4]), 7);
+        assert_eq!(l1_norm_i8(&[i8::MIN]), 128);
+        assert_eq!(l1_norm_i8(&[i8::MIN; 100]), 12800);
+    }
+
+    #[test]
+    fn scalar_squared_distance_i8() {
+        assert_eq!(squared_distance_i8(&[], &[]), 0);
+        assert_eq!(squared_distance_i8(&[1, 2], &[4, 6]), 25);
+        assert_eq!(squared_distance_i8(&[i8::MIN], &[127]), 65025);
+        assert_eq!(squared_distance_i8(&[i8::MIN; 100], &[127; 100]), 6_502_500);
+    }
+
+    #[test]
+    fn scalar_min_max_i8() {
+        assert_eq!(min_i8(&[]), None);
+        assert_eq!(max_i8(&[]), None);
+        assert_eq!(min_i8(&[3, 1, 4]), Some(1));
+        assert_eq!(max_i8(&[3, 1, 4]), Some(4));
+        assert_eq!(min_i8(&[-128, 127]), Some(-128));
+        assert_eq!(max_i8(&[-128, 127]), Some(127));
+    }
+
+    #[test]
+    fn scalar_count_zero_i8() {
+        assert_eq!(count_zero_i8(&[]), 0);
+        assert_eq!(count_zero_i8(&[0, 1, 0, -1, 0]), 3);
+        assert_eq!(count_zero_i8(&[1, 2, 3]), 0);
     }
 
     #[test]

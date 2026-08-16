@@ -16,6 +16,20 @@ so it is all listed as additions.
   `hamming` (popcount of XOR) and `jaccard` (intersection-over-union
   similarity, `Ok(None)` on empty union) over packed `&[u8]` bitmaps,
   with scalar/SSE2/AVX2/AVX-512/NEON backends.
+- New `stats::i8` submodule — the first general integer reductions:
+  `dot`, `sum`, `sum_sq`, `min`, `max`, `count_zero` over `&[i8]` with
+  exact `i64` accumulation (no overflow for any slice that fits in
+  memory). Backends: scalar, SSE2 (`pmaddwd`; min/max via sign-extend +
+  `pminsw`/`pmaxsw`), AVX2 (`vpmovsxbw` + `vpmaddwd`; native `vpminsb`/
+  `vpmaxsb`), AVX-512 (AVX2 kernels), NEON (`vmull_s8`/`vpadalq`;
+  `vminq_s8`/`vmaxq_s8`).
+- New `distance::i8` submodule — exact integer norms: `l1_norm`,
+  `max_norm` (returns `Option<u8>` since `|i8::MIN| = 128` does not fit
+  in `i8`), `squared_distance`. All widen to `i16` before any operation
+  that could overflow; `max_norm` is composed from the `min`/`max`
+  kernels (no dedicated kernel needed). Backends: scalar, SSE2
+  (sign-extend + `pmaxsw`-abs idiom), AVX2 (`vpabsw`), AVX-512 (AVX2
+  kernels), NEON (`vabdl_s8`).
 
 ## [0.1.0] - 2026-08-16
 

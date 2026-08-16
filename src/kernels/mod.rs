@@ -389,6 +389,90 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_dot_i8,
+    [a: &[i8], b: &[i8]],
+    i64,
+    scalar::dot_i8,
+    x86::sse2::dot_i8,
+    x86::avx2::dot_i8,
+    x86::avx512::dot_i8,
+    aarch64::neon::dot_i8,
+    id
+);
+
+dispatch!(
+    dispatch_sum_i8,
+    [values: &[i8]],
+    i64,
+    scalar::sum_i8,
+    x86::sse2::sum_i8,
+    x86::avx2::sum_i8,
+    x86::avx512::sum_i8,
+    aarch64::neon::sum_i8,
+    id
+);
+
+dispatch!(
+    dispatch_min_i8,
+    [values: &[i8]],
+    Option<i8>,
+    scalar::min_i8,
+    x86::sse2::min_i8,
+    x86::avx2::min_i8,
+    x86::avx512::min_i8,
+    aarch64::neon::min_i8,
+    Some
+);
+
+dispatch!(
+    dispatch_max_i8,
+    [values: &[i8]],
+    Option<i8>,
+    scalar::max_i8,
+    x86::sse2::max_i8,
+    x86::avx2::max_i8,
+    x86::avx512::max_i8,
+    aarch64::neon::max_i8,
+    Some
+);
+
+dispatch!(
+    dispatch_count_zero_i8,
+    [values: &[i8]],
+    usize,
+    scalar::count_zero_i8,
+    x86::sse2::count_zero_i8,
+    x86::avx2::count_zero_i8,
+    x86::avx512::count_zero_i8,
+    aarch64::neon::count_zero_i8,
+    id
+);
+
+dispatch!(
+    dispatch_l1_norm_i8,
+    [values: &[i8]],
+    i64,
+    scalar::l1_norm_i8,
+    x86::sse2::l1_norm_i8,
+    x86::avx2::l1_norm_i8,
+    x86::avx512::l1_norm_i8,
+    aarch64::neon::l1_norm_i8,
+    id
+);
+
+dispatch!(
+    dispatch_squared_distance_i8,
+    [a: &[i8], b: &[i8]],
+    i64,
+    scalar::squared_distance_i8,
+    x86::sse2::squared_distance_i8,
+    x86::avx2::squared_distance_i8,
+    x86::avx512::squared_distance_i8,
+    aarch64::neon::squared_distance_i8,
+    id
+);
+
+dispatch!(
     dispatch_softmax,
     [values: &[f32], out: &mut [f32]],
     (),

@@ -48,6 +48,7 @@
 //!
 //! The `binary` family is the exception: it operates on packed `&[u8]`
 //! bitmaps with bit-level semantics and has no precision submodules.
+//! Integer reductions live in `stats::i8` (exact `i64` accumulation).
 //!
 //! ## Supported backends
 //!
@@ -152,17 +153,19 @@ pub use error::Error;
 /// `max`, `argmax`, `argmin`, `sum_sq`, `mean`, `variance`, `std_dev`,
 /// `geometric_mean`, `dot`, `count_zero`, `count_nan`, `count_infinite`.
 ///
-/// Precision is selected via the [`f32`] or [`f64`] submodule.
+/// Precision is selected via the [`f32`] or [`f64`] submodule; the [`i8`]
+/// submodule offers exact integer reductions with `i64` accumulation.
 pub mod stats {
-    pub use crate::algorithms::stats::{f32, f64};
+    pub use crate::algorithms::stats::{f32, f64, i8};
 }
 
 /// Distance and norm functions: `l1_norm`, `l2_norm`, `max_norm`,
 /// `squared_distance`, `kl_divergence`, `js_divergence`.
 /// All are `no_std`-clean (the sqrt for `l2_norm` is the std-free kernel).
-/// Precision is selected via the [`f32`] or [`f64`] submodule.
+/// Precision is selected via the [`f32`] or [`f64`] submodule; the [`i8`]
+/// submodule offers exact integer norms with `i64` accumulation.
 pub mod distance {
-    pub use crate::algorithms::distance::{f32, f64};
+    pub use crate::algorithms::distance::{f32, f64, i8};
 }
 
 /// Binary (bit-packed) vector distances: [`binary::hamming`],

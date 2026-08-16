@@ -51,3 +51,8 @@ doc = false
 name = "fuzz_binary"
 path = "fuzz_targets/fuzz_binary.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_i8"
+path = "fuzz_targets/fuzz_i8.rs"
+doc = false
