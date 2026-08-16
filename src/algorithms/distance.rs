@@ -262,7 +262,7 @@ pub mod f64 {
     /// Compute the Kullback–Leibler divergence
     /// `KL(p ‖ q) = Σ pᵢ · ln(pᵢ / qᵢ)`.
     ///
-    /// `f64` twin of [`f32::kl_divergence`] — same semantics: no input
+    /// `f64` twin of [`super::f32::kl_divergence`] — same semantics: no input
     /// normalization, raw IEEE zero/NaN behavior, `Ok(0.0)` for two empty
     /// slices, asymmetric in `(p, q)`.
     ///
@@ -290,7 +290,7 @@ pub mod f64 {
     /// Compute the Jensen–Shannon divergence
     /// `JS(p, q) = (KL(p ‖ m) + KL(q ‖ m)) / 2` with `m = (p + q) / 2`.
     ///
-    /// `f64` twin of [`f32::js_divergence`] — same semantics: returns the
+    /// `f64` twin of [`super::f32::js_divergence`] — same semantics: returns the
     /// divergence (not the sqrt-distance), no input normalization,
     /// symmetric, `Ok(0.0)` for two empty slices.
     ///
