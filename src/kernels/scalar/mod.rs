@@ -461,12 +461,7 @@ pub(crate) fn jaccard_counts(a: &[u8], b: &[u8]) -> (usize, usize) {
 /// Caller guarantees equal lengths (zip stops at the shorter otherwise).
 #[inline]
 pub(crate) fn jaccard(a: &[u8], b: &[u8]) -> Option<f32> {
-    let (intersection, union) = jaccard_counts(a, b);
-    if union == 0 {
-        None
-    } else {
-        Some(intersection as f32 / union as f32)
-    }
+    super::jaccard_similarity(jaccard_counts(a, b))
 }
 
 /// Kullback–Leibler divergence kernel (f32): `sum(p[i] * ln(p[i] / q[i]))`.

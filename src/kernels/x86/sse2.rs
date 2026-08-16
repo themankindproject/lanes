@@ -20,6 +20,8 @@
     clippy::excessive_precision,    // ln2/log2e split constants are full-precision
     clippy::approx_constant,
     clippy::cast_lossless,
+    clippy::cast_ptr_alignment, // unaligned loads/stores via `.cast()` are intentional
+    clippy::cast_possible_truncation, // u64 counters → usize: counts fit by construction
 )]
 #![allow(unused_unsafe)]
 
@@ -344,7 +346,7 @@ unsafe fn popcnt_128(x: __m128i) -> __m128i {
 unsafe fn hsum_128_u64(v: __m128i) -> usize {
     unsafe {
         let mut t = [0u64; 2];
-        _mm_storeu_si128(t.as_mut_ptr() as *mut __m128i, v);
+        _mm_storeu_si128(t.as_mut_ptr().cast::<__m128i>(), v);
         (t[0] + t[1]) as usize
     }
 }
@@ -354,7 +356,7 @@ crate::simd_reduce2_count!(
     hamming_popcount,
     ["sse2"],
     16,
-    |p: *const u8| unsafe { _mm_loadu_si128(p as *const __m128i) },
+    |p: *const u8| unsafe { _mm_loadu_si128(p.cast::<__m128i>()) },
     _mm_setzero_si128(),
     |acc: __m128i, va: __m128i, vb: __m128i| unsafe {
         _mm_add_epi64(acc, popcnt_128(_mm_xor_si128(va, vb)))
@@ -369,7 +371,7 @@ crate::simd_reduce2_count!(
     jaccard_counts,
     ["sse2"],
     16,
-    |p: *const u8| unsafe { _mm_loadu_si128(p as *const __m128i) },
+    |p: *const u8| unsafe { _mm_loadu_si128(p.cast::<__m128i>()) },
     (_mm_setzero_si128(), _mm_setzero_si128()),
     |acc: (__m128i, __m128i), va: __m128i, vb: __m128i| unsafe {
         (

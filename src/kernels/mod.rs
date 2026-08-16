@@ -32,6 +32,21 @@ fn id<T>(v: T) -> T {
     v
 }
 
+/// Convert jaccard counts `(intersection, union)` to the similarity
+/// `intersection / union`, or `None` when the union is empty. Shared by
+/// the scalar kernel and the `dispatch_jaccard` wrapper for SIMD backends
+/// (which reduce to counts).
+#[inline]
+#[allow(clippy::cast_precision_loss)] // counts ≤ 8·len; f32 is the documented precision
+pub(crate) fn jaccard_similarity(counts: (usize, usize)) -> Option<f32> {
+    let (intersection, union) = counts;
+    if union == 0 {
+        None
+    } else {
+        Some(intersection as f32 / union as f32)
+    }
+}
+
 /// Allocate a `Vec<T>` of `len` elements without zero-initializing them.
 ///
 /// The allocating wrappers (`math`, `ml`) build an output buffer and then
@@ -370,13 +385,7 @@ dispatch!(
     x86::avx2::jaccard_counts,
     x86::avx512::jaccard_counts,
     aarch64::neon::jaccard_counts,
-    (|(intersection, union): (usize, usize)| {
-        if union == 0 {
-            None
-        } else {
-            Some(intersection as f32 / union as f32)
-        }
-    })
+    jaccard_similarity
 );
 
 dispatch!(

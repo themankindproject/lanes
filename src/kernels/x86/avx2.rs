@@ -20,6 +20,8 @@
     clippy::excessive_precision,    // ln2/log2e split constants are full-precision
     clippy::approx_constant,
     clippy::cast_lossless,
+    clippy::cast_ptr_alignment, // unaligned loads/stores via `.cast()` are intentional
+    clippy::cast_possible_truncation, // u64 counters → usize: counts fit by construction
 )]
 #![allow(unused_unsafe)]
 
@@ -348,7 +350,7 @@ unsafe fn popcnt_256_sum(x: __m256i) -> __m256i {
 unsafe fn hsum_256_u64(v: __m256i) -> usize {
     unsafe {
         let mut t = [0u64; 4];
-        _mm256_storeu_si256(t.as_mut_ptr() as *mut __m256i, v);
+        _mm256_storeu_si256(t.as_mut_ptr().cast::<__m256i>(), v);
         (t[0] + t[1] + t[2] + t[3]) as usize
     }
 }
@@ -358,7 +360,7 @@ crate::simd_reduce2_count!(
     hamming_popcount,
     ["avx2"],
     32,
-    |p: *const u8| unsafe { _mm256_loadu_si256(p as *const __m256i) },
+    |p: *const u8| unsafe { _mm256_loadu_si256(p.cast::<__m256i>()) },
     _mm256_setzero_si256(),
     |acc: __m256i, va: __m256i, vb: __m256i| unsafe {
         _mm256_add_epi64(acc, popcnt_256_sum(_mm256_xor_si256(va, vb)))
@@ -373,7 +375,7 @@ crate::simd_reduce2_count!(
     jaccard_counts,
     ["avx2"],
     32,
-    |p: *const u8| unsafe { _mm256_loadu_si256(p as *const __m256i) },
+    |p: *const u8| unsafe { _mm256_loadu_si256(p.cast::<__m256i>()) },
     (_mm256_setzero_si256(), _mm256_setzero_si256()),
     |acc: (__m256i, __m256i), va: __m256i, vb: __m256i| unsafe {
         (
