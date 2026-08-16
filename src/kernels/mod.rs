@@ -389,6 +389,30 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_dot_i8,
+    [a: &[i8], b: &[i8]],
+    i32,
+    scalar::dot_i8,
+    scalar::dot_i8,
+    scalar::dot_i8,
+    scalar::dot_i8,
+    scalar::dot_i8,
+    id
+);
+
+dispatch!(
+    dispatch_sum_i8,
+    [values: &[i8]],
+    i32,
+    scalar::sum_i8,
+    scalar::sum_i8,
+    scalar::sum_i8,
+    scalar::sum_i8,
+    scalar::sum_i8,
+    id
+);
+
+dispatch!(
     dispatch_softmax,
     [values: &[f32], out: &mut [f32]],
     (),

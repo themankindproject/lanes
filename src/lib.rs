@@ -152,9 +152,10 @@ pub use error::Error;
 /// `max`, `argmax`, `argmin`, `sum_sq`, `mean`, `variance`, `std_dev`,
 /// `geometric_mean`, `dot`, `count_zero`, `count_nan`, `count_infinite`.
 ///
-/// Precision is selected via the [`f32`] or [`f64`] submodule.
+/// Precision is selected via the [`f32`] or [`f64`] submodule; the [`i8`]
+/// submodule offers exact integer reductions with `i32` accumulation.
 pub mod stats {
-    pub use crate::algorithms::stats::{f32, f64};
+    pub use crate::algorithms::stats::{f32, f64, i8};
 }
 
 /// Distance and norm functions: `l1_norm`, `l2_norm`, `max_norm`,

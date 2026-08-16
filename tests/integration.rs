@@ -1425,3 +1425,37 @@ fn binary_jaccard_length_mismatch() {
         other => panic!("expected LengthMismatch, got {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// stats::i8 — first general integer family (i8 with i32 accumulation)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn i8_dot_known_values() {
+    // Mixed signs: 1*5 + (-2)*3 + 3*(-1) + (-4)*(-2) = 5 - 6 - 3 + 8 = 4.
+    assert_eq!(lanes::stats::i8::dot(&[1, -2, 3, -4], &[5, 3, -1, -2]), Ok(4));
+    // Extremes: (-128)*(-128) = 16384, needs the i32 accumulator.
+    assert_eq!(lanes::stats::i8::dot(&[-128, 127], &[-128, 127]), Ok(16384 + 16129));
+    assert_eq!(lanes::stats::i8::dot(&[], &[]), Ok(0));
+    assert_eq!(lanes::stats::i8::dot(&[7; 8], &[3; 8]), Ok(168));
+}
+
+#[test]
+fn i8_dot_length_mismatch() {
+    match lanes::stats::i8::dot(&[1, 2, 3], &[1, 2]) {
+        Err(lanes::Error::LengthMismatch { expected, actual }) => {
+            assert_eq!(expected, 3);
+            assert_eq!(actual, 2);
+        }
+        other => panic!("expected LengthMismatch, got {other:?}"),
+    }
+}
+
+#[test]
+fn i8_sum_known_values() {
+    assert_eq!(lanes::stats::i8::sum(&[1, -2, 3, -4]), -2);
+    // i32 accumulation: 127 * 100 = 12700 overflows i8 but not i32.
+    assert_eq!(lanes::stats::i8::sum(&[127; 100]), 12700);
+    assert_eq!(lanes::stats::i8::sum(&[-128; 3]), -384);
+    assert_eq!(lanes::stats::i8::sum(&[]), 0);
+}

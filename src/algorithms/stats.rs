@@ -602,3 +602,52 @@ pub mod f64 {
         kernels::dispatch_count_infinite_f64(backend, values)
     }
 }
+
+pub mod i8 {
+    //! 8-bit signed integer reductions with `i32` accumulation.
+    //!
+    //! The first general integer family: results are exact (no rounding)
+    //! and cannot overflow — every intermediate is widened to `i32`,
+    //! which holds the full result for any realistic slice length.
+
+    use crate::dispatch::Backend;
+    use crate::error::Error;
+    use crate::kernels;
+
+    /// Dot product of two equal-length `i8` slices, accumulated in `i32`.
+    ///
+    /// Returns `Ok(0)` for empty inputs.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::stats::i8::dot(&[1_i8, -2], &[3_i8, 4]), Ok(-5));
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
+    pub fn dot(a: &[i8], b: &[i8]) -> Result<i32, Error> {
+        if a.len() != b.len() {
+            return Err(Error::LengthMismatch {
+                expected: a.len(),
+                actual: b.len(),
+            });
+        }
+        let backend = Backend::detect();
+        Ok(kernels::dispatch_dot_i8(backend, a, b))
+    }
+
+    /// Sum of all elements, accumulated in `i32`.
+    ///
+    /// Returns `0` for an empty slice.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(lanes::stats::i8::sum(&[1_i8, -2, 3]), 2);
+    /// ```
+    #[must_use]
+    pub fn sum(values: &[i8]) -> i32 {
+        let backend = Backend::detect();
+        kernels::dispatch_sum_i8(backend, values)
+    }
+}
