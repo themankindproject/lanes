@@ -93,12 +93,19 @@ expression compiled with identical settings. Reproduce with
 `cargo run --release --example readme_bench_all`.
 
 Note: `erf`/`erfc` have no `std` baseline, so their naive column is the
-Abramowitz–Stegun 7.1.26 polynomial (~1e-7 accuracy) — a *speed*
-reference only, not the same accuracy class as the `lanes` kernels.
-They also run below that baseline here: the shared bench distribution
-(arcsine on [−2, 2]) is tail-heavy for erf, and every tail element
-pays two correctly-rounded vector `exp`s to hold the ≤ 1 ulp / ≤ 3 ulp
-contract. On small/mid-heavy inputs the kernels run at SIMD speed.
+Abramowitz–Stegun 7.1.26 polynomial — a *speed* reference only, not the
+same accuracy class as the `lanes` kernels.
+
+- **Speed.** They run below that baseline here because the shared bench
+  distribution (arcsine on [−2, 2]) is tail-heavy for erf, and every
+  tail element pays two correctly-rounded vector `exp`s to hold the
+  accuracy contract. On small/mid-heavy inputs the kernels run at SIMD
+  speed (measured 2–3× faster than the baseline there).
+- **Accuracy.** The baseline is far less accurate: measured max absolute
+  error 5.7e-7 over 2.6M points (worse than its advertised 1.5e-7 bound,
+  because the bound assumes exact arithmetic), and up to ~1.3M ulp near
+  zero where its ~1e-9 error floor dominates the shrinking true value.
+  The `lanes` kernels are ≤ 1 ulp (f64 `erf`) / perfectly rounded (f32).
 
 | Family | Function | `lanes` | naive | speedup |
 | --- | --- | ---: | ---: | ---: |
