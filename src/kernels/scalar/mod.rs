@@ -422,6 +422,39 @@ pub(crate) fn squared_distance(a: &[f32], b: &[f32]) -> f32 {
         .sum()
 }
 
+/// Kullback–Leibler divergence kernel (f32): `sum(p[i] * ln(p[i] / q[i]))`.
+/// Returns `0.0` for empty inputs.
+///
+/// Scalar reference: strictly left-to-right summation. The term formula
+/// (`div → ln → mul`) is identical in every SIMD backend, and all use the
+/// same fdlibm `ln` (scalar `kernels::ln::ln`, register-only `vln_*`), so
+/// backends agree term-for-term and differ only in summation order.
+/// Non-positive entries follow raw IEEE arithmetic through `ln` (see the
+/// public wrapper's docs).
+#[inline]
+pub(crate) fn kl_divergence(p: &[f32], q: &[f32]) -> f32 {
+    p.iter()
+        .zip(q.iter())
+        .map(|(&pi, &qi)| pi * crate::kernels::ln::ln(pi / qi))
+        .sum()
+}
+
+/// Jensen–Shannon divergence kernel (f32): the raw two-sided sum
+/// `sum(p[i] * ln(p[i] / m[i]) + q[i] * ln(q[i] / m[i]))` with
+/// `m = (p + q) / 2`. The algorithm wrapper applies the final `* 0.5`.
+/// Returns `0.0` for empty inputs. Same cross-backend contract as
+/// [`kl_divergence`].
+#[inline]
+pub(crate) fn js_divergence(p: &[f32], q: &[f32]) -> f32 {
+    p.iter()
+        .zip(q.iter())
+        .map(|(&pi, &qi)| {
+            let m = (pi + qi) * 0.5;
+            pi * crate::kernels::ln::ln(pi / m) + qi * crate::kernels::ln::ln(qi / m)
+        })
+        .sum()
+}
+
 /// Find the index of the maximum element in a slice, returning `(value, index)`.
 ///
 /// Caller must guarantee the slice is non-empty. Ties resolve to the first
@@ -532,6 +565,27 @@ pub(crate) fn squared_distance_f64(a: &[f64], b: &[f64]) -> f64 {
         .map(|(&x, &y)| {
             let d = x - y;
             d * d
+        })
+        .sum()
+}
+
+/// `f64` twin of [`kl_divergence`].
+#[inline]
+pub(crate) fn kl_divergence_f64(p: &[f64], q: &[f64]) -> f64 {
+    p.iter()
+        .zip(q.iter())
+        .map(|(&pi, &qi)| pi * crate::kernels::ln::ln_f64(pi / qi))
+        .sum()
+}
+
+/// `f64` twin of [`js_divergence`] (raw two-sided sum; the wrapper halves).
+#[inline]
+pub(crate) fn js_divergence_f64(p: &[f64], q: &[f64]) -> f64 {
+    p.iter()
+        .zip(q.iter())
+        .map(|(&pi, &qi)| {
+            let m = (pi + qi) * 0.5;
+            pi * crate::kernels::ln::ln_f64(pi / m) + qi * crate::kernels::ln::ln_f64(qi / m)
         })
         .sum()
 }

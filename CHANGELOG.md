@@ -52,7 +52,11 @@ so it is all listed as additions.
   `mean`, `variance`, `std_dev`, `geometric_mean`, `dot`, `count_zero`,
   `count_nan`, `count_infinite`.
 - `distance`: `l1_norm`, `l2_norm`, `max_norm`, `squared_distance`
-  (fused `sub + mul + reduce_add` in one pass).
+  (fused `sub + mul + reduce_add` in one pass), `kl_divergence`,
+  `js_divergence` (fused `div + ln + mul + reduce_add` in one pass over
+  the register-only fdlibm `ln` kernels; raw IEEE zero/NaN semantics, no
+  input normalization, `js_divergence` returns the divergence rather than
+  the sqrt-distance).
 - `math`: `sqrt`, `clip`, `rsqrt`, `exp`, `ln`, `tanh`, `hypot`, `powi`,
   `abs_sub` — each also as an allocation-free `*_into` variant.
 - `ml`: `softmax`, `log_softmax`, `sigmoid`, `silu`, `gelu`, `relu`,

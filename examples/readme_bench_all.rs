@@ -190,6 +190,32 @@ fn main() {
                 .sum::<f32>()
         }),
     );
+    row(
+        "distance",
+        "kl_divergence",
+        time_us(|| lanes::distance::f32::kl_divergence(&pos, &near1).unwrap()),
+        time_us(|| {
+            pos.iter()
+                .zip(&near1)
+                .map(|(&p, &q)| p * (p / q).ln())
+                .sum::<f32>()
+        }),
+    );
+    row(
+        "distance",
+        "js_divergence",
+        time_us(|| lanes::distance::f32::js_divergence(&pos, &near1).unwrap()),
+        time_us(|| {
+            pos.iter()
+                .zip(&near1)
+                .map(|(&p, &q)| {
+                    let m = (p + q) * 0.5;
+                    p * (p / m).ln() + q * (q / m).ln()
+                })
+                .sum::<f32>()
+                * 0.5
+        }),
+    );
 
     // ---------------- math ----------------
     row(

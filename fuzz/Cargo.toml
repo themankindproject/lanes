@@ -41,3 +41,8 @@ doc = false
 name = "fuzz_norms"
 path = "fuzz_targets/fuzz_norms.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_divergence"
+path = "fuzz_targets/fuzz_divergence.rs"
+doc = false

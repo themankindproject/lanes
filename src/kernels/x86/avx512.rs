@@ -32,7 +32,11 @@ use core::arch::x86_64::*;
 // backend on `avx512f` alone (see `platform::supports`), so the DQ forms
 // would SIGILL on F-only parts (e.g. Knights Landing). The `_si512`
 // integer versions are AVX-512F.
-#[cfg(feature = "alloc")]
+//
+// `and`/`or`/`andnot` are also used by the register-only `vln` kernels,
+// which are allocation-free (no_std reductions), so those six are not
+// alloc-gated. The `xor` pair is only used by the alloc-gated `vexp`
+// kernels and stays gated.
 #[inline]
 fn and_ps(a: __m512, b: __m512) -> __m512 {
     unsafe {
@@ -42,7 +46,6 @@ fn and_ps(a: __m512, b: __m512) -> __m512 {
         ))
     }
 }
-#[cfg(feature = "alloc")]
 #[inline]
 fn or_ps(a: __m512, b: __m512) -> __m512 {
     unsafe {
@@ -62,7 +65,6 @@ fn xor_ps(a: __m512, b: __m512) -> __m512 {
         ))
     }
 }
-#[cfg(feature = "alloc")]
 #[inline]
 fn andnot_ps(a: __m512, b: __m512) -> __m512 {
     unsafe {
@@ -72,7 +74,6 @@ fn andnot_ps(a: __m512, b: __m512) -> __m512 {
         ))
     }
 }
-#[cfg(feature = "alloc")]
 #[inline]
 fn and_pd(a: __m512d, b: __m512d) -> __m512d {
     unsafe {
@@ -82,7 +83,6 @@ fn and_pd(a: __m512d, b: __m512d) -> __m512d {
         ))
     }
 }
-#[cfg(feature = "alloc")]
 #[inline]
 fn or_pd(a: __m512d, b: __m512d) -> __m512d {
     unsafe {
@@ -102,7 +102,6 @@ fn xor_pd(a: __m512d, b: __m512d) -> __m512d {
         ))
     }
 }
-#[cfg(feature = "alloc")]
 #[inline]
 fn andnot_pd(a: __m512d, b: __m512d) -> __m512d {
     unsafe {
@@ -253,6 +252,45 @@ crate::simd_reduce2!(
     |r: f32, a: f32, b: f32| {
         let d = a - b;
         r + d * d
+    },
+    _mm512_add_ps
+);
+// KL divergence: fused div → ln → mul → accumulate (dot skeleton). The
+// register-only fdlibm `ln` handles IEEE specials branch-free, so the
+// vector path matches the scalar reference term-for-term.
+crate::simd_reduce2!(
+    kl_divergence,
+    f32,
+    ["avx512f"],
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    _mm512_setzero_ps(),
+    |acc: __m512, vp: __m512, vq: __m512| unsafe {
+        let r = vln_512(_mm512_div_ps(vp, vq));
+        _mm512_add_ps(acc, _mm512_mul_ps(vp, r))
+    },
+    |v| unsafe { _mm512_reduce_add_ps(v) },
+    |r: f32, a: f32, b: f32| r + a * crate::kernels::ln::ln(a / b),
+    _mm512_add_ps
+);
+// Jensen–Shannon divergence: raw two-sided sum (the wrapper halves it).
+crate::simd_reduce2!(
+    js_divergence,
+    f32,
+    ["avx512f"],
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    _mm512_setzero_ps(),
+    |acc: __m512, vp: __m512, vq: __m512| unsafe {
+        let m = _mm512_mul_ps(_mm512_add_ps(vp, vq), _mm512_set1_ps(0.5));
+        let tp = _mm512_mul_ps(vp, vln_512(_mm512_div_ps(vp, m)));
+        let tq = _mm512_mul_ps(vq, vln_512(_mm512_div_ps(vq, m)));
+        _mm512_add_ps(acc, _mm512_add_ps(tp, tq))
+    },
+    |v| unsafe { _mm512_reduce_add_ps(v) },
+    |r: f32, a: f32, b: f32| {
+        let m = (a + b) * 0.5;
+        r + a * crate::kernels::ln::ln(a / m) + b * crate::kernels::ln::ln(b / m)
     },
     _mm512_add_ps
 );
@@ -1098,6 +1136,43 @@ crate::simd_reduce2!(
     |r: f64, a: f64, b: f64| {
         let d = a - b;
         r + d * d
+    },
+    _mm512_add_pd
+);
+// KL divergence (f64): fused div → ln → mul → accumulate (dot skeleton).
+crate::simd_reduce2!(
+    kl_divergence_f64,
+    f64,
+    ["avx512f"],
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_setzero_pd(),
+    |acc: __m512d, vp: __m512d, vq: __m512d| unsafe {
+        let r = vln_512d(_mm512_div_pd(vp, vq));
+        _mm512_add_pd(acc, _mm512_mul_pd(vp, r))
+    },
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |r: f64, a: f64, b: f64| r + a * crate::kernels::ln::ln_f64(a / b),
+    _mm512_add_pd
+);
+// Jensen–Shannon divergence (f64): raw two-sided sum (wrapper halves it).
+crate::simd_reduce2!(
+    js_divergence_f64,
+    f64,
+    ["avx512f"],
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_setzero_pd(),
+    |acc: __m512d, vp: __m512d, vq: __m512d| unsafe {
+        let m = _mm512_mul_pd(_mm512_add_pd(vp, vq), _mm512_set1_pd(0.5));
+        let tp = _mm512_mul_pd(vp, vln_512d(_mm512_div_pd(vp, m)));
+        let tq = _mm512_mul_pd(vq, vln_512d(_mm512_div_pd(vq, m)));
+        _mm512_add_pd(acc, _mm512_add_pd(tp, tq))
+    },
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |r: f64, a: f64, b: f64| {
+        let m = (a + b) * 0.5;
+        r + a * crate::kernels::ln::ln_f64(a / m) + b * crate::kernels::ln::ln_f64(b / m)
     },
     _mm512_add_pd
 );

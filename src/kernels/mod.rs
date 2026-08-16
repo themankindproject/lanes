@@ -326,6 +326,30 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_kl_divergence,
+    [p: &[f32], q: &[f32]],
+    f32,
+    scalar::kl_divergence,
+    x86::sse2::kl_divergence,
+    x86::avx2::kl_divergence,
+    x86::avx512::kl_divergence,
+    aarch64::neon::kl_divergence,
+    id
+);
+
+dispatch!(
+    dispatch_js_divergence,
+    [p: &[f32], q: &[f32]],
+    f32,
+    scalar::js_divergence,
+    x86::sse2::js_divergence,
+    x86::avx2::js_divergence,
+    x86::avx512::js_divergence,
+    aarch64::neon::js_divergence,
+    id
+);
+
+dispatch!(
     dispatch_softmax,
     [values: &[f32], out: &mut [f32]],
     (),
@@ -745,6 +769,30 @@ dispatch!(
     x86::avx2::squared_distance_f64,
     x86::avx512::squared_distance_f64,
     aarch64::neon::squared_distance_f64,
+    id
+);
+
+dispatch!(
+    dispatch_kl_divergence_f64,
+    [p: &[f64], q: &[f64]],
+    f64,
+    scalar::kl_divergence_f64,
+    x86::sse2::kl_divergence_f64,
+    x86::avx2::kl_divergence_f64,
+    x86::avx512::kl_divergence_f64,
+    aarch64::neon::kl_divergence_f64,
+    id
+);
+
+dispatch!(
+    dispatch_js_divergence_f64,
+    [p: &[f64], q: &[f64]],
+    f64,
+    scalar::js_divergence_f64,
+    x86::sse2::js_divergence_f64,
+    x86::avx2::js_divergence_f64,
+    x86::avx512::js_divergence_f64,
+    aarch64::neon::js_divergence_f64,
     id
 );
 
