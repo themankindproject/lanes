@@ -180,6 +180,58 @@ pub mod f32 {
         Some(kernels::dispatch_sum(backend, &centered) / n as f32)
     }
 
+    /// Compute the (population) variance of a slice, writing the result
+    /// into `out[0]` (allocation-free variant of [`variance`]).
+    ///
+    /// `scratch` must have the same length as `values` and is used as the
+    /// second-pass workspace (it holds the centered values); reuse it
+    /// across calls in hot loops to avoid the heap allocation that
+    /// [`variance`] performs. The result is bit-identical to
+    /// [`variance`] — same two-pass form, same SIMD kernels.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::LengthMismatch`] if `scratch.len() != values.len()`
+    /// or `out` is empty.
+    ///
+    /// # Example
+    /// ```
+    /// let data = [1.0_f32, 2.0, 3.0];
+    /// let mut scratch = [0.0_f32; 3];
+    /// let mut out = [0.0_f32; 1];
+    /// lanes::stats::f32::variance_into(&data, &mut scratch, &mut out).unwrap();
+    /// assert!((out[0] - 2.0 / 3.0).abs() < 1e-6);
+    /// ```
+    #[allow(clippy::cast_precision_loss)] // `len as f32` is inherent to variance
+    pub fn variance_into(
+        values: &[f32],
+        scratch: &mut [f32],
+        out: &mut [f32],
+    ) -> Result<(), Error> {
+        if values.len() != scratch.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: scratch.len(),
+            });
+        }
+        if out.is_empty() {
+            return Err(Error::LengthMismatch {
+                expected: 1,
+                actual: 0,
+            });
+        }
+        if values.is_empty() {
+            return Ok(()); // crate convention: empty input leaves `out` untouched
+        }
+        let backend = Backend::detect();
+        let mean = kernels::dispatch_sum(backend, values) / values.len() as f32;
+        for (c, &x) in scratch.iter_mut().zip(values) {
+            *c = x - mean;
+        }
+        out[0] = kernels::dispatch_sum_sq(backend, scratch) / values.len() as f32;
+        Ok(())
+    }
+
     /// Compute the (population) standard deviation of a slice:
     /// `sqrt(variance(x))`.
     ///
@@ -197,6 +249,53 @@ pub mod f32 {
     #[must_use]
     pub fn std_dev(values: &[f32]) -> Option<f32> {
         variance(values).map(crate::kernels::sqrt::sqrt)
+    }
+
+    /// Compute the (population) standard deviation of a slice, writing the
+    /// result into `out[0]` (allocation-free variant of [`std_dev`]).
+    ///
+    /// Same contract as [`variance_into`]: `scratch` must match
+    /// `values.len()`, `out` must be non-empty, and the result is
+    /// bit-identical to [`std_dev`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::LengthMismatch`] if `scratch.len() != values.len()`
+    /// or `out` is empty.
+    ///
+    /// # Example
+    /// ```
+    /// let data = [1.0_f32, 2.0, 3.0];
+    /// let mut scratch = [0.0_f32; 3];
+    /// let mut out = [0.0_f32; 1];
+    /// lanes::stats::f32::std_dev_into(&data, &mut scratch, &mut out).unwrap();
+    /// assert!((out[0] - (2.0_f32 / 3.0).sqrt()).abs() < 1e-6);
+    /// ```
+    #[allow(clippy::cast_precision_loss)] // `len as f32` is inherent to the variance
+    pub fn std_dev_into(values: &[f32], scratch: &mut [f32], out: &mut [f32]) -> Result<(), Error> {
+        if values.len() != scratch.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: scratch.len(),
+            });
+        }
+        if out.is_empty() {
+            return Err(Error::LengthMismatch {
+                expected: 1,
+                actual: 0,
+            });
+        }
+        if values.is_empty() {
+            return Ok(()); // crate convention: empty input leaves `out` untouched
+        }
+        let backend = Backend::detect();
+        let mean = kernels::dispatch_sum(backend, values) / values.len() as f32;
+        for (c, &x) in scratch.iter_mut().zip(values) {
+            *c = x - mean;
+        }
+        let var = kernels::dispatch_sum_sq(backend, scratch) / values.len() as f32;
+        out[0] = crate::kernels::sqrt::sqrt(var);
+        Ok(())
     }
 
     /// Compute the geometric mean of a slice:
@@ -478,6 +577,58 @@ pub mod f64 {
         Some(kernels::dispatch_sum_f64(backend, &centered) / n as f64)
     }
 
+    /// Compute the (population) variance of a slice, writing the result
+    /// into `out[0]` (allocation-free variant of [`variance`]).
+    ///
+    /// `scratch` must have the same length as `values` and is used as the
+    /// second-pass workspace (it holds the centered values); reuse it
+    /// across calls in hot loops to avoid the heap allocation that
+    /// [`variance`] performs. The result is bit-identical to
+    /// [`variance`] — same two-pass form, same SIMD kernels.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::LengthMismatch`] if `scratch.len() != values.len()`
+    /// or `out` is empty.
+    ///
+    /// # Example
+    /// ```
+    /// let data = [1.0_f64, 2.0, 3.0];
+    /// let mut scratch = [0.0_f64; 3];
+    /// let mut out = [0.0_f64; 1];
+    /// lanes::stats::f64::variance_into(&data, &mut scratch, &mut out).unwrap();
+    /// assert!((out[0] - 2.0 / 3.0).abs() < 1e-12);
+    /// ```
+    #[allow(clippy::cast_precision_loss)] // `len as f64` is inherent to variance
+    pub fn variance_into(
+        values: &[f64],
+        scratch: &mut [f64],
+        out: &mut [f64],
+    ) -> Result<(), Error> {
+        if values.len() != scratch.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: scratch.len(),
+            });
+        }
+        if out.is_empty() {
+            return Err(Error::LengthMismatch {
+                expected: 1,
+                actual: 0,
+            });
+        }
+        if values.is_empty() {
+            return Ok(()); // crate convention: empty input leaves `out` untouched
+        }
+        let backend = Backend::detect();
+        let mean = kernels::dispatch_sum_f64(backend, values) / values.len() as f64;
+        for (c, &x) in scratch.iter_mut().zip(values) {
+            *c = x - mean;
+        }
+        out[0] = kernels::dispatch_sum_sq_f64(backend, scratch) / values.len() as f64;
+        Ok(())
+    }
+
     /// Compute the (population) standard deviation of a slice:
     /// `sqrt(variance(x))`.
     ///
@@ -495,6 +646,53 @@ pub mod f64 {
     #[must_use]
     pub fn std_dev(values: &[f64]) -> Option<f64> {
         variance(values).map(crate::kernels::sqrt::sqrt_f64)
+    }
+
+    /// Compute the (population) standard deviation of a slice, writing the
+    /// result into `out[0]` (allocation-free variant of [`std_dev`]).
+    ///
+    /// Same contract as [`variance_into`]: `scratch` must match
+    /// `values.len()`, `out` must be non-empty, and the result is
+    /// bit-identical to [`std_dev`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::LengthMismatch`] if `scratch.len() != values.len()`
+    /// or `out` is empty.
+    ///
+    /// # Example
+    /// ```
+    /// let data = [1.0_f64, 2.0, 3.0];
+    /// let mut scratch = [0.0_f64; 3];
+    /// let mut out = [0.0_f64; 1];
+    /// lanes::stats::f64::std_dev_into(&data, &mut scratch, &mut out).unwrap();
+    /// assert!((out[0] - (2.0_f64 / 3.0).sqrt()).abs() < 1e-12);
+    /// ```
+    #[allow(clippy::cast_precision_loss)] // `len as f64` is inherent to the variance
+    pub fn std_dev_into(values: &[f64], scratch: &mut [f64], out: &mut [f64]) -> Result<(), Error> {
+        if values.len() != scratch.len() {
+            return Err(Error::LengthMismatch {
+                expected: values.len(),
+                actual: scratch.len(),
+            });
+        }
+        if out.is_empty() {
+            return Err(Error::LengthMismatch {
+                expected: 1,
+                actual: 0,
+            });
+        }
+        if values.is_empty() {
+            return Ok(()); // crate convention: empty input leaves `out` untouched
+        }
+        let backend = Backend::detect();
+        let mean = kernels::dispatch_sum_f64(backend, values) / values.len() as f64;
+        for (c, &x) in scratch.iter_mut().zip(values) {
+            *c = x - mean;
+        }
+        let var = kernels::dispatch_sum_sq_f64(backend, scratch) / values.len() as f64;
+        out[0] = crate::kernels::sqrt::sqrt_f64(var);
+        Ok(())
     }
 
     /// Compute the geometric mean of a slice:

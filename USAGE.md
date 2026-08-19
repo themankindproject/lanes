@@ -155,7 +155,9 @@ Aggregates over a slice. All dispatch to the best available SIMD backend.
 | `sum_sq` | `fn sum_sq(values: &[T]) -> T` | `0.0` | Sum of squares |
 | `mean` | `fn mean(values: &[T]) -> Option<T>` | `None` | Arithmetic mean |
 | `variance` | `fn variance(values: &[T]) -> Option<T>` | `None` | **`alloc`-gated.** Population variance, numerically stable two-pass `sum((x−μ)²)/n` |
+| `variance_into` | `fn variance_into(values, scratch, out) -> Result<(), Error>` | `Ok(())` | Allocation-free two-pass variance; `scratch` must match `values.len()`, result lands in `out[0]`. Bit-identical to `variance` |
 | `std_dev` | `fn std_dev(values: &[T]) -> Option<T>` | `None` | **`alloc`-gated.** `sqrt(variance(x))` (population) |
+| `std_dev_into` | `fn std_dev_into(values, scratch, out) -> Result<(), Error>` | `Ok(())` | Allocation-free `std_dev`; same scratch contract as `variance_into`, bit-identical to `std_dev` |
 | `geometric_mean` | `fn geometric_mean(values: &[T]) -> Result<T, Error>` | `Err(Error::EmptyInput)` | **`alloc`-gated.** `exp(mean(ln(x)))`; `Err(Error::NonPositiveInput { index })` if any value ≤ 0; NaN inputs propagate to a NaN result |
 | `dot` | `fn dot(a: &[T], b: &[T]) -> Result<T, Error>` | `Ok(0.0)` for two empty slices | `Err(LengthMismatch)` if lengths differ |
 | `count_zero` | `fn count_zero(values: &[T]) -> usize` | `0` | Counts `+0.0` and `-0.0` |
@@ -531,7 +533,7 @@ input.
 | `exp` | ≤ 2 ulp vs `std::exp` (f32), ≤ 1 ulp (f64); exact IEEE saturation, never NaN for finite out-of-range input |
 | `ln` | ≤ 1 ulp vs `std::ln` (fdlibm algorithm) |
 | `tanh` | derived from the `exp` kernel; saturates to ±1 |
-| `sqrt`, `rsqrt` | correctly rounded (hardware instruction on every SIMD backend; std-free fallback within ~1 ulp in `no_std`) |
+| `sqrt`, `rsqrt` | correctly rounded: `sqrt` is the hardware instruction on every SIMD backend; `rsqrt` is the hardware approx + two Newton refinements (AVX2/AVX-512, measured 0 ulp over the full finite range) or the exact `div(sqrt)` (SSE2). Std-free fallback within ~1 ulp in `no_std` |
 | `hypot` | ≤ 1–2 ulp vs `std::hypot`, identical NaN/inf propagation (`hypot(inf, nan) == inf`) |
 | `powi` | **bit-exact** vs `std::powi` on every backend |
 | `abs_sub` | bit-exact vs `(x - y).abs()` |

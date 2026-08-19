@@ -11,9 +11,10 @@
 //! scalar `f32::min`/`f32::max` semantics. For NaN-free inputs the SIMD and
 //! scalar results agree exactly.
 //!
-//! Note: newer stdarch releases declare most intrinsics `safe fn`; older
-//! ones (the MSRV toolchain) declare them `unsafe fn`. The explicit
-//! `unsafe {}` blocks keep this file compiling on both, hence the allow.
+//! Note: stdarch declared most intrinsics `safe fn` in Rust 1.87, and the
+//! crate MSRV is 1.89, so the explicit `unsafe {}` blocks here are
+//! redundant (but legal) — hence the `unused_unsafe` allow. They are kept
+//! for uniformity with the load/store-style intrinsics that remain unsafe.
 
 #![allow(
     clippy::many_single_char_names, // intrinsic style: v, n, r, p are conventional
@@ -976,8 +977,10 @@ crate::simd_powi!(
     unsafe { _mm_set1_ps(1.0) },
     |x: f32, n: i32| crate::kernels::powi::powi(x, n)
 );
-// Rsqrt: one-pass map, 1/sqrt(v) (exact via div+sqrt, not the ~12-bit
-// hardware approximation — correctness-first).
+// Rsqrt: one-pass map, 1/sqrt(v) via the exact div+sqrt pair. The
+// `rsqrtps`+Newton alternative was measured slower on this SSE2 tier
+// (Tiger Lake's div/sqrt hardware beats the approx+refine chain at this
+// width), so correctness-first is also the fast path here.
 crate::simd_map!(
     rsqrt,
     f32,
@@ -991,7 +994,7 @@ crate::simd_map!(
 crate::simd_exp!(
     vexp_128,
     f32,
-    "sse2",
+    ["sse2"],
     __m128,
     __m128i,
     |s| unsafe { _mm_set1_ps(s) },
@@ -999,6 +1002,8 @@ crate::simd_exp!(
     |a, b| unsafe { _mm_mul_ps(a, b) },
     |a, b| unsafe { _mm_add_ps(a, b) },
     |a, b| unsafe { _mm_sub_ps(a, b) },
+    // SSE2 has no FMA: the mul+add pair is the best available.
+    |a, b, c| unsafe { _mm_add_ps(_mm_mul_ps(a, b), c) },
     |a, b| unsafe { _mm_and_ps(a, b) },
     |a, b| unsafe { _mm_andnot_ps(a, b) },
     |a, b| unsafe { _mm_or_ps(a, b) },
@@ -1018,7 +1023,7 @@ crate::simd_exp!(
 // Vector ln (f32): fdlibm e_log reduction, see simd_ln! in macros.rs.
 crate::simd_ln!(
     vln_128,
-    "sse2",
+    ["sse2"],
     __m128,
     __m128i,
     |s| unsafe { _mm_set1_ps(s) },
@@ -1026,6 +1031,8 @@ crate::simd_ln!(
     |a, b| unsafe { _mm_add_ps(a, b) },
     |a, b| unsafe { _mm_sub_ps(a, b) },
     |a, b| unsafe { _mm_mul_ps(a, b) },
+    // SSE2 has no FMA: the mul+add pair is the best available.
+    |a, b, c| unsafe { _mm_add_ps(_mm_mul_ps(a, b), c) },
     |v| unsafe { _mm_cvtepi32_ps(v) },
     |v| unsafe { _mm_castsi128_ps(v) },
     |v| unsafe { _mm_castps_si128(v) },
@@ -2319,24 +2326,17 @@ unsafe fn tail_l_128d(a: __m128d, u: __m128d) -> __m128d {
     }
 }
 
-/// erfc(x) for 2 lanes, full domain (sign, specials, NaN). Lane-for-lane
-/// mirror of the scalar `erfc_f64`: erfc(|x|) from the piecewise regions,
-/// then `2 − c` for negative lanes. NaN lanes fall through every region
-/// mask into the tail (producing garbage) and are blended back to NaN at
-/// the end; ±∞ fall out of the tail arithmetic naturally (0 / 2).
+/// erfc(`|x|`) for the small region `|x| < T_SMALL`: the split forms,
+/// mirror of the scalar `erfc_pos` (tiny / low / high sub-regions). Shared
+/// by the pure-small fast path and the general blend path.
 ///
 /// # Safety
 /// Caller must ensure SSE2 is available.
 #[cfg(feature = "alloc")]
 #[inline]
 #[target_feature(enable = "sse2")]
-unsafe fn verfc_128d(v: __m128d) -> __m128d {
-    let sign_bit = unsafe { _mm_set1_pd(-0.0) };
-    let a = unsafe { _mm_andnot_pd(sign_bit, v) }; // |x|
-    let nan = unsafe { _mm_cmpunord_pd(v, v) };
-
-    // --- small region: split forms (mirror of erfc_pos) ----------------
-    let x2 = unsafe { _mm_mul_pd(v, v) }; // x² is sign-free
+unsafe fn erfc_small_128d(a: __m128d) -> __m128d {
+    let x2 = unsafe { _mm_mul_pd(a, a) }; // x² is sign-free
     let xr = unsafe { _mm_mul_pd(a, horner_r_128d(x2)) };
     // tiny: 1 − a (correctly rounded below 2^-56)
     let tiny_val = unsafe { _mm_sub_pd(_mm_set1_pd(1.0), a) };
@@ -2351,7 +2351,7 @@ unsafe fn verfc_128d(v: __m128d) -> __m128d {
     };
     let m_tiny = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(crate::kernels::erf::T_TINY)) };
     let m_quarter = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(0.25)) };
-    let small_val = unsafe {
+    unsafe {
         _mm_or_pd(
             _mm_and_pd(m_tiny, tiny_val),
             _mm_andnot_pd(
@@ -2362,12 +2362,20 @@ unsafe fn verfc_128d(v: __m128d) -> __m128d {
                 ),
             ),
         )
-    };
+    }
+}
 
-    // --- middle region: P(s)/Q(s), s = |x| − 1 --------------------------
-    let mid_val = unsafe { erfc1_pq_128d(_mm_sub_pd(a, _mm_set1_pd(1.0))) };
-
-    // --- tail: z-trick ---------------------------------------------------
+/// erfc(`|x|`) for the tail region `|x| ∈ [T_MID, XMAX]`: the z-trick, raw
+/// (no XMAX clamp — the general path applies it; the pure-tail fast path is
+/// guarded to |x| ≤ XMAX so needs none). Shared by the pure-tail fast path
+/// and the general blend path.
+///
+/// # Safety
+/// Caller must ensure SSE2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn erfc_tail_raw_128d(a: __m128d) -> __m128d {
     // z = |x| with the low 32 mantissa bits cleared, so z² + 0.5625 is
     // exactly representable and the first exp argument is rounding-free.
     let z = unsafe {
@@ -2390,14 +2398,74 @@ unsafe fn verfc_128d(v: __m128d) -> __m128d {
             l,
         ))
     };
-    let tail_val = unsafe { _mm_div_pd(_mm_mul_pd(e1, e2), a) };
-    // |x| > XMAX (incl. +∞ and NaN fall-through): 0
-    let m_xmax = unsafe { _mm_cmple_pd(a, _mm_set1_pd(crate::kernels::erf::XMAX)) };
-    let tail_val = unsafe { _mm_and_pd(m_xmax, tail_val) };
+    unsafe { _mm_div_pd(_mm_mul_pd(e1, e2), a) }
+}
 
-    // --- assemble erfc(|x|), then sign -----------------------------------
+/// Apply the erfc sign reflection: erfc(x) = c for x ≥ 0, 2 − c for x < 0,
+/// where c = erfc(|x|). Shared by every erfc path.
+///
+/// # Safety
+/// Caller must ensure SSE2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn erfc_apply_sign_128d(v: __m128d, c: __m128d) -> __m128d {
+    let neg = unsafe { _mm_cmplt_pd(v, _mm_setzero_pd()) };
+    unsafe {
+        _mm_or_pd(
+            _mm_and_pd(neg, _mm_sub_pd(_mm_set1_pd(2.0), c)),
+            _mm_andnot_pd(neg, c),
+        )
+    }
+}
+
+/// erfc(x) for 2 lanes, full domain (sign, specials, NaN). Lane-for-lane
+/// mirror of the scalar `erfc_f64`: erfc(|x|) from the piecewise regions,
+/// then `2 − c` for negative lanes. NaN lanes fall through every region
+/// mask into the tail (producing garbage) and are blended back to NaN at
+/// the end; ±∞ fall out of the tail arithmetic naturally (0 / 2).
+///
+/// Pure-region chunks take a fast path that evaluates only their own region
+/// (the small/middle/tail forms are mutually exclusive per lane, so a chunk
+/// whose 2 lanes all fall in one region gets the same bits without paying for
+/// the other two — in particular skipping the tail's two vector `exp`s). NaN
+/// lanes clear every ordered-compare mask, so any NaN forces the general blend
+/// path and preserves NaN-in → NaN-out.
+///
+/// # Safety
+/// Caller must ensure SSE2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn verfc_128d(v: __m128d) -> __m128d {
+    let sign_bit = unsafe { _mm_set1_pd(-0.0) };
+    let a = unsafe { _mm_andnot_pd(sign_bit, v) }; // |x|
+
     let m_small = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(crate::kernels::erf::T_SMALL)) };
     let m_mid = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(crate::kernels::erf::T_MID)) };
+    let m_tail_end = unsafe { _mm_cmple_pd(a, _mm_set1_pd(crate::kernels::erf::XMAX)) };
+    let bits_small = unsafe { _mm_movemask_pd(m_small) };
+    let bits_mid = unsafe { _mm_movemask_pd(m_mid) };
+
+    // --- fast paths: pure-region chunks (NaN can never reach these) ------
+    if bits_small == 0b11 {
+        return unsafe { erfc_apply_sign_128d(v, erfc_small_128d(a)) };
+    }
+    if bits_small == 0 && bits_mid == 0b11 {
+        let c = unsafe { erfc1_pq_128d(_mm_sub_pd(a, _mm_set1_pd(1.0))) };
+        return unsafe { erfc_apply_sign_128d(v, c) };
+    }
+    if bits_mid == 0 && unsafe { _mm_movemask_pd(m_tail_end) } == 0b11 {
+        return unsafe { erfc_apply_sign_128d(v, erfc_tail_raw_128d(a)) };
+    }
+
+    // --- general path: mixed regions (or NaN present) — blend per lane ---
+    let nan = unsafe { _mm_cmpunord_pd(v, v) };
+    let small_val = unsafe { erfc_small_128d(a) };
+    let mid_val = unsafe { erfc1_pq_128d(_mm_sub_pd(a, _mm_set1_pd(1.0))) };
+    let tail_val = unsafe { erfc_tail_raw_128d(a) };
+    // |x| > XMAX (incl. +∞ and NaN fall-through): 0
+    let tail_val = unsafe { _mm_and_pd(m_tail_end, tail_val) };
     let c = unsafe {
         _mm_or_pd(
             _mm_and_pd(m_small, small_val),
@@ -2407,13 +2475,7 @@ unsafe fn verfc_128d(v: __m128d) -> __m128d {
             ),
         )
     };
-    let neg = unsafe { _mm_cmplt_pd(v, _mm_setzero_pd()) };
-    let out = unsafe {
-        _mm_or_pd(
-            _mm_and_pd(neg, _mm_sub_pd(_mm_set1_pd(2.0), c)),
-            _mm_andnot_pd(neg, c),
-        )
-    };
+    let out = unsafe { erfc_apply_sign_128d(v, c) };
     unsafe { _mm_or_pd(out, nan) } // NaN in → NaN out
 }
 
@@ -2421,6 +2483,12 @@ unsafe fn verfc_128d(v: __m128d) -> __m128d {
 /// small region `x + x·R(x²)` (exact at ±0, signed), otherwise
 /// `1 − erfc(|x|)` with the sign applied. ±∞ saturate via the tail
 /// (1 − 0 / 1 − 2); NaN lanes are blended back to NaN at the end.
+///
+/// Pure-region chunks take a fast path: a pure-small chunk evaluates only
+/// `x + x·R(x²)` (skipping the whole `verfc_128d` call, i.e. both vector
+/// `exp`s), and a pure-big chunk skips the small form. NaN clears `m_small`,
+/// so a pure-small chunk has no NaN; the pure-big path re-applies the NaN
+/// blend so NaN-in → NaN-out is preserved bit-for-bit.
 ///
 /// # Safety
 /// Caller must ensure SSE2 is available.
@@ -2430,12 +2498,13 @@ unsafe fn verfc_128d(v: __m128d) -> __m128d {
 unsafe fn verf_128d(v: __m128d) -> __m128d {
     let sign_bit = unsafe { _mm_set1_pd(-0.0) };
     let a = unsafe { _mm_andnot_pd(sign_bit, v) }; // |x|
-    let nan = unsafe { _mm_cmpunord_pd(v, v) };
+    let m_small = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(crate::kernels::erf::T_SMALL)) };
 
-    // small: erf(x) = x + x·R(x²) — R(0) = 2/√π − 1, exact at ±0; the
-    // form is already signed (uses v, not |v|), so no sign flip below.
-    let x2 = unsafe { _mm_mul_pd(v, v) };
-    let small_val = unsafe { _mm_add_pd(v, _mm_mul_pd(v, horner_r_128d(x2))) };
+    // --- fast path: pure-small chunk (NaN can never reach this) ----------
+    if unsafe { _mm_movemask_pd(m_small) } == 0b11 {
+        let x2 = unsafe { _mm_mul_pd(v, v) };
+        return unsafe { _mm_add_pd(v, _mm_mul_pd(v, horner_r_128d(x2))) };
+    }
 
     // big: 1 − erfc(|x|) (verfc handles the |x| > XMAX → 0 tail), then
     // odd symmetry — the sign flip applies ONLY to the big region, exactly
@@ -2448,8 +2517,16 @@ unsafe fn verf_128d(v: __m128d) -> __m128d {
             _mm_andnot_pd(neg, big_val),
         )
     };
+    let nan = unsafe { _mm_cmpunord_pd(v, v) };
 
-    let m_small = unsafe { _mm_cmplt_pd(a, _mm_set1_pd(crate::kernels::erf::T_SMALL)) };
+    // --- fast path: pure-big chunk — skip the small form -----------------
+    if unsafe { _mm_movemask_pd(m_small) } == 0 {
+        return unsafe { _mm_or_pd(big_val, nan) };
+    }
+
+    // --- general path: mixed regions — evaluate the small form and blend -
+    let x2 = unsafe { _mm_mul_pd(v, v) };
+    let small_val = unsafe { _mm_add_pd(v, _mm_mul_pd(v, horner_r_128d(x2))) };
     let y = unsafe {
         _mm_or_pd(
             _mm_and_pd(m_small, small_val),

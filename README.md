@@ -16,12 +16,12 @@ panics on bad input — fallible kernels return `Result`.
 
 | Kernel | `lanes` | naive iterator | speedup |
 | --- | ---: | ---: | ---: |
-| `sum` | 6.2 µs | 146.6 µs | **23.8×** |
-| `l2_norm` | 6.9 µs | 147.3 µs | **21.4×** |
-| `dot` | 12.3 µs | 146.9 µs | **11.9×** |
-| `tanh` | 146.7 µs | 774.4 µs | **5.3×** |
-| `softmax` | 140.6 µs | 845.6 µs | **6.0×** |
-| `exp` | 95.1 µs | 355.9 µs | **3.7×** |
+| `sum` | 6.2 µs | 147.2 µs | **23.9×** |
+| `l2_norm` | 6.9 µs | 147.2 µs | **21.3×** |
+| `dot` | 12.4 µs | 146.9 µs | **11.8×** |
+| `tanh` | 120.5 µs | 771.5 µs | **6.4×** |
+| `softmax` | 110.0 µs | 861.0 µs | **7.8×** |
+| `exp` | 65.8 µs | 365.2 µs | **5.6×** |
 
 <sub>f32, n = 65,536, AVX-512F backend on an i5-1135G7, release build.
 "naive" is the plain iterator expression compiled with the same
@@ -130,60 +130,60 @@ same accuracy class as the `lanes` kernels.
 
 | Family | Function | `lanes` | naive | speedup |
 | --- | --- | ---: | ---: | ---: |
-| `stats` | `sum` | 6.2 µs | 146.6 µs | **23.8×** |
-| `stats` | `prod` | 9.3 µs | 146.8 µs | **15.9×** |
-| `stats` | `min` | 11.6 µs | 295.5 µs | **25.4×** |
-| `stats` | `max` | 11.6 µs | 292.9 µs | **25.2×** |
-| `stats` | `argmax` | 18.8 µs | 147.4 µs | **7.8×** |
-| `stats` | `argmin` | 18.2 µs | 148.7 µs | **8.2×** |
-| `stats` | `sum_sq` | 7.2 µs | 147.8 µs | **20.4×** |
-| `stats` | `mean` | 6.4 µs | 147.7 µs | **23.0×** |
-| `stats` | `variance` | 25.4 µs | 295.7 µs | **11.6×** |
-| `stats` | `std_dev` | 24.0 µs | 293.8 µs | **12.3×** |
-| `stats` | `geometric_mean` | 142.3 µs | 425.1 µs | **3.0×** |
-| `stats` | `dot` | 12.3 µs | 146.9 µs | **11.9×** |
-| `stats` | `count_zero` | 25.1 µs | 26.9 µs | 1.1× |
-| `stats` | `count_nan` | 25.1 µs | 26.2 µs | 1.0× |
-| `stats` | `count_infinite` | 26.1 µs | 33.5 µs | 1.3× |
-| `distance` | `l1_norm` | 6.9 µs | 147.4 µs | **21.5×** |
-| `distance` | `l2_norm` | 6.9 µs | 147.3 µs | **21.4×** |
-| `distance` | `max_norm` | 11.6 µs | 289.5 µs | **25.0×** |
-| `distance` | `squared_distance` | 12.5 µs | 147.0 µs | **11.8×** |
-| `distance` | `kl_divergence` | 104.4 µs | 538.9 µs | **5.2×** |
-| `distance` | `js_divergence` | 223.5 µs | 1307.1 µs | **5.8×** |
-| `binary` | `hamming` | 4.7 µs | 122.5 µs | **25.8×** |
-| `binary` | `jaccard` | 8.6 µs | 239.9 µs | **28.0×** |
-| `stats::i8` | `dot` | 5.2 µs | 47.4 µs | **9.1×** |
-| `stats::i8` | `sum` | 4.3 µs | 21.7 µs | **5.1×** |
-| `stats::i8` | `sum_sq` | 4.8 µs | 37.0 µs | **7.7×** |
-| `stats::i8` | `min` | 1.3 µs | 5.3 µs | **4.0×** |
-| `stats::i8` | `max` | 1.3 µs | 5.3 µs | **4.0×** |
-| `stats::i8` | `count_zero` | 8.6 µs | 48.4 µs | **5.6×** |
-| `distance::i8` | `l1_norm` | 4.9 µs | 48.5 µs | **9.9×** |
-| `distance::i8` | `max_norm` | 2.6 µs | 3.0 µs | **1.1×** |
-| `distance::i8` | `squared_distance` | 6.1 µs | 66.8 µs | **10.9×** |
-| `math` | `sqrt` | 27.6 µs | 27.6 µs | 1.0× |
-| `math` | `clip` | 11.3 µs | 14.0 µs | 1.2× |
-| `math` | `rsqrt` | 50.5 µs | 55.0 µs | 1.1× |
-| `math` | `exp` | 95.1 µs | 355.9 µs | **3.7×** |
-| `math` | `ln` | 87.7 µs | 452.4 µs | **5.2×** |
-| `math` | `tanh` | 146.7 µs | 774.4 µs | **5.3×** |
-| `special` | `erf` | 782.8 µs | 488.0 µs | 0.6× |
-| `special` | `erfc` | 763.4 µs | 491.1 µs | 0.6× |
-| `math` | `hypot` | 50.5 µs | 367.2 µs | **7.3×** |
-| `math` | `powi` | 11.3 µs | 12.7 µs | 1.1× |
-| `math` | `abs_sub` | 16.6 µs | 20.4 µs | 1.2× |
-| `ml` | `softmax` | 140.6 µs | 845.6 µs | **6.0×** |
-| `ml` | `log_softmax` | 143.5 µs | 690.8 µs | **4.8×** |
-| `ml` | `sigmoid` | 114.6 µs | 372.5 µs | **3.3×** |
-| `ml` | `silu` | 113.2 µs | 372.4 µs | **3.3×** |
-| `ml` | `gelu` | 155.0 µs | 1140.9 µs | **7.4×** |
-| `ml` | `relu` | 10.9 µs | 12.5 µs | 1.2× |
-| `ml` | `softplus` | 350.8 µs | 1492.2 µs | **4.3×** |
-| `ml` | `rms_norm` | 20.1 µs | 159.4 µs | **7.9×** |
-| `ml` | `layer_norm` | 28.1 µs | 307.0 µs | **10.9×** |
-| `ml` | `cosine_similarity` | 25.9 µs | 439.4 µs | **17.0×** |
-| `ml` | `logsumexp` | 134.8 µs | 707.1 µs | **5.2×** |
+| `stats` | `sum` | 6.2 µs | 147.3 µs | **23.9×** |
+| `stats` | `prod` | 9.3 µs | 147.2 µs | **15.9×** |
+| `stats` | `min` | 11.7 µs | 294.9 µs | **25.3×** |
+| `stats` | `max` | 11.7 µs | 294.8 µs | **25.3×** |
+| `stats` | `argmax` | 18.6 µs | 148.0 µs | **8.0×** |
+| `stats` | `argmin` | 18.5 µs | 147.8 µs | **8.0×** |
+| `stats` | `sum_sq` | 6.8 µs | 147.3 µs | **21.5×** |
+| `stats` | `mean` | 6.2 µs | 147.3 µs | **23.8×** |
+| `stats` | `variance` | 26.8 µs | 294.4 µs | **11.0×** |
+| `stats` | `std_dev` | 27.4 µs | 295.1 µs | **10.8×** |
+| `stats` | `geometric_mean` | 119.3 µs | 459.3 µs | **3.8×** |
+| `stats` | `dot` | 12.7 µs | 147.8 µs | **11.7×** |
+| `stats` | `count_zero` | 25.2 µs | 26.4 µs | 1.0× |
+| `stats` | `count_nan` | 25.2 µs | 26.4 µs | 1.0× |
+| `stats` | `count_infinite` | 26.0 µs | 33.7 µs | 1.3× |
+| `distance` | `l1_norm` | 6.8 µs | 146.9 µs | **21.6×** |
+| `distance` | `l2_norm` | 6.8 µs | 146.9 µs | **21.5×** |
+| `distance` | `max_norm` | 11.6 µs | 290.0 µs | **25.1×** |
+| `distance` | `squared_distance` | 12.5 µs | 147.1 µs | **11.8×** |
+| `distance` | `kl_divergence` | 81.9 µs | 551.8 µs | **6.7×** |
+| `distance` | `js_divergence` | 179.8 µs | 1334.3 µs | **7.4×** |
+| `binary` | `hamming` | 4.7 µs | 122.2 µs | **25.8×** |
+| `binary` | `jaccard` | 8.7 µs | 239.0 µs | **27.6×** |
+| `stats::i8` | `dot` | 5.3 µs | 45.7 µs | **8.6×** |
+| `stats::i8` | `sum` | 4.7 µs | 22.1 µs | **4.7×** |
+| `stats::i8` | `sum_sq` | 4.9 µs | 41.4 µs | **8.5×** |
+| `stats::i8` | `min` | 1.4 µs | 5.5 µs | **4.0×** |
+| `stats::i8` | `max` | 1.4 µs | 5.3 µs | **3.8×** |
+| `stats::i8` | `count_zero` | 8.8 µs | 48.5 µs | **5.5×** |
+| `distance::i8` | `l1_norm` | 4.9 µs | 53.7 µs | **10.9×** |
+| `distance::i8` | `max_norm` | 2.7 µs | 3.6 µs | 1.3× |
+| `distance::i8` | `squared_distance` | 6.7 µs | 70.3 µs | **10.5×** |
+| `math` | `sqrt` | 27.7 µs | 27.6 µs | 1.0× |
+| `math` | `clip` | 11.7 µs | 14.0 µs | 1.2× |
+| `math` | `rsqrt` | 30.0 µs | 55.3 µs | **1.8×** |
+| `math` | `exp` | 65.8 µs | 365.8 µs | **5.6×** |
+| `math` | `ln` | 64.2 µs | 476.4 µs | **7.4×** |
+| `math` | `tanh` | 121.2 µs | 809.7 µs | **6.7×** |
+| `special` | `erf` | 807.5 µs | 504.4 µs | 0.6× |
+| `special` | `erfc` | 793.4 µs | 506.1 µs | 0.6× |
+| `math` | `hypot` | 50.8 µs | 372.5 µs | **7.3×** |
+| `math` | `powi` | 11.5 µs | 12.6 µs | 1.1× |
+| `math` | `abs_sub` | 16.8 µs | 21.0 µs | 1.2× |
+| `ml` | `softmax` | 111.3 µs | 870.3 µs | **7.8×** |
+| `ml` | `log_softmax` | 117.1 µs | 766.1 µs | **6.5×** |
+| `ml` | `sigmoid` | 81.6 µs | 395.2 µs | **4.8×** |
+| `ml` | `silu` | 80.8 µs | 377.5 µs | **4.7×** |
+| `ml` | `gelu` | 113.4 µs | 1199.2 µs | **10.6×** |
+| `ml` | `relu` | 11.5 µs | 13.1 µs | 1.1× |
+| `ml` | `softplus` | 250.1 µs | 1459.6 µs | **5.8×** |
+| `ml` | `rms_norm` | 20.3 µs | 162.0 µs | **8.0×** |
+| `ml` | `layer_norm` | 28.3 µs | 310.9 µs | **11.0×** |
+| `ml` | `cosine_similarity` | 26.1 µs | 441.2 µs | **16.9×** |
+| `ml` | `logsumexp` | 102.6 µs | 696.8 µs | **6.8×** |
 
 **Reading the table honestly.** Two distinct regimes:
 

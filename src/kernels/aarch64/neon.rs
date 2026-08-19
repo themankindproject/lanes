@@ -932,7 +932,7 @@ crate::simd_map!(
 crate::simd_exp!(
     vexp_neon,
     f32,
-    "neon",
+    ["neon"],
     float32x4_t,
     int32x4_t,
     |s| unsafe { vdupq_n_f32(s) },
@@ -940,6 +940,9 @@ crate::simd_exp!(
     |a, b| unsafe { vmulq_f32(a, b) },
     |a, b| unsafe { vaddq_f32(a, b) },
     |a, b| unsafe { vsubq_f32(a, b) },
+    // NEON has real FMA: vfmaq_f32(a, b, c) = a + b·c, so the Horner
+    // step `c + r·p` is `vfmaq_f32(c, r, p)`. Mandatory in ARMv8-A.
+    |a, b, c| unsafe { vfmaq_f32(c, a, b) },
     // NEON float bitwise ops don't exist in stdarch; do them on the int
     // reinterpretation (same bits). `vbicq(a, b) = a & ~b`, so the
     // `~a & b` andnot semantics are `vbicq(b, a)`.
@@ -981,7 +984,7 @@ crate::simd_exp!(
 // Vector ln (f32): fdlibm e_log reduction, see simd_ln! in macros.rs.
 crate::simd_ln!(
     vln_neon,
-    "neon",
+    ["neon"],
     float32x4_t,
     int32x4_t,
     |s| unsafe { vdupq_n_f32(s) },
@@ -989,6 +992,9 @@ crate::simd_ln!(
     |a, b| unsafe { vaddq_f32(a, b) },
     |a, b| unsafe { vsubq_f32(a, b) },
     |a, b| unsafe { vmulq_f32(a, b) },
+    // vfmaq_f32(a, b, c) = a + b·c: the Horner step `c + f·p` is
+    // `vfmaq_f32(c, f, p)`. Mandatory in ARMv8-A.
+    |a, b, c| unsafe { vfmaq_f32(c, a, b) },
     |v| unsafe { vcvtq_f32_s32(v) },
     |v| unsafe { vreinterpretq_f32_s32(v) },
     |v| unsafe { vreinterpretq_s32_f32(v) },
@@ -2070,21 +2076,17 @@ unsafe fn tail_l_128d(a: float64x2_t, u: float64x2_t) -> float64x2_t {
     unsafe { vbslq_f64(m, tail_la_128d(u), tail_lb_128d(u)) }
 }
 
-/// erfc(x) for 2 lanes, full domain (sign, specials, NaN). Lane-for-lane
-/// mirror of the scalar `erfc_f64` (see the SSE2 `verfc_128d` for the
-/// region-by-region notes).
+/// erfc(`|x|`) for the small region `|x| < T_SMALL`: the split forms,
+/// mirror of the scalar `erfc_pos` (tiny / low / high sub-regions). Shared
+/// by the pure-small fast path and the general blend path.
 ///
 /// # Safety
 /// Caller must ensure NEON is available.
 #[cfg(feature = "alloc")]
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn verfc_128d(v: float64x2_t) -> float64x2_t {
-    let a = unsafe { vabsq_f64(v) }; // |x|
-    let nan = unsafe { veorq_u64(vceqq_f64(v, v), vdupq_n_u64(u64::MAX)) }; // NaN → all-ones
-
-    // --- small region: split forms (mirror of erfc_pos) ----------------
-    let x2 = unsafe { vmulq_f64(v, v) }; // x² is sign-free
+unsafe fn erfc_small_128d(a: float64x2_t) -> float64x2_t {
+    let x2 = unsafe { vmulq_f64(a, a) }; // x² is sign-free
     let xr = unsafe { vmulq_f64(a, horner_r_128d(x2)) };
     // tiny: 1 − a (correctly rounded below 2^-56)
     let tiny_val = unsafe { vsubq_f64(vdupq_n_f64(1.0), a) };
@@ -2099,12 +2101,20 @@ unsafe fn verfc_128d(v: float64x2_t) -> float64x2_t {
     };
     let m_tiny = unsafe { vcltq_f64(a, vdupq_n_f64(crate::kernels::erf::T_TINY)) };
     let m_quarter = unsafe { vcltq_f64(a, vdupq_n_f64(0.25)) };
-    let small_val = unsafe { vbslq_f64(m_tiny, tiny_val, vbslq_f64(m_quarter, lo_val, hi_val)) };
+    unsafe { vbslq_f64(m_tiny, tiny_val, vbslq_f64(m_quarter, lo_val, hi_val)) }
+}
 
-    // --- middle region: P(s)/Q(s), s = |x| − 1 --------------------------
-    let mid_val = unsafe { erfc1_pq_128d(vsubq_f64(a, vdupq_n_f64(1.0))) };
-
-    // --- tail: z-trick ---------------------------------------------------
+/// erfc(`|x|`) for the tail region `|x| ∈ [T_MID, XMAX]`: the z-trick, raw
+/// (no XMAX clamp — the general path applies it; the pure-tail fast path is
+/// guarded to |x| ≤ XMAX so needs none). Shared by the pure-tail fast path
+/// and the general blend path.
+///
+/// # Safety
+/// Caller must ensure NEON is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn erfc_tail_raw_128d(a: float64x2_t) -> float64x2_t {
     let z = unsafe {
         vreinterpretq_f64_u64(vandq_u64(
             vreinterpretq_u64_f64(a),
@@ -2120,23 +2130,85 @@ unsafe fn verfc_128d(v: float64x2_t) -> float64x2_t {
         ))
     };
     let e2 = unsafe { vexp_128d(vaddq_f64(vmulq_f64(vsubq_f64(z, a), vaddq_f64(z, a)), l)) };
-    let tail_val = unsafe { vdivq_f64(vmulq_f64(e1, e2), a) };
-    // |x| > XMAX (incl. +∞ and NaN fall-through): 0
-    let m_xmax = unsafe { vcleq_f64(a, vdupq_n_f64(crate::kernels::erf::XMAX)) };
-    let tail_val =
-        unsafe { vreinterpretq_f64_u64(vandq_u64(vreinterpretq_u64_f64(tail_val), m_xmax)) };
+    unsafe { vdivq_f64(vmulq_f64(e1, e2), a) }
+}
 
-    // --- assemble erfc(|x|), then sign -----------------------------------
+/// Apply the erfc sign reflection: erfc(x) = c for x ≥ 0, 2 − c for x < 0,
+/// where c = erfc(|x|). Shared by every erfc path.
+///
+/// # Safety
+/// Caller must ensure NEON is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn erfc_apply_sign_128d(v: float64x2_t, c: float64x2_t) -> float64x2_t {
+    let neg = unsafe { vcltq_f64(v, vdupq_n_f64(0.0)) };
+    unsafe { vbslq_f64(neg, vsubq_f64(vdupq_n_f64(2.0), c), c) }
+}
+
+/// erfc(x) for 2 lanes, full domain (sign, specials, NaN). Lane-for-lane
+/// mirror of the scalar `erfc_f64` (see the SSE2 `verfc_128d` for the
+/// region-by-region notes).
+///
+/// Pure-region chunks take a fast path that evaluates only their own region
+/// (the small/middle/tail forms are mutually exclusive per lane, so a chunk
+/// whose 2 lanes all fall in one region gets the same bits without paying for
+/// the other two — in particular skipping the tail's two vector `exp`s). NaN
+/// lanes clear every ordered-compare mask, so any NaN forces the general blend
+/// path and preserves NaN-in → NaN-out.
+///
+/// # Safety
+/// Caller must ensure NEON is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn verfc_128d(v: float64x2_t) -> float64x2_t {
+    let a = unsafe { vabsq_f64(v) }; // |x|
+
     let m_small = unsafe { vcltq_f64(a, vdupq_n_f64(crate::kernels::erf::T_SMALL)) };
     let m_mid = unsafe { vcltq_f64(a, vdupq_n_f64(crate::kernels::erf::T_MID)) };
+    let m_tail_end = unsafe { vcleq_f64(a, vdupq_n_f64(crate::kernels::erf::XMAX)) };
+
+    // --- fast paths: pure-region chunks (NaN can never reach these) ------
+    // The f64 compare masks are u64 lanes; reinterpret as u32 quads so the
+    // u32 lane-reduce intrinsics work (same idiom as tail_l_128d): vminvq
+    // gives all-ones iff every lane is set ("all small"), vmaxvq gives 0
+    // iff every lane is clear ("none small").
+    let ms32 = unsafe { vreinterpretq_u32_u64(m_small) };
+    let mm32 = unsafe { vreinterpretq_u32_u64(m_mid) };
+    let mt32 = unsafe { vreinterpretq_u32_u64(m_tail_end) };
+    if unsafe { vminvq_u32(ms32) } == u32::MAX {
+        return unsafe { erfc_apply_sign_128d(v, erfc_small_128d(a)) };
+    }
+    if unsafe { vmaxvq_u32(ms32) } == 0 && unsafe { vminvq_u32(mm32) } == u32::MAX {
+        let c = unsafe { erfc1_pq_128d(vsubq_f64(a, vdupq_n_f64(1.0))) };
+        return unsafe { erfc_apply_sign_128d(v, c) };
+    }
+    if unsafe { vmaxvq_u32(mm32) } == 0 && unsafe { vminvq_u32(mt32) } == u32::MAX {
+        return unsafe { erfc_apply_sign_128d(v, erfc_tail_raw_128d(a)) };
+    }
+
+    // --- general path: mixed regions (or NaN present) — blend per lane ---
+    let nan = unsafe { veorq_u64(vceqq_f64(v, v), vdupq_n_u64(u64::MAX)) }; // NaN → all-ones
+    let small_val = unsafe { erfc_small_128d(a) };
+    let mid_val = unsafe { erfc1_pq_128d(vsubq_f64(a, vdupq_n_f64(1.0))) };
+    let tail_val = unsafe { erfc_tail_raw_128d(a) };
+    // |x| > XMAX (incl. +∞ and NaN fall-through): 0
+    let tail_val =
+        unsafe { vreinterpretq_f64_u64(vandq_u64(vreinterpretq_u64_f64(tail_val), m_tail_end)) };
     let c = unsafe { vbslq_f64(m_small, small_val, vbslq_f64(m_mid, mid_val, tail_val)) };
-    let neg = unsafe { vcltq_f64(v, vdupq_n_f64(0.0)) };
-    let out = unsafe { vbslq_f64(neg, vsubq_f64(vdupq_n_f64(2.0), c), c) };
+    let out = unsafe { erfc_apply_sign_128d(v, c) };
     unsafe { vbslq_f64(nan, vdupq_n_f64(f64::NAN), out) } // NaN in → NaN out
 }
 
 /// erf(x) for 2 lanes, full domain. Mirror of the scalar `erf_f64` (see
 /// the SSE2 `verf_128d` for the sign-handling notes).
+///
+/// Pure-region chunks take a fast path: a pure-small chunk evaluates only
+/// `x + x·R(x²)` (skipping the whole `verfc_128d` call, i.e. both vector
+/// `exp`s), and a pure-big chunk skips the small form. NaN clears `m_small`,
+/// so a pure-small chunk has no NaN; the pure-big path re-applies the NaN
+/// blend so NaN-in → NaN-out is preserved bit-for-bit.
 ///
 /// # Safety
 /// Caller must ensure NEON is available.
@@ -2145,18 +2217,29 @@ unsafe fn verfc_128d(v: float64x2_t) -> float64x2_t {
 #[target_feature(enable = "neon")]
 unsafe fn verf_128d(v: float64x2_t) -> float64x2_t {
     let a = unsafe { vabsq_f64(v) }; // |x|
-    let nan = unsafe { veorq_u64(vceqq_f64(v, v), vdupq_n_u64(u64::MAX)) }; // NaN → all-ones
+    let m_small = unsafe { vcltq_f64(a, vdupq_n_f64(crate::kernels::erf::T_SMALL)) };
 
-    // small: erf(x) = x + x·R(x²) — already signed (uses v, not |v|).
-    let x2 = unsafe { vmulq_f64(v, v) };
-    let small_val = unsafe { vaddq_f64(v, vmulq_f64(v, horner_r_128d(x2))) };
+    // --- fast path: pure-small chunk (NaN can never reach this) ----------
+    let ms32 = unsafe { vreinterpretq_u32_u64(m_small) };
+    if unsafe { vminvq_u32(ms32) } == u32::MAX {
+        let x2 = unsafe { vmulq_f64(v, v) };
+        return unsafe { vaddq_f64(v, vmulq_f64(v, horner_r_128d(x2))) };
+    }
 
     // big: 1 − erfc(|x|), sign flip on the big region only.
     let big_val = unsafe { vsubq_f64(vdupq_n_f64(1.0), verfc_128d(a)) };
     let neg = unsafe { vcltq_f64(v, vdupq_n_f64(0.0)) };
     let big_val = unsafe { vbslq_f64(neg, vnegq_f64(big_val), big_val) };
+    let nan = unsafe { veorq_u64(vceqq_f64(v, v), vdupq_n_u64(u64::MAX)) }; // NaN → all-ones
 
-    let m_small = unsafe { vcltq_f64(a, vdupq_n_f64(crate::kernels::erf::T_SMALL)) };
+    // --- fast path: pure-big chunk — skip the small form -----------------
+    if unsafe { vmaxvq_u32(ms32) } == 0 {
+        return unsafe { vbslq_f64(nan, vdupq_n_f64(f64::NAN), big_val) };
+    }
+
+    // --- general path: mixed regions — evaluate the small form and blend -
+    let x2 = unsafe { vmulq_f64(v, v) };
+    let small_val = unsafe { vaddq_f64(v, vmulq_f64(v, horner_r_128d(x2))) };
     let y = unsafe { vbslq_f64(m_small, small_val, big_val) };
     unsafe { vbslq_f64(nan, vdupq_n_f64(f64::NAN), y) }
 }

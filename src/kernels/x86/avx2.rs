@@ -969,8 +969,10 @@ crate::simd_powi!(
     unsafe { _mm256_set1_ps(1.0) },
     |x: f32, n: i32| crate::kernels::powi::powi(x, n)
 );
-// Rsqrt: one-pass map, 1/sqrt(v) (exact via div+sqrt, not the ~12-bit
-// hardware approximation — correctness-first).
+// Rsqrt: hardware `rsqrtps` (~12-bit) + two Newton refinement steps, same
+// structure as the SSE2 kernel (see there for the convergence argument and
+// the subnormal 2^64 scaling): ≤ 1 ulp of `1/sqrt` while avoiding the slow
+// exact div+sqrt pair.
 crate::simd_map!(
     rsqrt,
     f32,
@@ -978,13 +980,57 @@ crate::simd_map!(
     8,
     |p| unsafe { _mm256_loadu_ps(p) },
     |p, v| unsafe { _mm256_storeu_ps(p, v) },
-    |v: __m256| _mm256_div_ps(_mm256_set1_ps(1.0), _mm256_sqrt_ps(v)),
+    |v: __m256| unsafe {
+        let half = _mm256_set1_ps(0.5);
+        let three = _mm256_set1_ps(1.5);
+        let min_norm = _mm256_set1_ps(f32::from_bits(0x0080_0000)); // 2^-126
+        // Lanes needing the raw-hardware override (Newton would corrupt
+        // them): ±0 → ±inf, +inf → 0, negatives → NaN (NaN propagates
+        // fine but is grouped here for the single branch).
+        let special = _mm256_or_ps(
+            _mm256_cmp_ps(v, _mm256_setzero_ps(), _CMP_LE_OQ),
+            _mm256_cmp_ps(v, _mm256_set1_ps(f32::INFINITY), _CMP_EQ_OQ),
+        );
+        let is_sub = _mm256_cmp_ps(v, min_norm, _CMP_LT_OQ);
+        let fix_mask = _mm256_movemask_ps(_mm256_or_ps(special, is_sub));
+
+        // --- fast path: the common case, all-normal non-special lanes ----
+        if fix_mask == 0 {
+            let raw = _mm256_rsqrt_ps(v);
+            let x2 = _mm256_mul_ps(v, half);
+            let mut y = raw;
+            let t = _mm256_mul_ps(_mm256_mul_ps(y, y), x2);
+            y = _mm256_mul_ps(y, _mm256_sub_ps(three, t));
+            let t = _mm256_mul_ps(_mm256_mul_ps(y, y), x2);
+            return _mm256_mul_ps(y, _mm256_sub_ps(three, t));
+        }
+
+        // --- slow path: scale subnormals into the normal range -----------
+        let scale_in = _mm256_set1_ps(f32::from_bits(0x5F80_0000)); // 2^64
+        let scale_out = _mm256_set1_ps(f32::from_bits(0x4F80_0000)); // 2^32
+        let xs = _mm256_mul_ps(
+            v,
+            _mm256_or_ps(_mm256_and_ps(is_sub, scale_in), _mm256_set1_ps(1.0)),
+        );
+        let raw = _mm256_rsqrt_ps(xs);
+        let x2 = _mm256_mul_ps(xs, half);
+        let mut y = raw;
+        let t = _mm256_mul_ps(_mm256_mul_ps(y, y), x2);
+        y = _mm256_mul_ps(y, _mm256_sub_ps(three, t));
+        let t = _mm256_mul_ps(_mm256_mul_ps(y, y), x2);
+        y = _mm256_mul_ps(y, _mm256_sub_ps(three, t));
+        y = _mm256_mul_ps(
+            y,
+            _mm256_or_ps(_mm256_and_ps(is_sub, scale_out), _mm256_set1_ps(1.0)),
+        );
+        _mm256_or_ps(_mm256_and_ps(special, raw), _mm256_andnot_ps(special, y))
+    },
     |x: f32| 1.0 / crate::kernels::sqrt::sqrt(x)
 );
 crate::simd_exp!(
     vexp_256,
     f32,
-    "avx2",
+    ["avx2", "fma"],
     __m256,
     __m256i,
     |s| unsafe { _mm256_set1_ps(s) },
@@ -992,6 +1038,8 @@ crate::simd_exp!(
     |a, b| unsafe { _mm256_mul_ps(a, b) },
     |a, b| unsafe { _mm256_add_ps(a, b) },
     |a, b| unsafe { _mm256_sub_ps(a, b) },
+    // Dispatch gates Avx2 on `avx2 && fma`, so vfmadd is always safe here.
+    |a, b, c| unsafe { _mm256_fmadd_ps(a, b, c) },
     |a, b| unsafe { _mm256_and_ps(a, b) },
     |a, b| unsafe { _mm256_andnot_ps(a, b) },
     |a, b| unsafe { _mm256_or_ps(a, b) },
@@ -1011,7 +1059,7 @@ crate::simd_exp!(
 // Vector ln (f32): fdlibm e_log reduction, see simd_ln! in macros.rs.
 crate::simd_ln!(
     vln_256,
-    "avx2",
+    ["avx2", "fma"],
     __m256,
     __m256i,
     |s| unsafe { _mm256_set1_ps(s) },
@@ -1019,6 +1067,8 @@ crate::simd_ln!(
     |a, b| unsafe { _mm256_add_ps(a, b) },
     |a, b| unsafe { _mm256_sub_ps(a, b) },
     |a, b| unsafe { _mm256_mul_ps(a, b) },
+    // Dispatch gates Avx2 on `avx2 && fma`, so vfmadd is always safe here.
+    |a, b, c| unsafe { _mm256_fmadd_ps(a, b, c) },
     |v| unsafe { _mm256_cvtepi32_ps(v) },
     |v| unsafe { _mm256_castsi256_ps(v) },
     |v| unsafe { _mm256_castps_si256(v) },
@@ -2311,22 +2361,17 @@ unsafe fn tail_l_256d(a: __m256d, u: __m256d) -> __m256d {
     }
 }
 
-/// erfc(x) for 4 lanes, full domain (sign, specials, NaN). Lane-for-lane
-/// mirror of the scalar `erfc_f64` (see the SSE2 `verfc_128d` for the
-/// region-by-region notes).
+/// erfc(`|x|`) for the small region `|x| < T_SMALL`: the split forms,
+/// mirror of the scalar `erfc_pos` (tiny / low / high sub-regions). Shared
+/// by the pure-small fast path and the general blend path.
 ///
 /// # Safety
 /// Caller must ensure AVX2 is available.
 #[cfg(feature = "alloc")]
 #[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn verfc_256d(v: __m256d) -> __m256d {
-    let sign_bit = unsafe { _mm256_set1_pd(-0.0) };
-    let a = unsafe { _mm256_andnot_pd(sign_bit, v) }; // |x|
-    let nan = unsafe { _mm256_cmp_pd(v, v, _CMP_UNORD_Q) };
-
-    // --- small region: split forms (mirror of erfc_pos) ----------------
-    let x2 = unsafe { _mm256_mul_pd(v, v) }; // x² is sign-free
+unsafe fn erfc_small_256d(a: __m256d) -> __m256d {
+    let x2 = unsafe { _mm256_mul_pd(a, a) }; // x² is sign-free
     let xr = unsafe { _mm256_mul_pd(a, horner_r_256d(x2)) };
     // tiny: 1 − a (correctly rounded below 2^-56)
     let tiny_val = unsafe { _mm256_sub_pd(_mm256_set1_pd(1.0), a) };
@@ -2342,7 +2387,7 @@ unsafe fn verfc_256d(v: __m256d) -> __m256d {
     let m_tiny =
         unsafe { _mm256_cmp_pd(a, _mm256_set1_pd(crate::kernels::erf::T_TINY), _CMP_LT_OQ) };
     let m_quarter = unsafe { _mm256_cmp_pd(a, _mm256_set1_pd(0.25), _CMP_LT_OQ) };
-    let small_val = unsafe {
+    unsafe {
         _mm256_or_pd(
             _mm256_and_pd(m_tiny, tiny_val),
             _mm256_andnot_pd(
@@ -2353,12 +2398,20 @@ unsafe fn verfc_256d(v: __m256d) -> __m256d {
                 ),
             ),
         )
-    };
+    }
+}
 
-    // --- middle region: P(s)/Q(s), s = |x| − 1 --------------------------
-    let mid_val = unsafe { erfc1_pq_256d(_mm256_sub_pd(a, _mm256_set1_pd(1.0))) };
-
-    // --- tail: z-trick ---------------------------------------------------
+/// erfc(`|x|`) for the tail region `|x| ∈ [T_MID, XMAX]`: the z-trick, raw
+/// (no XMAX clamp — the general path applies it; the pure-tail fast path is
+/// guarded to |x| ≤ XMAX so needs none). Shared by the pure-tail fast path
+/// and the general blend path.
+///
+/// # Safety
+/// Caller must ensure AVX2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn erfc_tail_raw_256d(a: __m256d) -> __m256d {
     let z = unsafe {
         _mm256_and_pd(
             a,
@@ -2379,15 +2432,74 @@ unsafe fn verfc_256d(v: __m256d) -> __m256d {
             l,
         ))
     };
-    let tail_val = unsafe { _mm256_div_pd(_mm256_mul_pd(e1, e2), a) };
-    // |x| > XMAX (incl. +∞ and NaN fall-through): 0
-    let m_xmax = unsafe { _mm256_cmp_pd(a, _mm256_set1_pd(crate::kernels::erf::XMAX), _CMP_LE_OQ) };
-    let tail_val = unsafe { _mm256_and_pd(m_xmax, tail_val) };
+    unsafe { _mm256_div_pd(_mm256_mul_pd(e1, e2), a) }
+}
 
-    // --- assemble erfc(|x|), then sign -----------------------------------
+/// Apply the erfc sign reflection: erfc(x) = c for x ≥ 0, 2 − c for x < 0,
+/// where c = erfc(|x|). Shared by every erfc path.
+///
+/// # Safety
+/// Caller must ensure AVX2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn erfc_apply_sign_256d(v: __m256d, c: __m256d) -> __m256d {
+    let neg = unsafe { _mm256_cmp_pd(v, _mm256_setzero_pd(), _CMP_LT_OQ) };
+    unsafe {
+        _mm256_or_pd(
+            _mm256_and_pd(neg, _mm256_sub_pd(_mm256_set1_pd(2.0), c)),
+            _mm256_andnot_pd(neg, c),
+        )
+    }
+}
+
+/// erfc(x) for 4 lanes, full domain (sign, specials, NaN). Lane-for-lane
+/// mirror of the scalar `erfc_f64` (see the SSE2 `verfc_128d` for the
+/// region-by-region notes).
+///
+/// Pure-region chunks take a fast path that evaluates only their own region
+/// (the small/middle/tail forms are mutually exclusive per lane, so a chunk
+/// whose 4 lanes all fall in one region gets the same bits without paying for
+/// the other two — in particular skipping the tail's two vector `exp`s). NaN
+/// lanes clear every ordered-compare mask, so any NaN forces the general blend
+/// path and preserves NaN-in → NaN-out.
+///
+/// # Safety
+/// Caller must ensure AVX2 is available.
+#[cfg(feature = "alloc")]
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn verfc_256d(v: __m256d) -> __m256d {
+    let sign_bit = unsafe { _mm256_set1_pd(-0.0) };
+    let a = unsafe { _mm256_andnot_pd(sign_bit, v) }; // |x|
+
     let m_small =
         unsafe { _mm256_cmp_pd(a, _mm256_set1_pd(crate::kernels::erf::T_SMALL), _CMP_LT_OQ) };
     let m_mid = unsafe { _mm256_cmp_pd(a, _mm256_set1_pd(crate::kernels::erf::T_MID), _CMP_LT_OQ) };
+    let m_tail_end =
+        unsafe { _mm256_cmp_pd(a, _mm256_set1_pd(crate::kernels::erf::XMAX), _CMP_LE_OQ) };
+    let bits_small = unsafe { _mm256_movemask_pd(m_small) };
+    let bits_mid = unsafe { _mm256_movemask_pd(m_mid) };
+
+    // --- fast paths: pure-region chunks (NaN can never reach these) ------
+    if bits_small == 0b1111 {
+        return unsafe { erfc_apply_sign_256d(v, erfc_small_256d(a)) };
+    }
+    if bits_small == 0 && bits_mid == 0b1111 {
+        let c = unsafe { erfc1_pq_256d(_mm256_sub_pd(a, _mm256_set1_pd(1.0))) };
+        return unsafe { erfc_apply_sign_256d(v, c) };
+    }
+    if bits_mid == 0 && unsafe { _mm256_movemask_pd(m_tail_end) } == 0b1111 {
+        return unsafe { erfc_apply_sign_256d(v, erfc_tail_raw_256d(a)) };
+    }
+
+    // --- general path: mixed regions (or NaN present) — blend per lane ---
+    let nan = unsafe { _mm256_cmp_pd(v, v, _CMP_UNORD_Q) };
+    let small_val = unsafe { erfc_small_256d(a) };
+    let mid_val = unsafe { erfc1_pq_256d(_mm256_sub_pd(a, _mm256_set1_pd(1.0))) };
+    let tail_val = unsafe { erfc_tail_raw_256d(a) };
+    // |x| > XMAX (incl. +∞ and NaN fall-through): 0
+    let tail_val = unsafe { _mm256_and_pd(m_tail_end, tail_val) };
     let c = unsafe {
         _mm256_or_pd(
             _mm256_and_pd(m_small, small_val),
@@ -2400,18 +2512,18 @@ unsafe fn verfc_256d(v: __m256d) -> __m256d {
             ),
         )
     };
-    let neg = unsafe { _mm256_cmp_pd(v, _mm256_setzero_pd(), _CMP_LT_OQ) };
-    let out = unsafe {
-        _mm256_or_pd(
-            _mm256_and_pd(neg, _mm256_sub_pd(_mm256_set1_pd(2.0), c)),
-            _mm256_andnot_pd(neg, c),
-        )
-    };
+    let out = unsafe { erfc_apply_sign_256d(v, c) };
     unsafe { _mm256_or_pd(out, nan) } // NaN in → NaN out
 }
 
 /// erf(x) for 4 lanes, full domain. Mirror of the scalar `erf_f64` (see
 /// the SSE2 `verf_128d` for the sign-handling notes).
+///
+/// Pure-region chunks take a fast path: a pure-small chunk evaluates only
+/// `x + x·R(x²)` (skipping the whole `verfc_256d` call, i.e. both vector
+/// `exp`s), and a pure-big chunk skips the small form. NaN clears `m_small`,
+/// so a pure-small chunk has no NaN; the pure-big path re-applies the NaN
+/// blend so NaN-in → NaN-out is preserved bit-for-bit.
 ///
 /// # Safety
 /// Caller must ensure AVX2 is available.
@@ -2421,11 +2533,14 @@ unsafe fn verfc_256d(v: __m256d) -> __m256d {
 unsafe fn verf_256d(v: __m256d) -> __m256d {
     let sign_bit = unsafe { _mm256_set1_pd(-0.0) };
     let a = unsafe { _mm256_andnot_pd(sign_bit, v) }; // |x|
-    let nan = unsafe { _mm256_cmp_pd(v, v, _CMP_UNORD_Q) };
+    let m_small =
+        unsafe { _mm256_cmp_pd(a, _mm256_set1_pd(crate::kernels::erf::T_SMALL), _CMP_LT_OQ) };
 
-    // small: erf(x) = x + x·R(x²) — already signed (uses v, not |v|).
-    let x2 = unsafe { _mm256_mul_pd(v, v) };
-    let small_val = unsafe { _mm256_add_pd(v, _mm256_mul_pd(v, horner_r_256d(x2))) };
+    // --- fast path: pure-small chunk (NaN can never reach this) ----------
+    if unsafe { _mm256_movemask_pd(m_small) } == 0b1111 {
+        let x2 = unsafe { _mm256_mul_pd(v, v) };
+        return unsafe { _mm256_add_pd(v, _mm256_mul_pd(v, horner_r_256d(x2))) };
+    }
 
     // big: 1 − erfc(|x|), sign flip on the big region only.
     let big_val = unsafe { _mm256_sub_pd(_mm256_set1_pd(1.0), verfc_256d(a)) };
@@ -2436,9 +2551,16 @@ unsafe fn verf_256d(v: __m256d) -> __m256d {
             _mm256_andnot_pd(neg, big_val),
         )
     };
+    let nan = unsafe { _mm256_cmp_pd(v, v, _CMP_UNORD_Q) };
 
-    let m_small =
-        unsafe { _mm256_cmp_pd(a, _mm256_set1_pd(crate::kernels::erf::T_SMALL), _CMP_LT_OQ) };
+    // --- fast path: pure-big chunk — skip the small form -----------------
+    if unsafe { _mm256_movemask_pd(m_small) } == 0 {
+        return unsafe { _mm256_or_pd(big_val, nan) };
+    }
+
+    // --- general path: mixed regions — evaluate the small form and blend -
+    let x2 = unsafe { _mm256_mul_pd(v, v) };
+    let small_val = unsafe { _mm256_add_pd(v, _mm256_mul_pd(v, horner_r_256d(x2))) };
     let y = unsafe {
         _mm256_or_pd(
             _mm256_and_pd(m_small, small_val),

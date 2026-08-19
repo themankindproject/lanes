@@ -651,9 +651,10 @@ macro_rules! simd_minmax {
 #[doc(hidden)]
 macro_rules! simd_exp {
     (
-        $name:ident, $t:ty, $feat:literal, $vt:ty, $ivt:ty,
+        $name:ident, $t:ty, [$( $feat:literal ),+], $vt:ty, $ivt:ty,
         $set1:expr, $set1i:expr,
         $mul:expr, $add:expr, $sub:expr,
+        $fma:expr,
         $andf:expr, $andnotf:expr, $orf:expr,
         $cmpgt_f:expr,
         $cast_iv:expr, $cast_vi:expr,
@@ -669,7 +670,7 @@ macro_rules! simd_exp {
         /// Caller must ensure the CPU feature is available.
         #[cfg(feature = "alloc")]
         #[inline]
-        #[target_feature(enable = $feat)]
+        #[target_feature($(enable = $feat),*)]
         unsafe fn $name(v: $vt) -> $vt {
             // n = round(x * log2(e)) via add-magic (2^23 + 2^22, not
             // plain 2^23: for negative t the sum lands in the ulp-0.5
@@ -716,16 +717,20 @@ macro_rules! simd_exp {
             let r = $andnotf($cast_iv(sat), r);
             // exp(r) degree-9 Taylor, Horner in r (NOT r² — r² would drop
             // odd powers and compute a cosh-like fn). Error < 0.35^10/10!.
-            let p1 = $add($set1(1.0 / 362_880.0), $mul(r, $set1(1.0 / 3_628_800.0)));
-            let p2 = $add($set1(1.0 / 40_320.0), $mul(r, p1));
-            let p3 = $add($set1(1.0 / 5_040.0), $mul(r, p2));
-            let p4 = $add($set1(1.0 / 720.0), $mul(r, p3));
-            let p5 = $add($set1(1.0 / 120.0), $mul(r, p4));
-            let p6 = $add($set1(1.0 / 24.0), $mul(r, p5));
-            let p7 = $add($set1(1.0 / 6.0), $mul(r, p6));
-            let p8 = $add($set1(0.5), $mul(r, p7));
-            let p9 = $add($set1(1.0), $mul(r, p8));
-            let p = $add($set1(1.0), $mul(r, p9));
+            // The FMA-typed `$fma` op (vfmadd on AVX2/AVX-512/NEON, plain
+            // mul+add on SSE2, which has no FMA) collapses each `c + r·p`
+            // step into one instruction with a single rounding — more
+            // accurate than the split mul+add, so the ≤ 2 ulp contract holds.
+            let p1 = $fma(r, $set1(1.0 / 3_628_800.0), $set1(1.0 / 362_880.0));
+            let p2 = $fma(r, p1, $set1(1.0 / 40_320.0));
+            let p3 = $fma(r, p2, $set1(1.0 / 5_040.0));
+            let p4 = $fma(r, p3, $set1(1.0 / 720.0));
+            let p5 = $fma(r, p4, $set1(1.0 / 120.0));
+            let p6 = $fma(r, p5, $set1(1.0 / 24.0));
+            let p7 = $fma(r, p6, $set1(1.0 / 6.0));
+            let p8 = $fma(r, p7, $set1(0.5));
+            let p9 = $fma(r, p8, $set1(1.0));
+            let p = $fma(r, p9, $set1(1.0));
             // 2^n via exponent bits, clamped: n < -126 → 0 (denormal
             // range not matched — needs variable per-lane shifts; the
             // scalar exp returns f32 denormals there, which contribute
@@ -893,9 +898,10 @@ macro_rules! simd_exp_f64 {
 #[doc(hidden)]
 macro_rules! simd_ln {
     (
-        $name:ident, $feat:literal, $vt:ty, $ivt:ty,
+        $name:ident, [$( $feat:literal ),+], $vt:ty, $ivt:ty,
         $set1f:expr, $set1i:expr,
         $add:expr, $sub:expr, $mul:expr,
+        $fma:expr,
         $cast_iv:expr, $cast_ib:expr, $cast_vi:expr,
         $and_i:expr, $or_i:expr,
         $srli_i:expr,
@@ -911,7 +917,7 @@ macro_rules! simd_ln {
         /// map kernel's scalar tail handles those. This register path
         /// assumes normal positive finite `x`.
         #[inline]
-        #[target_feature(enable = $feat)]
+        #[target_feature($(enable = $feat),*)]
         unsafe fn $name(v: $vt) -> $vt {
             // Subnormal scaling is branchless here but the contract
             // excludes subnormals from the vector path (see the scalar
@@ -941,22 +947,26 @@ macro_rules! simd_ln {
             // SLEEF division-free core (same reduction as fdlibm, one
             // degree-8 minimax poly instead of the s-form's division):
             // ln(1+f) = f - f²/2 + f³·P(f) on f ∈ [-0.293, 0.414).
+            // `$fma` (vfmadd on FMA-capable targets, mul+add on SSE2)
+            // fuses every `c + f·p` Horner step into one instruction with
+            // one rounding — the ≤ 1 ulp contract is preserved (tighter).
             let f2 = $mul(f, f);
             let f3 = $mul(f2, f);
             let mut p = $set1f(7.037_683_629_2e-02); // P8
-            p = $add($mul(p, f), $set1f(-1.151_461_031_0e-01)); // P7
-            p = $add($mul(p, f), $set1f(1.167_699_874_0e-01));
-            p = $add($mul(p, f), $set1f(-1.242_014_084_6e-01));
-            p = $add($mul(p, f), $set1f(1.424_932_278_7e-01));
-            p = $add($mul(p, f), $set1f(-1.666_805_766_5e-01));
-            p = $add($mul(p, f), $set1f(2.000_071_476_5e-01));
-            p = $add($mul(p, f), $set1f(-2.499_999_399_3e-01));
-            p = $add($mul(p, f), $set1f(3.333_333_117_4e-01));
+            p = $fma(f, p, $set1f(-1.151_461_031_0e-01)); // P7
+            p = $fma(f, p, $set1f(1.167_699_874_0e-01));
+            p = $fma(f, p, $set1f(-1.242_014_084_6e-01));
+            p = $fma(f, p, $set1f(1.424_932_278_7e-01));
+            p = $fma(f, p, $set1f(-1.666_805_766_5e-01));
+            p = $fma(f, p, $set1f(2.000_071_476_5e-01));
+            p = $fma(f, p, $set1f(-2.499_999_399_3e-01));
+            p = $fma(f, p, $set1f(3.333_333_117_4e-01));
             // ln(x) = k·ln2_hi + (f - f²/2 + f³·P) + k·ln2_lo (wide's order).
             let k2lo = $mul(k, $set1f(-2.121_944_40e-04));
             let mut normal = $mul(f3, p);
             normal = $add(k2lo, normal);
-            normal = $add($sub(f, $mul($set1f(0.5), f2)), normal);
+            normal = $fma($set1f(-0.5), f2, normal);
+            normal = $add(f, normal);
             let k2hi = $mul(k, $set1f(6.933_593_75e-01));
             normal = $add(k2hi, normal);
             // Special-case masks (branchless): x < 0 (excludes -0.0) → NaN,

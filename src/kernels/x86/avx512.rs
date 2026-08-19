@@ -671,7 +671,7 @@ crate::simd_powi!(
 // Vector ln (f32): fdlibm e_log reduction, see simd_ln! in macros.rs.
 crate::simd_ln!(
     vln_512,
-    "avx512f",
+    ["avx512f"],
     __m512,
     __m512i,
     |s| unsafe { _mm512_set1_ps(s) },
@@ -679,6 +679,8 @@ crate::simd_ln!(
     |a, b| unsafe { _mm512_add_ps(a, b) },
     |a, b| unsafe { _mm512_sub_ps(a, b) },
     |a, b| unsafe { _mm512_mul_ps(a, b) },
+    // AVX-512F includes FMA; vfmadd132ps is always available in this tier.
+    |a, b, c| unsafe { _mm512_fmadd_ps(a, b, c) },
     |v| unsafe { _mm512_cvtepi32_ps(v) },
     |v| unsafe { _mm512_castsi512_ps(v) },
     |v| unsafe { _mm512_castps_si512(v) },
@@ -756,8 +758,10 @@ crate::simd_map!(
     }
 );
 
-// Rsqrt: one-pass map, 1/sqrt(v) (exact via div+sqrt, not the ~12-bit
-// hardware approximation — correctness-first).
+// Rsqrt: hardware `rsqrt14ps` (~14-bit) + two Newton refinement steps,
+// same structure as the SSE2/AVX2 kernels (see the SSE2 one for the
+// convergence argument): ≤ 1 ulp of `1/sqrt` (measured 0 ulp over the
+// full finite range) without the slow exact div+sqrt pair.
 crate::simd_map!(
     rsqrt,
     f32,
@@ -765,13 +769,49 @@ crate::simd_map!(
     16,
     |p| unsafe { _mm512_loadu_ps(p) },
     |p, v| unsafe { _mm512_storeu_ps(p, v) },
-    |v: __m512| _mm512_div_ps(_mm512_set1_ps(1.0), _mm512_sqrt_ps(v)),
+    |v: __m512| unsafe {
+        let half = _mm512_set1_ps(0.5);
+        let three = _mm512_set1_ps(1.5);
+        let min_norm = _mm512_set1_ps(f32::from_bits(0x0080_0000)); // 2^-126
+        // Lanes needing the raw-hardware override (Newton would corrupt
+        // them): ±0 → ±inf, +inf → 0, negatives → NaN (NaN propagates
+        // fine but is grouped here for the single branch).
+        let special = _mm512_cmp_ps_mask(v, _mm512_setzero_ps(), _CMP_LE_OQ)
+            | _mm512_cmp_ps_mask(v, _mm512_set1_ps(f32::INFINITY), _CMP_EQ_OQ);
+        let sub = _mm512_cmp_ps_mask(v, min_norm, _CMP_LT_OQ);
+        let fix = special | sub;
+
+        // --- fast path: the common case, all-normal non-special lanes ----
+        if fix == 0 {
+            let raw = _mm512_rsqrt14_ps(v);
+            let x2 = _mm512_mul_ps(v, half);
+            let mut y = raw;
+            let t = _mm512_mul_ps(_mm512_mul_ps(y, y), x2);
+            y = _mm512_mul_ps(y, _mm512_sub_ps(three, t));
+            let t = _mm512_mul_ps(_mm512_mul_ps(y, y), x2);
+            return _mm512_mul_ps(y, _mm512_sub_ps(three, t));
+        }
+
+        // --- slow path: scale subnormals into the normal range -----------
+        let scale_in = _mm512_set1_ps(f32::from_bits(0x5F80_0000)); // 2^64
+        let scale_out = _mm512_set1_ps(f32::from_bits(0x4F80_0000)); // 2^32
+        let xs = _mm512_mask_mul_ps(v, sub, v, scale_in);
+        let raw = _mm512_rsqrt14_ps(xs);
+        let x2 = _mm512_mul_ps(xs, half);
+        let mut y = raw;
+        let t = _mm512_mul_ps(_mm512_mul_ps(y, y), x2);
+        y = _mm512_mul_ps(y, _mm512_sub_ps(three, t));
+        let t = _mm512_mul_ps(_mm512_mul_ps(y, y), x2);
+        y = _mm512_mul_ps(y, _mm512_sub_ps(three, t));
+        y = _mm512_mask_mul_ps(y, sub, y, scale_out);
+        _mm512_mask_blend_ps(special, y, raw)
+    },
     |x: f32| 1.0 / crate::kernels::sqrt::sqrt(x)
 );
 crate::simd_exp!(
     vexp_512,
     f32,
-    "avx512f",
+    ["avx512f"],
     __m512,
     __m512i,
     |s| unsafe { _mm512_set1_ps(s) },
@@ -779,6 +819,8 @@ crate::simd_exp!(
     |a, b| unsafe { _mm512_mul_ps(a, b) },
     |a, b| unsafe { _mm512_add_ps(a, b) },
     |a, b| unsafe { _mm512_sub_ps(a, b) },
+    // AVX-512F includes FMA; vfmadd132ps is always available in this tier.
+    |a, b, c| unsafe { _mm512_fmadd_ps(a, b, c) },
     |a, b| unsafe { and_ps(a, b) },
     |a, b| unsafe { andnot_ps(a, b) },
     |a, b| unsafe { or_ps(a, b) },

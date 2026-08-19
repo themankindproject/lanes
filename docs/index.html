@@ -324,7 +324,7 @@ footer a:hover { color: var(--accent); }
       <button onclick="copyInstall(this)">copy</button>
     </div>
     <div class="facts">
-      <div><div class="v">23.8×</div><div class="l">peak speedup vs naive iterator — sum, f32, n = 65 536</div></div>
+      <div><div class="v">23.9×</div><div class="l">peak speedup vs naive iterator — sum, f32, n = 65 536</div></div>
       <div><div class="v">5</div><div class="l">backends, detected once and cached in a OnceLock</div></div>
       <div><div class="v">≤ 1 ulp</div><div class="l">exp · ln · tanh · sqrt · erf (f64), on every backend</div></div>
       <div><div class="v">0</div><div class="l">panics — fallible kernels return Result</div></div>
@@ -538,35 +538,35 @@ f32::<span class="fn">softmax_into</span>(&amp;activated, &amp;<span class="kw">
 <script>
 // benchmark data — from README.md (f32, n=65536, AVX-512F, i5-1135G7)
 const BENCH = [
-  ["stats","sum",6.2,146.6,23.8],["stats","prod",9.3,146.8,15.9],
-  ["stats","min",11.6,295.5,25.4],["stats","max",11.6,292.9,25.2],
-  ["stats","argmax",18.8,147.4,7.8],["stats","argmin",18.2,148.7,8.2],
-  ["stats","sum_sq",7.2,147.8,20.4],["stats","mean",6.4,147.7,23.0],
-  ["stats","variance",25.4,295.7,11.6],["stats","std_dev",24.0,293.8,12.3],
-  ["stats","geometric_mean",142.3,425.1,3.0],["stats","dot",12.3,146.9,11.9],
-  ["stats","count_zero",25.1,26.9,1.1],["stats","count_nan",25.1,26.2,1.0],
-  ["stats","count_infinite",26.1,33.5,1.3],
-  ["distance","l1_norm",6.9,147.4,21.5],["distance","l2_norm",6.9,147.3,21.4],
-  ["distance","max_norm",11.6,289.5,25.0],["distance","squared_distance",12.5,147.0,11.8],
-  ["distance","kl_divergence",104.4,538.9,5.2],["distance","js_divergence",223.5,1307.1,5.8],
-  ["binary","hamming",4.7,122.5,25.8],["binary","jaccard",8.6,239.9,28.0],
-  ["stats","i8::dot",5.2,47.4,9.1],["stats","i8::sum",4.3,21.7,5.1],
-  ["stats","i8::sum_sq",4.8,37.0,7.7],["stats","i8::min",1.3,5.3,4.0],
-  ["stats","i8::max",1.3,5.3,4.0],["stats","i8::count_zero",8.6,48.4,5.6],
-  ["distance","i8::l1_norm",4.9,48.5,9.9],["distance","i8::max_norm",2.6,3.0,1.1],
-  ["distance","i8::squared_distance",6.1,66.8,10.9],
-  ["math","sqrt",27.6,27.6,1.0],["math","clip",11.3,14.0,1.2],
-  ["math","rsqrt",50.5,55.0,1.1],["math","exp",95.1,355.9,3.7],
-  ["math","ln",87.7,452.4,5.2],["math","tanh",146.7,774.4,5.3],
-  ["special","erf",782.8,488.0,0.6],["special","erfc",763.4,491.1,0.6],
-  ["math","hypot",50.5,367.2,7.3],["math","powi",11.3,12.7,1.1],
-  ["math","abs_sub",16.6,20.4,1.2],
-  ["ml","softmax",140.6,845.6,6.0],["ml","log_softmax",143.5,690.8,4.8],
-  ["ml","sigmoid",114.6,372.5,3.3],["ml","silu",113.2,372.4,3.3],
-  ["ml","gelu",155.0,1140.9,7.4],["ml","relu",10.9,12.5,1.2],
-  ["ml","softplus",350.8,1492.2,4.3],["ml","rms_norm",20.1,159.4,7.9],
-  ["ml","layer_norm",28.1,307.0,10.9],["ml","cosine_similarity",25.9,439.4,17.0],
-  ["ml","logsumexp",134.8,707.1,5.2]
+  ["stats","sum",6.2,147.3,23.9],["stats","prod",9.3,147.2,15.9],
+  ["stats","min",11.7,294.9,25.3],["stats","max",11.7,294.8,25.3],
+  ["stats","argmax",18.6,148.0,8.0],["stats","argmin",18.5,147.8,8.0],
+  ["stats","sum_sq",6.8,147.3,21.5],["stats","mean",6.2,147.3,23.8],
+  ["stats","variance",26.8,294.4,11.0],["stats","std_dev",27.4,295.1,10.8],
+  ["stats","geometric_mean",119.3,459.3,3.8],["stats","dot",12.7,147.8,11.7],
+  ["stats","count_zero",25.2,26.4,1.0],["stats","count_nan",25.2,26.4,1.0],
+  ["stats","count_infinite",26.0,33.7,1.3],
+  ["distance","l1_norm",6.8,146.9,21.6],["distance","l2_norm",6.8,146.9,21.5],
+  ["distance","max_norm",11.6,290.0,25.1],["distance","squared_distance",12.5,147.1,11.8],
+  ["distance","kl_divergence",81.9,551.8,6.7],["distance","js_divergence",179.8,1334.3,7.4],
+  ["binary","hamming",4.7,122.2,25.8],["binary","jaccard",8.7,239.0,27.6],
+  ["stats","i8::dot",5.3,45.7,8.6],["stats","i8::sum",4.7,22.1,4.7],
+  ["stats","i8::sum_sq",4.9,41.4,8.5],["stats","i8::min",1.4,5.5,4.0],
+  ["stats","i8::max",1.4,5.3,3.8],["stats","i8::count_zero",8.8,48.5,5.5],
+  ["distance","i8::l1_norm",4.9,53.7,10.9],["distance","i8::max_norm",2.7,3.6,1.3],
+  ["distance","i8::squared_distance",6.7,70.3,10.5],
+  ["math","sqrt",27.7,27.6,1.0],["math","clip",11.7,14.0,1.2],
+  ["math","rsqrt",30.0,55.3,1.8],["math","exp",65.8,365.8,5.6],
+  ["math","ln",64.2,476.4,7.4],["math","tanh",121.2,809.7,6.7],
+  ["special","erf",807.5,504.4,0.6],["special","erfc",793.4,506.1,0.6],
+  ["math","hypot",50.8,372.5,7.3],["math","powi",11.5,12.6,1.1],
+  ["math","abs_sub",16.8,21.0,1.2],
+  ["ml","softmax",111.3,870.3,7.8],["ml","log_softmax",117.1,766.1,6.5],
+  ["ml","sigmoid",81.6,395.2,4.8],["ml","silu",80.8,377.5,4.7],
+  ["ml","gelu",113.4,1199.2,10.6],["ml","relu",11.5,13.1,1.1],
+  ["ml","softplus",250.1,1459.6,5.8],["ml","rms_norm",20.3,162.0,8.0],
+  ["ml","layer_norm",28.3,310.9,11.0],["ml","cosine_similarity",26.1,441.2,16.9],
+  ["ml","logsumexp",102.6,696.8,6.8]
 ];
 
 function fmt(x) { return x.toFixed(1) + " µs"; }

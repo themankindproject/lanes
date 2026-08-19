@@ -10,6 +10,41 @@ so it is all listed as additions.
 
 ## [Unreleased]
 
+### Added
+
+- New allocation-free `variance_into` / `std_dev_into` (f32 and f64):
+  caller-provided scratch buffer replaces the heap allocation of the
+  two-pass `variance` / `std_dev`; results are bit-identical.
+
+### Changed
+
+- The vector f32 `exp` / `ln` kernels now fuse their Horner polynomial
+  steps with FMA (`vfmadd` on AVX2/AVX-512, `vfmaq` on NEON). The fused
+  single rounding is *more* accurate than the split mul+add, so the
+  documented ≤ 2 ulp (exp) / ≤ 1 ulp (ln) contracts hold. Measured on
+  AVX-512F (i5-1135G7, n = 65,536): `exp` 95 → 66 µs, `ln` 89 → 64 µs,
+  `tanh` 147 → 121 µs, `softmax` 141 → 111 µs, `gelu` 155 → 113 µs,
+  `softplus` 351 → 250 µs, `sigmoid` 115 → 82 µs. (f64 transcendental
+  kernels are unchanged: the erf chunk/tail bit-exactness invariant
+  requires them to match the scalar exp/ln bit-for-bit.)
+- `rsqrt` (f32, AVX2 + AVX-512) now uses the hardware `rsqrtps` /
+  `rsqrt14ps` approximation + two Newton refinement steps instead of the
+  exact `div(sqrt)` pair. Measured 0 ulp vs `1/sqrt` over the full
+  finite range (dense sweep); special lanes (±0 → ±inf, neg → NaN,
+  +inf → 0) keep the raw hardware values, and positive subnormals are
+  scaled by 2^64 into the normal range before refinement (exact
+  exponent shift; result scaled back by 2^32). Measured 50.5 → 30 µs
+  (AVX-512), 50.6 → 33 µs (AVX2). The SSE2 tier keeps the exact
+  div+sqrt (measured faster than approx+refine there).
+- The vector `erf` / `erfc` kernels on SSE2, AVX2, and NEON now take
+  pure-region fast paths (mirroring the existing AVX-512 structure): a
+  chunk whose lanes all fall in one piecewise region evaluates only that
+  region's form, skipping the other regions' work — in particular the
+  tail's two vector `exp`s. Results are bit-identical (the fast paths
+  compute exactly what the general blend selected anyway). Measured on
+  the tail-heavy shared bench distribution: SSE2 erf/erfc 6.3 → 3.4 ms,
+  AVX2 3.3 → 1.7 ms.
+
 ## [0.1.2] - 2026-08-17
 
 ### Added
