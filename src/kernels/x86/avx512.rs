@@ -758,10 +758,10 @@ crate::simd_map!(
     }
 );
 
-// Rsqrt: hardware `rsqrt14ps` (~14-bit) + two Newton refinement steps,
-// same structure as the SSE2/AVX2 kernels (see the SSE2 one for the
-// convergence argument): ≤ 1 ulp of `1/sqrt` (measured 0 ulp over the
-// full finite range) without the slow exact div+sqrt pair.
+// Rsqrt: hardware `rsqrt14ps` (~14-bit) + three Newton refinement steps on
+// the fast path (the third step removes the last 3-ulp cases of the two-step
+// chain); subnormal lanes take the exact div+sqrt pair instead. Specials
+// keep the raw hardware values: ±0 → ±inf, +inf → 0, negatives → NaN.
 crate::simd_map!(
     rsqrt,
     f32,
@@ -772,13 +772,16 @@ crate::simd_map!(
     |v: __m512| unsafe {
         let half = _mm512_set1_ps(0.5);
         let three = _mm512_set1_ps(1.5);
+        let one = _mm512_set1_ps(1.0);
         let min_norm = _mm512_set1_ps(f32::from_bits(0x0080_0000)); // 2^-126
-        // Lanes needing the raw-hardware override (Newton would corrupt
-        // them): ±0 → ±inf, +inf → 0, negatives → NaN (NaN propagates
-        // fine but is grouped here for the single branch).
-        let special = _mm512_cmp_ps_mask(v, _mm512_setzero_ps(), _CMP_LE_OQ)
+        let abs = _mm512_and_ps(v, _mm512_set1_ps(f32::from_bits(0x7FFF_FFFF)));
+        let sub = _mm512_cmp_ps_mask(abs, min_norm, _CMP_LT_OQ);
+        // Raw-hardware override lanes: ±0 → ±inf, +inf → 0, negative
+        // normals → NaN. Negative subnormals and ±0 are excluded: the
+        // hardware `rsqrt14ps` gives them ∓inf but IEEE says NaN/±inf, so
+        // they take the exact div+sqrt path instead.
+        let special = (_mm512_cmp_ps_mask(v, _mm512_setzero_ps(), _CMP_LE_OQ) & !sub)
             | _mm512_cmp_ps_mask(v, _mm512_set1_ps(f32::INFINITY), _CMP_EQ_OQ);
-        let sub = _mm512_cmp_ps_mask(v, min_norm, _CMP_LT_OQ);
         let fix = special | sub;
 
         // --- fast path: the common case, all-normal non-special lanes ----
@@ -789,21 +792,23 @@ crate::simd_map!(
             let t = _mm512_mul_ps(_mm512_mul_ps(y, y), x2);
             y = _mm512_mul_ps(y, _mm512_sub_ps(three, t));
             let t = _mm512_mul_ps(_mm512_mul_ps(y, y), x2);
+            y = _mm512_mul_ps(y, _mm512_sub_ps(three, t));
+            let t = _mm512_mul_ps(_mm512_mul_ps(y, y), x2);
             return _mm512_mul_ps(y, _mm512_sub_ps(three, t));
         }
 
-        // --- slow path: scale subnormals into the normal range -----------
-        let scale_in = _mm512_set1_ps(f32::from_bits(0x5F80_0000)); // 2^64
-        let scale_out = _mm512_set1_ps(f32::from_bits(0x4F80_0000)); // 2^32
-        let xs = _mm512_mask_mul_ps(v, sub, v, scale_in);
-        let raw = _mm512_rsqrt14_ps(xs);
-        let x2 = _mm512_mul_ps(xs, half);
+        // --- slow path: subnormal lanes get the exact div+sqrt ------------
+        let exact = _mm512_div_ps(one, _mm512_sqrt_ps(v));
+        let raw = _mm512_rsqrt14_ps(v);
+        let x2 = _mm512_mul_ps(v, half);
         let mut y = raw;
         let t = _mm512_mul_ps(_mm512_mul_ps(y, y), x2);
         y = _mm512_mul_ps(y, _mm512_sub_ps(three, t));
         let t = _mm512_mul_ps(_mm512_mul_ps(y, y), x2);
         y = _mm512_mul_ps(y, _mm512_sub_ps(three, t));
-        y = _mm512_mask_mul_ps(y, sub, y, scale_out);
+        let t = _mm512_mul_ps(_mm512_mul_ps(y, y), x2);
+        y = _mm512_mul_ps(y, _mm512_sub_ps(three, t));
+        y = _mm512_mask_blend_ps(sub, y, exact);
         _mm512_mask_blend_ps(special, y, raw)
     },
     |x: f32| 1.0 / crate::kernels::sqrt::sqrt(x)

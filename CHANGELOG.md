@@ -28,14 +28,27 @@ so it is all listed as additions.
   kernels are unchanged: the erf chunk/tail bit-exactness invariant
   requires them to match the scalar exp/ln bit-for-bit.)
 - `rsqrt` (f32, AVX2 + AVX-512) now uses the hardware `rsqrtps` /
-  `rsqrt14ps` approximation + two Newton refinement steps instead of the
-  exact `div(sqrt)` pair. Measured 0 ulp vs `1/sqrt` over the full
-  finite range (dense sweep); special lanes (±0 → ±inf, neg → NaN,
-  +inf → 0) keep the raw hardware values, and positive subnormals are
-  scaled by 2^64 into the normal range before refinement (exact
-  exponent shift; result scaled back by 2^32). Measured 50.5 → 30 µs
-  (AVX-512), 50.6 → 33 µs (AVX2). The SSE2 tier keeps the exact
-  div+sqrt (measured faster than approx+refine there).
+  `rsqrt14ps` approximation + Newton refinement instead of the exact
+  `div(sqrt)` pair, and special/subnormal lanes are handled exactly:
+  - AVX2: two FMA-formulated Newton steps (`y · fma(−x/2, y², 1.5)` —
+    one rounding per step instead of three, matching the accuracy of a
+    three-step mul+add chain; the tier is only dispatched with FMA).
+  - AVX-512: three Newton steps (removes the last 3-ulp cases of the
+    two-step chain).
+  - Subnormal lanes take the exact `div(sqrt)` pair, correctly rounded
+    (measured 1 ulp). This also fixes a correctness bug: the raw
+    hardware `rsqrtps` returns −inf for negative subnormals, but IEEE
+    `1/sqrt` says NaN; ±0 keep their IEEE ±inf via the exact path.
+  - Specials keep the raw hardware values: ±0 → ±inf, +inf → 0,
+    negative normals → NaN.
+  - Measured accuracy vs `1/sqrt` (f64-computed reference): 1 ulp on
+    subnormals and the 2^-126 boundary, ≤ 2 ulp worst-case at the top
+    of the finite range.
+  - Measured on AVX-512F (i5-1135G7, n = 65,536, best-of-50):
+    all-normal data 35 → 44 µs (third Newton step), subnormal-heavy
+    432 → 1033 µs (exact div+sqrt path), specials-heavy 42 → 56 µs.
+    The SSE2 tier keeps the exact div+sqrt (measured faster than
+    approx+refine there).
 - The vector `erf` / `erfc` kernels on SSE2, AVX2, and NEON now take
   pure-region fast paths (mirroring the existing AVX-512 structure): a
   chunk whose lanes all fall in one piecewise region evaluates only that

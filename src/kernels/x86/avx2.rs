@@ -969,10 +969,12 @@ crate::simd_powi!(
     unsafe { _mm256_set1_ps(1.0) },
     |x: f32, n: i32| crate::kernels::powi::powi(x, n)
 );
-// Rsqrt: hardware `rsqrtps` (~12-bit) + two Newton refinement steps, same
-// structure as the SSE2 kernel (see there for the convergence argument and
-// the subnormal 2^64 scaling): ≤ 1 ulp of `1/sqrt` while avoiding the slow
-// exact div+sqrt pair.
+// Rsqrt: hardware `rsqrtps` (~12-bit) + two FMA-formulated Newton steps on
+// the fast path (the FMA formulation halves the roundings per step, matching
+// the accuracy of a three-step mul+add chain); subnormal lanes take the
+// exact div+sqrt pair instead. Specials keep the raw hardware values: ±0 →
+// ±inf, +inf → 0, negatives → NaN. The AVX2 tier is dispatched only when
+// `avx2 && fma`, so the `vfmadd` path is always safe here.
 crate::simd_map!(
     rsqrt,
     f32,
@@ -981,48 +983,38 @@ crate::simd_map!(
     |p| unsafe { _mm256_loadu_ps(p) },
     |p, v| unsafe { _mm256_storeu_ps(p, v) },
     |v: __m256| unsafe {
-        let half = _mm256_set1_ps(0.5);
-        let three = _mm256_set1_ps(1.5);
+        let one5 = _mm256_set1_ps(1.5);
+        let one = _mm256_set1_ps(1.0);
         let min_norm = _mm256_set1_ps(f32::from_bits(0x0080_0000)); // 2^-126
-        // Lanes needing the raw-hardware override (Newton would corrupt
-        // them): ±0 → ±inf, +inf → 0, negatives → NaN (NaN propagates
-        // fine but is grouped here for the single branch).
+        let abs = _mm256_and_ps(v, _mm256_set1_ps(f32::from_bits(0x7FFF_FFFF)));
+        let is_sub = _mm256_cmp_ps(abs, min_norm, _CMP_LT_OQ);
+        // Raw-hardware override lanes: ±0 → ±inf, +inf → 0, negative
+        // normals → NaN. Negative subnormals and ±0 are excluded: the
+        // hardware `rsqrtps` gives them ∓inf but IEEE says NaN/±inf, so
+        // they take the exact div+sqrt path instead.
         let special = _mm256_or_ps(
-            _mm256_cmp_ps(v, _mm256_setzero_ps(), _CMP_LE_OQ),
+            _mm256_andnot_ps(is_sub, _mm256_cmp_ps(v, _mm256_setzero_ps(), _CMP_LE_OQ)),
             _mm256_cmp_ps(v, _mm256_set1_ps(f32::INFINITY), _CMP_EQ_OQ),
         );
-        let is_sub = _mm256_cmp_ps(v, min_norm, _CMP_LT_OQ);
         let fix_mask = _mm256_movemask_ps(_mm256_or_ps(special, is_sub));
+
+        // Newton: y' = y · fma(−x/2, y², 1.5) — one FMA + one mul per step.
+        let nx2 = _mm256_mul_ps(v, _mm256_set1_ps(-0.5));
+        let raw = _mm256_rsqrt_ps(v);
+        let mut y = raw;
+        let t = _mm256_fmadd_ps(nx2, _mm256_mul_ps(y, y), one5);
+        y = _mm256_mul_ps(y, t);
+        let t = _mm256_fmadd_ps(nx2, _mm256_mul_ps(y, y), one5);
+        y = _mm256_mul_ps(y, t);
 
         // --- fast path: the common case, all-normal non-special lanes ----
         if fix_mask == 0 {
-            let raw = _mm256_rsqrt_ps(v);
-            let x2 = _mm256_mul_ps(v, half);
-            let mut y = raw;
-            let t = _mm256_mul_ps(_mm256_mul_ps(y, y), x2);
-            y = _mm256_mul_ps(y, _mm256_sub_ps(three, t));
-            let t = _mm256_mul_ps(_mm256_mul_ps(y, y), x2);
-            return _mm256_mul_ps(y, _mm256_sub_ps(three, t));
+            return y;
         }
 
-        // --- slow path: scale subnormals into the normal range -----------
-        let scale_in = _mm256_set1_ps(f32::from_bits(0x5F80_0000)); // 2^64
-        let scale_out = _mm256_set1_ps(f32::from_bits(0x4F80_0000)); // 2^32
-        let xs = _mm256_mul_ps(
-            v,
-            _mm256_or_ps(_mm256_and_ps(is_sub, scale_in), _mm256_set1_ps(1.0)),
-        );
-        let raw = _mm256_rsqrt_ps(xs);
-        let x2 = _mm256_mul_ps(xs, half);
-        let mut y = raw;
-        let t = _mm256_mul_ps(_mm256_mul_ps(y, y), x2);
-        y = _mm256_mul_ps(y, _mm256_sub_ps(three, t));
-        let t = _mm256_mul_ps(_mm256_mul_ps(y, y), x2);
-        y = _mm256_mul_ps(y, _mm256_sub_ps(three, t));
-        y = _mm256_mul_ps(
-            y,
-            _mm256_or_ps(_mm256_and_ps(is_sub, scale_out), _mm256_set1_ps(1.0)),
-        );
+        // --- slow path: subnormal lanes get the exact div+sqrt ------------
+        let exact = _mm256_div_ps(one, _mm256_sqrt_ps(v));
+        y = _mm256_blendv_ps(y, exact, is_sub);
         _mm256_or_ps(_mm256_and_ps(special, raw), _mm256_andnot_ps(special, y))
     },
     |x: f32| 1.0 / crate::kernels::sqrt::sqrt(x)
