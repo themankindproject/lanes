@@ -49,8 +49,6 @@ so it is all listed as additions.
   avoid saturating `vabs`). Dispatched as `dispatch_max_abs_i8`
   (`Option<u8>`, `None` on empty).
 
-### Changed
-
 - The vector f32 `exp` / `ln` kernels now fuse their Horner polynomial
   steps with FMA (`vfmadd` on AVX2/AVX-512, `vfmaq` on NEON). The fused
   single rounding is *more* accurate than the split mul+add, so the

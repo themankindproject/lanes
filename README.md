@@ -5,7 +5,6 @@
 [![License](https://img.shields.io/crates/l/lanes)](LICENSE-MIT)
 [![CI](https://img.shields.io/github/actions/workflow/status/themankindproject/lanes/ci.yml?branch=main&label=CI)](https://github.com/themankindproject/lanes/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/themankindproject/lanes/branch/main/graph/badge.svg)](https://codecov.io/gh/themankindproject/lanes)
-[![Website](https://img.shields.io/badge/site-themankindproject.github.io%2Flanes-b4502a)](https://themankindproject.github.io/lanes/)
 ![Crates.io Downloads](https://img.shields.io/crates/d/lanes)
 ![Rust Version](https://img.shields.io/badge/rust-1.89%2B-blue)
 
