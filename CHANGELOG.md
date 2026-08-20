@@ -10,6 +10,8 @@ so it is all listed as additions.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-20
+
 ### Added
 
 - AVX-512 sub-feature detection (`Avx512Caps`): runtime detection of
@@ -265,5 +267,6 @@ so it is all listed as additions.
 - CI: fmt + clippy + test, doctest, MSRV, Miri, fuzz smoke, native
   aarch64, and llvm-cov coverage on every push and PR.
 
-[Unreleased]: https://github.com/themankindproject/lanes/compare/v0.1.2...main
+[Unreleased]: https://github.com/themankindproject/lanes/compare/v0.1.3...main
+[0.1.3]: https://github.com/themankindproject/lanes/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/themankindproject/lanes/compare/v0.1.0...v0.1.2
