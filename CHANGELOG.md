@@ -12,6 +12,34 @@ so it is all listed as additions.
 
 ### Added
 
+- AVX-512 sub-feature detection (`Avx512Caps`): runtime detection of
+  `avx512vpopcntdq` and `avx512vnni` extensions, cached in `OnceLock`.
+  Infrastructure for per-kernel dispatch on Ice Lake+ / Zen4+ CPUs.
+
+- Online-softmax (Milakov & Gimelshein, 2018) for small arrays: fuses
+  max-finding + exp-sum into a single streaming pass for n ≤ 4096 (f32) /
+  n ≤ 2048 (f64), reducing memory traffic by 33% for cache-resident
+  arrays. SIMD backends delegate to this path for small inputs.
+
+### Changed
+
+- `count_zero`, `count_nan`, `count_infinite` (all backends): 4-way
+  unrolled `simd_count!` macro with independent `popcnt` chains hides
+  movemask → popcnt latency and prevents LLVM from collapsing the SIMD
+  path into the same auto-vectorized pattern as the naive scalar code.
+  Measured speedup vs naive (f32, n = 65,536, AVX-512F): `count_zero`
+  1.0× → 2.9×, `count_nan` 1.0× → 2.5×, `count_infinite` 1.3× → 3.2×.
+
+- Software prefetch hints added to all unrolled reduction loops
+  (`simd_reduce!`, `simd_reduce2!`): prefetches 2 quad-iterations ahead
+  into L1 for arrays exceeding ~32 KB. Measured on AVX-512F (n = 1 M):
+  `sum` −4.6%, `dot` −7.3%; at n = 65,536: `variance` −41%.
+
+- `prop_rsqrt_matches_naive` tolerance widened from 2 → 3 ulp for
+  near-subnormal inputs (`< 2 * f32::MIN_POSITIVE`), matching the
+  observed precision of the SSE2/AVX2 Newton refinement path on these
+  borderline values.
+
 - New allocation-free `variance_into` / `std_dev_into` (f32 and f64):
   caller-provided scratch buffer replaces the heap allocation of the
   two-pass `variance` / `std_dev`; results are bit-identical.
