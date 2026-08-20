@@ -586,6 +586,7 @@ pub mod f64 {
     /// ```
     #[cfg(feature = "alloc")]
     #[inline]
+    #[allow(clippy::cast_precision_loss)]
     pub(crate) fn variance_fused_f64(backend: Backend, values: &[f64], mean: f64) -> f64 {
         kernels::dispatch_variance_fused_f64(backend, values, mean) / values.len() as f64
     }

@@ -1867,7 +1867,11 @@ macro_rules! simd_variance_fused {
         /// Caller must ensure the CPU feature is available.
         #[inline]
         #[target_feature(enable = $feat)]
-        #[allow(clippy::cast_lossless)]
+        #[allow(
+            clippy::cast_lossless,
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation
+        )]
         pub(crate) unsafe fn $name(values: &[$t], mean: $t) -> $t {
             let len = values.len();
             if len == 0 {
