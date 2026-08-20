@@ -532,10 +532,16 @@ proptest! {
                 // rsqrt(±0) = ±inf, rsqrt(inf) = 0 — check the inf direction.
                 prop_assert!(g.is_infinite() || g == 0.0, "lane {i}: rsqrt({}) = {g}", values[i]);
             } else {
-                let tol = w.abs() * 2e-7 + 1e-6;
+                // Documented rsqrt contract: ≤ 2 ulp vs 1/sqrt (worst-case
+                // at the top of the finite range). The previous tol
+                // w*2e-7+1e-6 is ~1 ulp for normals but border normals
+                // (e.g. 1.53e-38) can hit 2 ulp after Newton refine, so
+                // use a 2-ulp bound via nextafter.
+                let ulp = (f32::from_bits(w.to_bits().wrapping_add(1)) - w).abs().max(f32::from_bits(w.to_bits().wrapping_sub(1)) - w).abs();
+                let tol = (ulp * 2.0).max(1e-6);
                 prop_assert!(
                     (g - w).abs() <= tol,
-                    "lane {i}: rsqrt({}) = {g}, want {w}",
+                    "lane {i}: rsqrt({}) = {g}, want {w} (tol {tol})",
                     values[i]
                 );
             }
