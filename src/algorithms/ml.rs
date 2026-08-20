@@ -490,6 +490,7 @@ pub mod f32 {
         if a.is_empty() {
             return Err(Error::EmptyInput);
         }
+        // Cache dispatch once: same backend for dot + both norms (OnceLock load, but 3x less).
         let backend = Backend::detect();
         let dot = kernels::dispatch_dot(backend, a, b);
         let na = kernels::sqrt::sqrt(kernels::dispatch_sum_sq(backend, a));

@@ -192,6 +192,43 @@ pub(crate) fn softplus(values: &[f32], out: &mut [f32]) {
     });
 }
 
+/// Broadcast-subtract centering: `out[i] = values[i] - mean`.
+/// One rounding per lane, bit-identical to `x - mean` in RN.
+#[inline]
+pub(crate) fn center_f32(values: &[f32], mean: f32, out: &mut [f32]) {
+    debug_assert_eq!(values.len(), out.len());
+    for (o, &x) in out.iter_mut().zip(values) {
+        *o = x - mean;
+    }
+}
+/// Fused variance helper: single-pass `(x - mean)^2` sum, no alloc.
+#[inline]
+pub(crate) fn variance_fused_f32(values: &[f32], mean: f32) -> f32 {
+    let mut s = 0.0_f32;
+    for &x in values {
+        let d = x - mean;
+        s += d * d;
+    }
+    s
+}
+/// Broadcast-subtract centering for f64.
+#[inline]
+pub(crate) fn center_f64(values: &[f64], mean: f64, out: &mut [f64]) {
+    debug_assert_eq!(values.len(), out.len());
+    for (o, &x) in out.iter_mut().zip(values) {
+        *o = x - mean;
+    }
+}
+#[inline]
+pub(crate) fn variance_fused_f64(values: &[f64], mean: f64) -> f64 {
+    let mut s = 0.0_f64;
+    for &x in values {
+        let d = x - mean;
+        s += d * d;
+    }
+    s
+}
+
 /// `ln(1+z)` for `z >= 0` (`musl s_log1pf.c` identity). Shared by the softplus
 /// scalar tails on every backend.
 #[cfg(feature = "alloc")]
@@ -518,6 +555,17 @@ pub(crate) fn min_i8(values: &[i8]) -> Option<i8> {
 #[inline]
 pub(crate) fn max_i8(values: &[i8]) -> Option<i8> {
     values.iter().copied().max()
+}
+
+/// Maximum absolute value of i8 elements. Returns [`None`] for an empty slice.
+///
+/// The result is `u8` because `|i8::MIN| = 128` does not fit in `i8`. Exact for any slice.
+#[inline]
+pub(crate) fn max_abs_i8(values: &[i8]) -> Option<u8> {
+    if values.is_empty() {
+        return None;
+    }
+    Some(values.iter().map(|&v| v.unsigned_abs()).max().unwrap())
 }
 
 /// Count i8 elements equal to zero.

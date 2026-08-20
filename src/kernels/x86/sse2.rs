@@ -540,6 +540,37 @@ crate::simd_reduce!(
     i8::max
 );
 
+// i8 max_abs: single-pass |v| (u8 0..128), one memory scan.
+// Sign-extend to i16, absolute, reduce with pmaxsw; horizontal max -> u8.
+#[target_feature(enable = "sse2")]
+#[allow(clippy::cast_sign_loss)]
+pub(crate) unsafe fn max_abs_i8(values: &[i8]) -> u8 {
+    let len = values.len();
+    let ptr = values.as_ptr();
+    let chunks = len / 16;
+    let rem = len % 16;
+    let mut acc = _mm_setzero_si128();
+    for i in 0..chunks {
+        let v = unsafe { _mm_loadu_si128(ptr.add(i * 16).cast::<__m128i>()) };
+        let (lo, hi) = unsafe { sext_i8x16(v) };
+        let alo = unsafe { abs_i16x8(lo) };
+        let ahi = unsafe { abs_i16x8(hi) };
+        acc = unsafe { _mm_max_epi16(_mm_max_epi16(acc, alo), ahi) };
+    }
+    let mut best: u16 = 0;
+    if chunks > 0 {
+        let m0 = unsafe { _mm_max_epi16(acc, _mm_srli_si128(acc, 8)) };
+        let m1 = unsafe { _mm_max_epi16(m0, _mm_srli_si128(m0, 4)) };
+        let m2 = unsafe { _mm_max_epi16(m1, _mm_srli_si128(m1, 2)) };
+        best = unsafe { _mm_extract_epi16(m2, 0) as u16 };
+    }
+    for i in 0..rem {
+        let v = unsafe { *values.get_unchecked(chunks * 16 + i) };
+        best = best.max(u16::from(v.unsigned_abs()));
+    }
+    best as u8
+}
+
 // i8 count_zero: byte-equality mask via `pcmpeqb`, then `pmovmskb` popcount.
 crate::simd_count!(
     count_zero_i8,
@@ -613,6 +644,65 @@ crate::simd_reduce2_wide!(
         let d = i64::from(a) - i64::from(b);
         r + d * d
     }
+);
+
+crate::simd_center!(
+    center_f32,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    |p, v| unsafe { _mm_storeu_ps(p, v) },
+    _mm_sub_ps,
+    |s| unsafe { _mm_set1_ps(s) },
+    |x: f32, m: f32| x - m
+);
+crate::simd_center!(
+    center_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    |p, v| unsafe { _mm_storeu_pd(p, v) },
+    _mm_sub_pd,
+    |s| unsafe { _mm_set1_pd(s) },
+    |x: f64, m: f64| x - m
+);
+crate::simd_variance_fused!(
+    variance_fused_f32,
+    f32,
+    "sse2",
+    4,
+    |p| unsafe { _mm_loadu_ps(p) },
+    _mm_setzero_ps(),
+    |acc: __m128, v: __m128, vm: __m128| unsafe {
+        let d = _mm_sub_ps(v, vm);
+        _mm_add_ps(acc, _mm_mul_ps(d, d))
+    },
+    |v| unsafe { hsum_128(v) },
+    |r: f32, x: f32, m: f32| {
+        let d = x - m;
+        r + d * d
+    },
+    |s| unsafe { _mm_set1_ps(s) }
+);
+crate::simd_variance_fused!(
+    variance_fused_f64,
+    f64,
+    "sse2",
+    2,
+    |p| unsafe { _mm_loadu_pd(p) },
+    _mm_setzero_pd(),
+    |acc: __m128d, v: __m128d, vm: __m128d| unsafe {
+        let d = _mm_sub_pd(v, vm);
+        _mm_add_pd(acc, _mm_mul_pd(d, d))
+    },
+    |v| unsafe { hsum_128d(v) },
+    |r: f64, x: f64, m: f64| {
+        let d = x - m;
+        r + d * d
+    },
+    |s| unsafe { _mm_set1_pd(s) }
 );
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar

@@ -66,6 +66,14 @@ fn sqrt_f64_no_std(x: f64) -> f64 {
     if x.is_infinite() {
         return f64::INFINITY; // sqrt(+inf) = inf
     }
+    // Subnormal f64: the bit-trick seed on hi bits is garbage below 2^-1022.
+    // Scale by 2^100 (exact — adds 100 to exponent), Newton, scale back by
+    // 2^-50 (sqrt scales by half the exponent). Mirrors the f32 path exactly.
+    if x < f64::from_bits(0x0010_0000_0000_0000) {
+        let up = f64::from_bits(0x4630_0000_0000_0000); // 2^100
+        let down = f64::from_bits(0x3CB0_0000_0000_0000); // 2^-50
+        return sqrt_f64_no_std(x * up) * down;
+    }
     // Seed with the f32 fast-inverse-sqrt magic on the high bits, then
     // Newton in f64: g = 0.5*(g + x/g). From a ~4% guess, four iterations
     // reach full f64 precision (error² per step).

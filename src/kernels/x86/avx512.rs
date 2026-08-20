@@ -40,8 +40,8 @@ use core::arch::x86_64::*;
 // `vpcmpeqb`), also not detected, so they re-export the AVX2 forms
 // as well.
 pub(crate) use super::avx2::{
-    count_zero_i8, dot_i8, hamming_popcount, jaccard_counts, l1_norm_i8, max_i8, min_i8,
-    squared_distance_i8, sum_i8,
+    count_zero_i8, dot_i8, hamming_popcount, jaccard_counts, l1_norm_i8, max_abs_i8, max_i8,
+    min_i8, squared_distance_i8, sum_i8,
 };
 
 // Bitwise ops on float vectors, routed through the integer domain:
@@ -311,6 +311,65 @@ crate::simd_reduce2!(
         r + a * crate::kernels::ln::ln(a / m) + b * crate::kernels::ln::ln(b / m)
     },
     _mm512_add_ps
+);
+
+crate::simd_center!(
+    center_f32,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    |p, v| unsafe { _mm512_storeu_ps(p, v) },
+    _mm512_sub_ps,
+    |s| unsafe { _mm512_set1_ps(s) },
+    |x: f32, m: f32| x - m
+);
+crate::simd_center!(
+    center_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    |p, v| unsafe { _mm512_storeu_pd(p, v) },
+    _mm512_sub_pd,
+    |s| unsafe { _mm512_set1_pd(s) },
+    |x: f64, m: f64| x - m
+);
+crate::simd_variance_fused!(
+    variance_fused_f32,
+    f32,
+    "avx512f",
+    16,
+    |p| unsafe { _mm512_loadu_ps(p) },
+    _mm512_setzero_ps(),
+    |acc: __m512, v: __m512, vm: __m512| unsafe {
+        let d = _mm512_sub_ps(v, vm);
+        _mm512_add_ps(acc, _mm512_mul_ps(d, d))
+    },
+    |v| unsafe { _mm512_reduce_add_ps(v) },
+    |r: f32, x: f32, m: f32| {
+        let d = x - m;
+        r + d * d
+    },
+    |s| unsafe { _mm512_set1_ps(s) }
+);
+crate::simd_variance_fused!(
+    variance_fused_f64,
+    f64,
+    "avx512f",
+    8,
+    |p| unsafe { _mm512_loadu_pd(p) },
+    _mm512_setzero_pd(),
+    |acc: __m512d, v: __m512d, vm: __m512d| unsafe {
+        let d = _mm512_sub_pd(v, vm);
+        _mm512_add_pd(acc, _mm512_mul_pd(d, d))
+    },
+    |v| unsafe { _mm512_reduce_add_pd(v) },
+    |r: f64, x: f64, m: f64| {
+        let d = x - m;
+        r + d * d
+    },
+    |s| unsafe { _mm512_set1_pd(s) }
 );
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.

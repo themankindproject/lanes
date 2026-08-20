@@ -439,6 +439,18 @@ dispatch!(
 );
 
 dispatch!(
+    dispatch_max_abs_i8,
+    [values: &[i8]],
+    Option<u8>,
+    scalar::max_abs_i8,
+    x86::sse2::max_abs_i8,
+    x86::avx2::max_abs_i8,
+    x86::avx512::max_abs_i8,
+    aarch64::neon::max_abs_i8,
+    Some
+);
+
+dispatch!(
     dispatch_count_zero_i8,
     [values: &[i8]],
     usize,
@@ -730,7 +742,55 @@ dispatch!(
 // ===========================================================================
 
 dispatch!(
-    dispatch_sum_f64,
+    dispatch_center_f32,
+    [values: &[f32], mean: f32, out: &mut [f32]],
+    (),
+    scalar::center_f32,
+    x86::sse2::center_f32,
+    x86::avx2::center_f32,
+    x86::avx512::center_f32,
+    aarch64::neon::center_f32,
+    id
+);
+
+dispatch!(
+    dispatch_center_f64,
+    [values: &[f64], mean: f64, out: &mut [f64]],
+    (),
+    scalar::center_f64,
+    x86::sse2::center_f64,
+    x86::avx2::center_f64,
+    x86::avx512::center_f64,
+    aarch64::neon::center_f64,
+    id
+);
+
+dispatch!(
+    dispatch_variance_fused_f32,
+    [values: &[f32], mean: f32],
+    f32,
+    scalar::variance_fused_f32,
+    x86::sse2::variance_fused_f32,
+    x86::avx2::variance_fused_f32,
+    x86::avx512::variance_fused_f32,
+    aarch64::neon::variance_fused_f32,
+    id
+);
+
+dispatch!(
+    dispatch_variance_fused_f64,
+    [values: &[f64], mean: f64],
+    f64,
+    scalar::variance_fused_f64,
+    x86::sse2::variance_fused_f64,
+    x86::avx2::variance_fused_f64,
+    x86::avx512::variance_fused_f64,
+    aarch64::neon::variance_fused_f64,
+    id
+);
+
+dispatch!(
+dispatch_sum_f64,
     [values: &[f64]],
     f64,
     scalar::sum_f64,
