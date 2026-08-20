@@ -1279,3 +1279,42 @@ dispatch!(
     id,
     alloc
 );
+
+// For now all backends fall through to the scalar implementation.
+// SIMD-accelerated convert kernels will be added later.
+
+/// Dispatch f16 → f32 conversion.
+#[inline]
+pub(crate) fn dispatch_f16_to_f32(_backend: Backend, input: &[u16], output: &mut [f32]) {
+    scalar::f16_to_f32(input, output);
+}
+
+/// Dispatch f32 → f16 conversion.
+#[inline]
+pub(crate) fn dispatch_f32_to_f16(_backend: Backend, input: &[f32], output: &mut [u16]) {
+    scalar::f32_to_f16(input, output);
+}
+
+/// Dispatch bf16 → f32 conversion.
+#[inline]
+pub(crate) fn dispatch_bf16_to_f32(_backend: Backend, input: &[u16], output: &mut [f32]) {
+    scalar::bf16_to_f32(input, output);
+}
+
+/// Dispatch f32 → bf16 conversion.
+#[inline]
+pub(crate) fn dispatch_f32_to_bf16(_backend: Backend, input: &[f32], output: &mut [u16]) {
+    scalar::f32_to_bf16(input, output);
+}
+
+/// Dispatch f16 dot product (computed in f32).
+#[inline]
+pub(crate) fn dispatch_dot_f16(_backend: Backend, a: &[u16], b: &[u16]) -> f32 {
+    scalar::dot_f16(a, b)
+}
+
+/// Dispatch bf16 dot product (computed in f32).
+#[inline]
+pub(crate) fn dispatch_dot_bf16(_backend: Backend, a: &[u16], b: &[u16]) -> f32 {
+    scalar::dot_bf16(a, b)
+}

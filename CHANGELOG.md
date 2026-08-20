@@ -10,6 +10,16 @@ so it is all listed as additions.
 
 ## [Unreleased]
 
+### Added
+
+- **`convert` family** — f16/bf16 ↔ f32 slice conversions and
+  mixed-precision dot products (`dot_f16`, `dot_bf16`). All narrowing
+  conversions use IEEE 754 round-to-nearest-even. The module is
+  `no_std`-compatible (no `alloc` required — all functions write into
+  caller-provided buffers). Exhaustively verified: all 65,536 f16 and
+  bf16 bit patterns round-trip correctly; tie-to-even cases and denormal
+  handling confirmed against brute-force oracles. (#7)
+
 ## [0.1.3] - 2026-08-20
 
 ### Added

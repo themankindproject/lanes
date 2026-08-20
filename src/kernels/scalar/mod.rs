@@ -1150,6 +1150,220 @@ pub(crate) fn erfc_f64(values: &[f64], out: &mut [f64]) {
     map_f64(values, out, crate::kernels::erf::erfc_f64);
 }
 
+// References:
+// - IEEE 754-2008 §3.3 (binary16 "half precision"), §4.3.1 (roundTiesToEven)
+//   <https://ieeexplore.ieee.org/document/4610935>
+// - bfloat16 format: Google Brain, adopted by Intel (Cooper Lake), ARM (BF16
+//   extension), RISC-V (Zfbfmin). Format spec:
+//   <https://en.wikipedia.org/wiki/Bfloat16_floating-point_format>
+// - f32→bf16 rounding bias trick (((bits >> 16) & 1) + 0x7FFF):
+//   NVIDIA CUDA __float2bfloat16_rn, TensorFlow XLA, PyTorch c10::BFloat16.
+//   <https://github.com/pytorch/pytorch/blob/main/c10/util/BFloat16.h>
+// - f32→f16 narrowing with round-to-nearest-even: based on the algorithm
+//   in x448/float16 (Go, MIT) verified against all 2^32 inputs, and the
+//   half-rs crate (Rust, MIT/Apache-2.0) by Kathryn Long (starkat99).
+//   <https://github.com/x448/float16>
+//   <https://github.com/starkat99/half-rs>
+// - F16C hardware reference (VCVTPS2PH / VCVTPH2PS):
+//   Intel® 64 and IA-32 Architectures Software Developer's Manual, Vol. 2
+//   <https://www.felixcloutier.com/x86/vcvtps2ph>
+
+/// Convert a slice of IEEE 754 binary16 (f16) values to f32 (lossless).
+#[inline]
+pub(crate) fn f16_to_f32(input: &[u16], output: &mut [f32]) {
+    for (i, &bits) in input.iter().enumerate() {
+        output[i] = f16_bits_to_f32(bits);
+    }
+}
+
+/// Convert a single f16 bit pattern to f32.
+#[inline]
+fn f16_bits_to_f32(bits: u16) -> f32 {
+    let sign = u32::from(bits >> 15);
+    let exp = u32::from((bits >> 10) & 0x1F);
+    let mant = u32::from(bits & 0x03FF);
+
+    if exp == 0 {
+        if mant == 0 {
+            // Signed zero
+            f32::from_bits(sign << 31)
+        } else {
+            // Denormal f16 → normalize to f32
+            let mut m = mant;
+            let mut e: i32 = 1; // denormal exponent is 1 (not 0)
+            // Shift mantissa left until the implicit bit (bit 10) is set
+            while (m & 0x0400) == 0 {
+                m <<= 1;
+                e -= 1;
+            }
+            // Remove the implicit bit
+            m &= 0x03FF;
+            // f32 exponent: (1 - 15) + 127 + (e - 1) = 113 + (e - 1) = 112 + e
+            #[allow(clippy::cast_sign_loss)] // 112 + e is always positive here (e >= -9)
+            let f32_exp = (112 + e) as u32;
+            f32::from_bits((sign << 31) | (f32_exp << 23) | (m << 13))
+        }
+    } else if exp == 31 {
+        // Inf or NaN
+        // Map to f32: exponent = 0xFF, mantissa preserved (shifted)
+        f32::from_bits((sign << 31) | (0xFF << 23) | (mant << 13))
+    } else {
+        // Normal: f32 exponent = f16 exponent - 15 + 127 = exp + 112
+        f32::from_bits((sign << 31) | ((exp + 112) << 23) | (mant << 13))
+    }
+}
+
+/// Convert a slice of f32 values to IEEE 754 binary16 (f16) with
+/// round-to-nearest-even.
+#[inline]
+pub(crate) fn f32_to_f16(input: &[f32], output: &mut [u16]) {
+    for (i, &val) in input.iter().enumerate() {
+        output[i] = f32_to_f16_bits(val);
+    }
+}
+
+/// Convert a single f32 value to f16 bit pattern with round-to-nearest-even.
+#[inline]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+fn f32_to_f16_bits(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = (bits >> 31) as u16;
+    let exp = ((bits >> 23) & 0xFF) as i32;
+    let mant = bits & 0x007F_FFFF;
+
+    if exp == 255 {
+        // NaN or Inf
+        if mant != 0 {
+            // NaN → quiet NaN in f16
+            (sign << 15) | 0x7E00
+        } else {
+            // Inf
+            (sign << 15) | 0x7C00
+        }
+    } else if exp > 142 {
+        // Overflow → f16 Inf (exp 127+15=142 is the max normal)
+        (sign << 15) | 0x7C00
+    } else if exp < 103 {
+        // Underflow → signed zero (smallest f16 denormal needs exp >= 103)
+        sign << 15
+    } else if exp < 113 {
+        // Denormal f16 output.
+        // The f16 denormal value is: f16_mant * 2^-24 (no implicit 1).
+        // We need: f16_mant = full_mant * 2^(exp - 126), i.e. shift right
+        // by (126 - exp) with round-to-nearest-even.
+        let full_mant = mant | 0x0080_0000;
+        let shift = (126 - exp) as u32; // total right-shift (14..23)
+
+        let shifted = full_mant >> shift;
+
+        // Round bit: the bit just below the result
+        let round_bit = (full_mant >> (shift - 1)) & 1;
+        // Sticky: all bits below the round bit
+        let sticky = if shift > 1 {
+            (full_mant & ((1u32 << (shift - 1)) - 1)) != 0
+        } else {
+            false
+        };
+
+        let mut half_mant = shifted as u16;
+        // Round-to-nearest-even
+        if round_bit != 0 && (sticky || (half_mant & 1) != 0) {
+            half_mant += 1;
+        }
+
+        (sign << 15) | half_mant
+    } else {
+        // Normal range
+        let new_exp = ((exp - 112) as u16) & 0x1F;
+
+        // Round mantissa from 23 bits to 10 bits
+        // Bits to truncate: bits 0..12 (13 bits, keeping top 10)
+        let round_bit = (mant >> 12) & 1;
+        let sticky = (mant & 0x0FFF) != 0; // bits 0..11
+
+        let mut half_mant = ((mant >> 13) & 0x03FF) as u16;
+
+        // Round-to-nearest-even
+        if round_bit != 0 && (sticky || (half_mant & 1) != 0) {
+            half_mant += 1;
+            // Check for mantissa overflow (0x400 = 1024, only 10 bits available)
+            if half_mant == 0x0400 {
+                // Mantissa overflowed: increment exponent, zero mantissa
+                let new_exp = new_exp + 1;
+                if new_exp >= 31 {
+                    // Overflow to Inf
+                    return (sign << 15) | 0x7C00;
+                }
+                return (sign << 15) | (new_exp << 10);
+            }
+        }
+
+        (sign << 15) | (new_exp << 10) | half_mant
+    }
+}
+
+/// Convert a slice of bf16 (brain float 16) values to f32 (lossless).
+#[inline]
+pub(crate) fn bf16_to_f32(input: &[u16], output: &mut [f32]) {
+    for (i, &bits) in input.iter().enumerate() {
+        output[i] = f32::from_bits(u32::from(bits) << 16);
+    }
+}
+
+/// Convert a slice of f32 values to bf16 with round-to-nearest-even.
+#[inline]
+pub(crate) fn f32_to_bf16(input: &[f32], output: &mut [u16]) {
+    for (i, &val) in input.iter().enumerate() {
+        output[i] = f32_to_bf16_bits(val);
+    }
+}
+
+/// Convert a single f32 to bf16 bit pattern with round-to-nearest-even.
+#[inline]
+#[allow(clippy::cast_possible_truncation)]
+fn f32_to_bf16_bits(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let exp = (bits >> 23) & 0xFF;
+    let mant = bits & 0x007F_FFFF;
+
+    if exp == 0xFF && mant != 0 {
+        // NaN: force quiet NaN
+        ((bits >> 16) | 0x0040) as u16
+    } else {
+        // Normal, Inf, or zero: round-to-nearest-even
+        // The rounding bias uses the LSB of the retained part (bit 16 of f32)
+        // to implement ties-to-even.
+        let rounding_bias = ((bits >> 16) & 1) + 0x7FFF;
+        ((bits.wrapping_add(rounding_bias)) >> 16) as u16
+    }
+}
+
+/// Dot product of two f16 slices, computed in f32.
+#[inline]
+pub(crate) fn dot_f16(a: &[u16], b: &[u16]) -> f32 {
+    let mut acc = 0.0_f32;
+    for (&a_bits, &b_bits) in a.iter().zip(b.iter()) {
+        acc += f16_bits_to_f32(a_bits) * f16_bits_to_f32(b_bits);
+    }
+    acc
+}
+
+/// Dot product of two bf16 slices, computed in f32.
+#[inline]
+pub(crate) fn dot_bf16(a: &[u16], b: &[u16]) -> f32 {
+    let mut acc = 0.0_f32;
+    for (&a_bits, &b_bits) in a.iter().zip(b.iter()) {
+        let a_f32 = f32::from_bits(u32::from(a_bits) << 16);
+        let b_f32 = f32::from_bits(u32::from(b_bits) << 16);
+        acc += a_f32 * b_f32;
+    }
+    acc
+}
+
 #[cfg(test)]
 #[allow(clippy::float_cmp)]
 mod tests {

@@ -206,3 +206,11 @@ pub mod special {
 pub mod ml {
     pub use crate::algorithms::ml::{f32, f64};
 }
+
+/// Half-precision (f16) and brain floating-point (bf16) conversions and
+/// mixed-precision dot products.
+pub mod convert {
+    pub use crate::algorithms::convert::{
+        bf16_to_f32, dot_bf16, dot_f16, f16_to_f32, f32_to_bf16, f32_to_f16,
+    };
+}
