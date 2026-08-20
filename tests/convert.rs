@@ -14,9 +14,7 @@
 
 use lanes::convert;
 
-// ═══════════════════════════════════════════════════════════════════════════
 // HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// Compute the "correct" f16→f32 conversion using known bit-level rules,
 /// independent of the library under test.
@@ -145,9 +143,7 @@ fn reference_f32_to_bf16(value: f32) -> u16 {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // f16 ↔ f32 EXHAUSTIVE TESTS
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// Test ALL 65536 possible f16→f32 conversions against the reference.
 #[test]
@@ -238,9 +234,7 @@ fn f16_roundtrip_exhaustive() {
     assert_eq!(failures, 0, "{failures} f16 round-trips failed");
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // f32 → f16 CORRECTNESS (selected values)
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// Test f32→f16 for known exact values.
 #[test]
@@ -403,9 +397,7 @@ fn f32_to_f16_ties_to_even() {
     );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // f32 → f16 RANDOM SAMPLING WITH ORACLE
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// Test f32→f16 against the brute-force oracle for a sampling of values.
 /// This is slow (oracle is O(65536) per value) so we limit to key ranges.
@@ -477,9 +469,7 @@ fn f32_to_f16_oracle_denormal_range() {
     );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // bf16 ↔ f32 TESTS
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// Test ALL 65536 possible bf16→f32 conversions.
 #[test]
@@ -701,9 +691,7 @@ fn f32_to_bf16_sweep() {
     );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // DOT PRODUCT TESTS
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// Test dot_f16 basic correctness.
 #[test]
@@ -842,9 +830,7 @@ fn dot_f16_vs_f64_reference() {
     );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // ERROR HANDLING TESTS
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// Test length mismatch errors for conversion functions.
 #[test]
@@ -872,9 +858,7 @@ fn dot_length_mismatch() {
     assert!(convert::dot_bf16(&a, &b).is_err());
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SPECIAL VALUES
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// Test that ±0 is handled correctly in all conversions.
 #[test]

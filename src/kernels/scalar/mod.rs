@@ -1150,7 +1150,23 @@ pub(crate) fn erfc_f64(values: &[f64], out: &mut [f64]) {
     map_f64(values, out, crate::kernels::erf::erfc_f64);
 }
 
-// ─── Half-precision (f16/bf16) conversions ───────────────────────────────────
+// References:
+// - IEEE 754-2008 §3.3 (binary16 "half precision"), §4.3.1 (roundTiesToEven)
+//   <https://ieeexplore.ieee.org/document/4610935>
+// - bfloat16 format: Google Brain, adopted by Intel (Cooper Lake), ARM (BF16
+//   extension), RISC-V (Zfbfmin). Format spec:
+//   <https://en.wikipedia.org/wiki/Bfloat16_floating-point_format>
+// - f32→bf16 rounding bias trick (((bits >> 16) & 1) + 0x7FFF):
+//   NVIDIA CUDA __float2bfloat16_rn, TensorFlow XLA, PyTorch c10::BFloat16.
+//   <https://github.com/pytorch/pytorch/blob/main/c10/util/BFloat16.h>
+// - f32→f16 narrowing with round-to-nearest-even: based on the algorithm
+//   in x448/float16 (Go, MIT) verified against all 2^32 inputs, and the
+//   half-rs crate (Rust, MIT/Apache-2.0) by Kathryn Long (starkat99).
+//   <https://github.com/x448/float16>
+//   <https://github.com/starkat99/half-rs>
+// - F16C hardware reference (VCVTPS2PH / VCVTPH2PS):
+//   Intel® 64 and IA-32 Architectures Software Developer's Manual, Vol. 2
+//   <https://www.felixcloutier.com/x86/vcvtps2ph>
 
 /// Convert a slice of IEEE 754 binary16 (f16) values to f32 (lossless).
 #[inline]

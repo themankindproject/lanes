@@ -1280,8 +1280,6 @@ dispatch!(
     alloc
 );
 
-// ─── Half-precision (f16/bf16) conversions ───────────────────────────────────
-//
 // For now all backends fall through to the scalar implementation.
 // SIMD-accelerated convert kernels will be added later.
 

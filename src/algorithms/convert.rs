@@ -9,12 +9,19 @@
 //!
 //! * `f16_to_f32` / `bf16_to_f32` — widen half → single (lossless).
 //! * `f32_to_f16` / `f32_to_bf16` — narrow single → half with
-//!   round-to-nearest-even.
+//!   round-to-nearest-even (IEEE 754 default rounding mode).
 //!
 //! ## Dot products
 //!
 //! * `dot_f16` / `dot_bf16` — pairwise products accumulated in f32 for
-//!   precision.
+//!   precision (the same approach used by TPU systolic arrays and Intel AMX).
+//!
+//! ## Format specifications
+//!
+//! * **f16** — IEEE 754-2008 binary16: 1 sign + 5 exponent (bias 15) +
+//!   10 mantissa bits. Range ≈ ±6.55×10⁴, smallest denormal ≈ 5.96×10⁻⁸.
+//! * **bf16** — Brain Floating Point (Google): 1 sign + 8 exponent
+//!   (bias 127) + 7 mantissa bits. Same exponent range as f32.
 
 use crate::dispatch::Backend;
 use crate::error::Error;
