@@ -7,6 +7,38 @@
 
 use crate::dispatch::Backend;
 
+/// AVX-512 sub-feature capabilities detected at runtime.
+///
+/// These enhance specific operations within the AVX-512F backend. Each CPU
+/// that has AVX-512F may or may not have these extensions:
+/// - `vpopcntdq`: Native 512-bit popcount for binary distances (hamming/jaccard)
+/// - `vnni`: VPDPBUSD for fused byte dot products (i8 family)
+#[cfg(target_arch = "x86_64")]
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)] // infrastructure for per-kernel sub-feature dispatch
+pub(crate) struct Avx512Caps {
+    /// AVX-512 VPOPCNTDQ: native 64-bit lane popcount instruction.
+    /// Accelerates hamming/jaccard binary distance computations.
+    pub(crate) vpopcntdq: bool,
+    /// AVX-512 VNNI: Vector Neural Network Instructions (VPDPBUSD).
+    /// Accelerates i8 dot products and sum-of-absolute-differences.
+    pub(crate) vnni: bool,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Avx512Caps {
+    /// Detect AVX-512 sub-feature capabilities on the running CPU.
+    #[allow(dead_code)] // used by dispatch_info example and future per-kernel dispatch
+    pub(crate) fn detect() -> Self {
+        use std::sync::OnceLock;
+        static CAPS: OnceLock<Avx512Caps> = OnceLock::new();
+        *CAPS.get_or_init(|| Avx512Caps {
+            vpopcntdq: is_x86_feature_detected!("avx512vpopcntdq"),
+            vnni: is_x86_feature_detected!("avx512vnni"),
+        })
+    }
+}
+
 /// Map a backend name (as accepted by `LANES_BACKEND`) to a [`Backend`].
 ///
 /// Unknown or unavailable names return `None` so that callers fall back

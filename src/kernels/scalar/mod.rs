@@ -20,6 +20,13 @@ const GELU_B: f32 = 0.044_715;
 #[cfg(feature = "alloc")]
 #[inline]
 pub(crate) fn softmax(values: &[f32], out: &mut [f32]) {
+    // For small arrays (cache-resident), online-softmax fuses the max+exp
+    // passes into a single pass over the data, reducing memory traffic from
+    // 3 passes to 2. The threshold matches typical L1 data cache sizes.
+    if values.len() <= 4096 {
+        online_softmax(values, out);
+        return;
+    }
     let Some(max) = values.iter().copied().reduce(f32::max) else {
         return;
     };
@@ -33,6 +40,49 @@ pub(crate) fn softmax(values: &[f32], out: &mut [f32]) {
         let inv = 1.0 / sum;
         for o in out.iter_mut() {
             *o *= inv;
+        }
+    }
+}
+
+/// Online softmax (Milakov & Gimelshein, 2018): fuses max-finding and
+/// exp-sum accumulation into a single streaming pass.
+///
+/// Algorithm: maintain running `max` and `sum_exp`. When a new `max'` is
+/// found, rescale the running sum: `sum *= exp(old_max - new_max)`. At the
+/// end, normalize with one pass.
+///
+/// Advantage: only 2 passes over the data (fused max+expsum, then normalize)
+/// instead of 3 (max, exp+sum, normalize). This is 33% less memory traffic,
+/// significant when the array fits in L1/L2 cache.
+#[cfg(feature = "alloc")]
+#[inline]
+fn online_softmax(values: &[f32], out: &mut [f32]) {
+    if values.is_empty() {
+        return;
+    }
+
+    // Pass 1: online max + exp-sum (single pass over input)
+    let mut running_max = f32::NEG_INFINITY;
+    let mut running_sum = 0.0_f32;
+
+    for &v in values {
+        if v > running_max {
+            // Rescale accumulated sum for the new max.
+            running_sum *= exp::exp(running_max - v);
+            running_max = v;
+        }
+        running_sum += exp::exp(v - running_max);
+    }
+
+    // Pass 2: compute exp(x - max) / sum (single pass over output)
+    if running_sum == 0.0 {
+        for o in out.iter_mut() {
+            *o = 0.0;
+        }
+    } else {
+        let inv_sum = 1.0 / running_sum;
+        for (i, &v) in values.iter().enumerate() {
+            out[i] = exp::exp(v - running_max) * inv_sum;
         }
     }
 }
@@ -849,6 +899,12 @@ pub(crate) fn exp_f64(values: &[f64], out: &mut [f64]) {
 /// Numerically-stable softmax into `out`.
 #[cfg(feature = "alloc")]
 pub(crate) fn softmax_f64(values: &[f64], out: &mut [f64]) {
+    // For small arrays (cache-resident), online-softmax fuses the max+exp
+    // passes into a single pass over the data, reducing memory traffic.
+    if values.len() <= 2048 {
+        online_softmax_f64(values, out);
+        return;
+    }
     let Some(max) = values.iter().copied().reduce(f64::max) else {
         return;
     };
@@ -862,6 +918,37 @@ pub(crate) fn softmax_f64(values: &[f64], out: &mut [f64]) {
         let inv = 1.0 / sum;
         for o in out.iter_mut() {
             *o *= inv;
+        }
+    }
+}
+
+/// Online softmax for f64 (Milakov & Gimelshein, 2018).
+#[cfg(feature = "alloc")]
+#[inline]
+fn online_softmax_f64(values: &[f64], out: &mut [f64]) {
+    if values.is_empty() {
+        return;
+    }
+
+    let mut running_max = f64::NEG_INFINITY;
+    let mut running_sum = 0.0_f64;
+
+    for &v in values {
+        if v > running_max {
+            running_sum *= crate::kernels::exp::exp_f64(running_max - v);
+            running_max = v;
+        }
+        running_sum += crate::kernels::exp::exp_f64(v - running_max);
+    }
+
+    if running_sum == 0.0 {
+        for o in out.iter_mut() {
+            *o = 0.0;
+        }
+    } else {
+        let inv_sum = 1.0 / running_sum;
+        for (i, &v) in values.iter().enumerate() {
+            out[i] = crate::kernels::exp::exp_f64(v - running_max) * inv_sum;
         }
     }
 }

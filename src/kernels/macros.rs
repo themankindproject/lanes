@@ -65,8 +65,29 @@ macro_rules! simd_reduce {
             let mut acc2 = $acc_ident;
             let mut acc3 = $acc_ident;
             let quads = chunks / 4;
+
+            // Software prefetch distance: 8 cache lines ahead (512 bytes).
+            // Only beneficial when the array exceeds L1 (~32 KB).
+            let prefetch_stride = 4 * $lanes; // one quad iteration in elements
+            let use_prefetch = len > 8192; // ~32KB for f32
+
             for i in 0..quads {
                 let base = i * 4 * $lanes;
+
+                // Prefetch the next quad iteration's data into L1.
+                #[cfg(target_arch = "x86_64")]
+                if use_prefetch {
+                    let pf_base = base + 2 * prefetch_stride;
+                    if pf_base < len {
+                        unsafe {
+                            core::arch::x86_64::_mm_prefetch(
+                                ptr.add(pf_base).cast::<i8>(),
+                                core::arch::x86_64::_MM_HINT_T0,
+                            );
+                        }
+                    }
+                }
+
                 // SAFETY: base + 4*$lanes - 1 < quads*4*$lanes <= len.
                 let v0 = $load(unsafe { ptr.add(base) });
                 let v1 = $load(unsafe { ptr.add(base + $lanes) });
@@ -369,6 +390,21 @@ macro_rules! simd_softmax {
             if len == 0 {
                 return;
             }
+
+            // For small arrays (fits in L1 cache), the online-softmax
+            // approach (2 passes instead of 3) wins by reducing memory
+            // traffic. Delegate to the scalar implementation which uses
+            // the fused online algorithm for n <= 4096 (f32) / 2048 (f64).
+            let online_threshold = if core::mem::size_of::<$t>() == 4 {
+                4096
+            } else {
+                2048
+            };
+            if len <= online_threshold {
+                $crate::kernels::scalar::$name(values, out);
+                return;
+            }
+
             let chunks = len / $lanes;
             let rem = len % $lanes;
 
@@ -463,8 +499,32 @@ macro_rules! simd_reduce2 {
             let mut acc2 = $acc_ident;
             let mut acc3 = $acc_ident;
             let quads = chunks / 4;
+
+            // Software prefetch: beneficial for arrays exceeding L1 cache.
+            let prefetch_stride = 4 * $lanes;
+            let use_prefetch = len > 8192;
+
             for i in 0..quads {
                 let base = i * 4 * $lanes;
+
+                // Prefetch the next quad iteration for both inputs.
+                #[cfg(target_arch = "x86_64")]
+                if use_prefetch {
+                    let pf_base = base + 2 * prefetch_stride;
+                    if pf_base < len {
+                        unsafe {
+                            core::arch::x86_64::_mm_prefetch(
+                                a_ptr.add(pf_base).cast::<i8>(),
+                                core::arch::x86_64::_MM_HINT_T0,
+                            );
+                            core::arch::x86_64::_mm_prefetch(
+                                b_ptr.add(pf_base).cast::<i8>(),
+                                core::arch::x86_64::_MM_HINT_T0,
+                            );
+                        }
+                    }
+                }
+
                 // SAFETY: base + 4*$lanes - 1 < quads*4*$lanes <= len, so
                 // both pointers are in bounds.
                 let a0 = $load(unsafe { a_ptr.add(base) });
@@ -1423,6 +1483,12 @@ macro_rules! simd_powi {
 /// * `$count_lanes` — `fn(Mask) -> usize` popcount of set lanes.
 /// * `$tail` — `fn($t) -> bool` scalar predicate for the remainder.
 ///
+/// Generate a single-input predicate-counting reduction kernel.
+///
+/// 4-way unrolled: processes four vector chunks per iteration to hide
+/// the latency of `movemask`/`popcnt` and prevent LLVM from collapsing
+/// this into the same pattern it auto-generates for scalar `filter().count()`.
+///
 /// # Safety
 /// The generated function is `unsafe fn` with `#[target_feature]`; the
 /// caller must verify the CPU feature.
@@ -1433,24 +1499,51 @@ macro_rules! simd_count {
         $name:ident, $t:ty, $feat:literal, $lanes:expr,
         $load:expr, $pred:expr, $count_lanes:expr, $tail:expr
     ) => {
-        /// SIMD predicate-count reduction. See the scalar reference for
-        /// semantics.
+        /// SIMD predicate-count reduction (4-way unrolled). See the scalar
+        /// reference for semantics.
         ///
         /// # Safety
         /// Caller must ensure the CPU feature is available.
         #[inline]
         #[target_feature(enable = $feat)]
+        #[allow(clippy::cast_possible_truncation)] // count per chunk ≤ $lanes (≤ 16), fits in u32
         pub(crate) unsafe fn $name(values: &[$t]) -> usize {
             let len = values.len();
+            let ptr = values.as_ptr();
             let chunks = len / $lanes;
             let rem = len % $lanes;
-            let mut count = 0usize;
-            for i in 0..chunks {
-                let v = $load(unsafe { values.as_ptr().add(i * $lanes) });
+
+            // 4-way unrolled: four independent popcnt chains hide the
+            // movemask → popcnt latency (3–4 cycles on modern cores).
+            let mut c0 = 0u32;
+            let mut c1 = 0u32;
+            let mut c2 = 0u32;
+            let mut c3 = 0u32;
+            let quads = chunks / 4;
+            for i in 0..quads {
+                let base = i * 4 * $lanes;
+                // SAFETY: base + 4*$lanes - 1 < quads*4*$lanes <= len.
+                let v0 = $load(unsafe { ptr.add(base) });
+                let v1 = $load(unsafe { ptr.add(base + $lanes) });
+                let v2 = $load(unsafe { ptr.add(base + 2 * $lanes) });
+                let v3 = $load(unsafe { ptr.add(base + 3 * $lanes) });
+                c0 += $count_lanes($pred(v0)) as u32;
+                c1 += $count_lanes($pred(v1)) as u32;
+                c2 += $count_lanes($pred(v2)) as u32;
+                c3 += $count_lanes($pred(v3)) as u32;
+            }
+            let mut count = (c0 + c1 + c2 + c3) as usize;
+
+            // Handle remaining full chunks (0–3).
+            for i in (quads * 4)..chunks {
+                let v = $load(unsafe { ptr.add(i * $lanes) });
                 count += $count_lanes($pred(v));
             }
+
+            // Scalar tail for the last partial chunk.
+            let tail_start = chunks * $lanes;
             for i in 0..rem {
-                let x = unsafe { *values.get_unchecked(chunks * $lanes + i) };
+                let x = unsafe { *values.get_unchecked(tail_start + i) };
                 if $tail(x) {
                     count += 1;
                 }
