@@ -15,6 +15,11 @@ so it is all listed as additions.
 - New allocation-free `variance_into` / `std_dev_into` (f32 and f64):
   caller-provided scratch buffer replaces the heap allocation of the
   two-pass `variance` / `std_dev`; results are bit-identical.
+- New `max_abs_i8` kernels (scalar/SSE2/AVX2/AVX-512/NEON) backing
+  `distance::i8::max_norm`: single-pass `max(|v|)` in `u8` (so
+  `|i8::MIN| = 128` is exact via i16 widening; NEON via `vabdl_s8` to
+  avoid saturating `vabs`). Dispatched as `dispatch_max_abs_i8`
+  (`Option<u8>`, `None` on empty).
 
 ### Changed
 
@@ -57,6 +62,24 @@ so it is all listed as additions.
   compute exactly what the general blend selected anyway). Measured on
   the tail-heavy shared bench distribution: SSE2 erf/erfc 6.3 → 3.4 ms,
   AVX2 3.3 → 1.7 ms.
+- `variance` / `std_dev` (f32 and f64) now use a fused scalar helper
+  `variance_fused_* { let d = x - mean; s += d*d }` plus
+  `dispatch_variance_fused_f32/f64` SIMD kernels (SSE2/AVX2/AVX-512/NEON;
+  scalar single-pass fallback via `center_f32/f64`). One pass over input
+  instead of the former center-into-scratch + sum_sq pass. The `_into`
+  variants reuse `dispatch_center_*` to honor the scratch contract
+  bit-identically. Measured (dev, n = 65,536 f32, 20k iters): 4.62 ms →
+  2.44 ms (1.89×); release expected larger (alloc dominates).
+- `distance::i8::max_norm` now does a single scan via `max_abs_i8`
+  instead of the former `min_i8` + `max_i8` two-pass composition;
+  bit-identical in `u8` (`|i8::MIN| = 128`). Measured (release, 5k iters,
+  harness `/tmp/verify_i8_max_abs_bin`): n = 1,024 → 3.97×, n = 65,536 →
+  3.84× (50.4 ms → 13.1 ms), n = 1,048,576 → 3.55× (820 ms → 231 ms).
+
+### Fixed
+
+- `sqrt` / `sqrt_f64` `no_std` subnormal guard: scale by 2^100 / 2^-50
+  before/after the Newton iteration (aarch64/x86 denormal fast path).
 
 ## [0.1.2] - 2026-08-17
 

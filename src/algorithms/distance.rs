@@ -349,9 +349,8 @@ pub mod i8 {
     /// Returns `u8` — the minimal exact type, since `|i8::MIN| = 128`
     /// does not fit in `i8`.
     ///
-    /// Composed from the `min`/`max` kernels: `max(|v|)` is the larger of
-    /// the largest non-negative element and `|min|`, so no dedicated
-    /// kernel is needed.
+    /// Single-pass `max(|v|)` via a dedicated `max_abs_i8` kernel (one SIMD
+    /// scan instead of two). Result is `u8` to hold `|i8::MIN| = 128`.
     ///
     /// # Example
     /// ```
@@ -364,11 +363,7 @@ pub mod i8 {
             return None;
         }
         let backend = Backend::detect();
-        let mx = kernels::dispatch_max_i8(backend, values).unwrap_or(0);
-        let mn = kernels::dispatch_min_i8(backend, values).unwrap_or(0);
-        // `mx.max(0)` is non-negative, so `unsigned_abs` is the identity
-        // here (and keeps clippy's cast_sign_loss quiet).
-        Some(mx.max(0).unsigned_abs().max(mn.unsigned_abs()))
+        kernels::dispatch_max_abs_i8(backend, values)
     }
 
     /// Squared Euclidean distance `sum((a[i] - b[i])²)`, accumulated in

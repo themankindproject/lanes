@@ -509,6 +509,33 @@ crate::simd_reduce!(
     i8::max
 );
 
+// i8 max_abs: single-pass |v| (u8 0..128), one memory scan.
+// Use widening `vabdl_s8` against zero so |i8::MIN| = 128 is exact in i16
+// (plain `vabsq_s8` saturates -128 -> 127). Max in i16 domain, then narrow.
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn max_abs_i8(values: &[i8]) -> u8 {
+    let len = values.len();
+    let ptr = values.as_ptr();
+    let chunks = len / 16;
+    let rem = len % 16;
+    let mut acc: int16x8_t = unsafe { vdupq_n_s16(0) };
+    for i in 0..chunks {
+        let v = unsafe { vld1q_s8(ptr.add(i * 16)) };
+        let lo: int16x8_t = unsafe { vabdl_s8(vget_low_s8(v), vdup_n_s8(0)) };
+        let hi: int16x8_t = unsafe { vabdl_s8(vget_high_s8(v), vdup_n_s8(0)) };
+        acc = unsafe { vmaxq_s16(vmaxq_s16(acc, lo), hi) };
+    }
+    let mut best: u16 = 0;
+    if chunks > 0 {
+        best = unsafe { vmaxvq_s16(acc) as u16 };
+    }
+    for i in 0..rem {
+        let v = unsafe { *values.get_unchecked(chunks * 16 + i) };
+        best = best.max(u16::from(v.unsigned_abs()));
+    }
+    best as u8
+}
+
 // i8 count_zero: byte-equality mask (`vceqq_s8`), AND with 1 per lane,
 // horizontal sum. Same shape as the f32 `count_zero`.
 crate::simd_count!(
@@ -574,6 +601,65 @@ crate::simd_reduce2_wide!(
         let d = i64::from(a) - i64::from(b);
         r + d * d
     }
+);
+
+crate::simd_center!(
+    center_f32,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    |p, v| unsafe { vst1q_f32(p, v) },
+    vsubq_f32,
+    |s| unsafe { vdupq_n_f32(s) },
+    |x: f32, m: f32| x - m
+);
+crate::simd_center!(
+    center_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    |p, v| unsafe { vst1q_f64(p, v) },
+    vsubq_f64,
+    |s| unsafe { vdupq_n_f64(s) },
+    |x: f64, m: f64| x - m
+);
+crate::simd_variance_fused!(
+    variance_fused_f32,
+    f32,
+    "neon",
+    4,
+    |p| unsafe { vld1q_f32(p) },
+    vdupq_n_f32(0.0),
+    |acc: float32x4_t, v: float32x4_t, vm: float32x4_t| unsafe {
+        let d = vsubq_f32(v, vm);
+        vaddq_f32(acc, vmulq_f32(d, d))
+    },
+    |v| unsafe { vaddvq_f32(v) },
+    |r: f32, x: f32, m: f32| {
+        let d = x - m;
+        r + d * d
+    },
+    |s| unsafe { vdupq_n_f32(s) }
+);
+crate::simd_variance_fused!(
+    variance_fused_f64,
+    f64,
+    "neon",
+    2,
+    |p| unsafe { vld1q_f64(p) },
+    vdupq_n_f64(0.0),
+    |acc: float64x2_t, v: float64x2_t, vm: float64x2_t| unsafe {
+        let d = vsubq_f64(v, vm);
+        vaddq_f64(acc, vmulq_f64(d, d))
+    },
+    |v| unsafe { vaddvq_f64(v) },
+    |r: f64, x: f64, m: f64| {
+        let d = x - m;
+        r + d * d
+    },
+    |s| unsafe { vdupq_n_f64(s) }
 );
 
 // Softmax: 3-pass map (max → exp+sum → scale). exp is per-lane scalar.

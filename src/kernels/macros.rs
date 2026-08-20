@@ -1166,6 +1166,61 @@ macro_rules! simd_map {
     };
 }
 
+/// Generate a one-pass kernel that writes `out[i] = in[i] - scalar` per lane
+/// (broadcast subtract, the centering step of variance/std_dev).
+///
+/// Same chunked-vector + scalar-tail skeleton as `simd_map!`, but the vector
+/// op is `v - broadcast(scalar)`. One rounding per lane, bit-identical to
+/// scalar `x - scalar` in round-to-nearest (and hence bit-identical to the
+/// existing scalar variance centering loop). Empty slices are valid.
+///
+/// # Parameters
+///
+/// * `$name` — function name.
+/// * `$t` — scalar element type (`f32` or `f64`).
+/// * `$feat` — `target_feature` string.
+/// * `$lanes` — vector width in `$t` elements.
+/// * `$load` — `fn(*const $t) -> V`.
+/// * `$store` — `fn(*mut $t, V)`.
+/// * `$sub` — `fn(V, V) -> V` vector subtract.
+/// * `$set1` — `fn($t) -> V` broadcast.
+/// * `$scalar_tail` — `fn($t, $t) -> $t` scalar tail (`|x, m| x - m`).
+///
+/// # Safety
+/// The generated function is `unsafe fn` with `#[target_feature]`; the caller
+/// must verify the CPU feature and equal-length slices.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! simd_center {
+    (
+        $name:ident, $t:ty, $feat:literal, $lanes:expr,
+        $load:expr, $store:expr, $sub:expr, $set1:expr, $scalar_tail:expr
+    ) => {
+        /// Vector centering kernel: `out[i] = values[i] - mean`.
+        /// See the scalar reference for semantics (bit-identical).
+        ///
+        /// # Safety
+        /// Caller must ensure the CPU feature is available and that `values`
+        /// and `out` have equal lengths.
+        #[inline]
+        #[target_feature(enable = $feat)]
+        pub(crate) unsafe fn $name(values: &[$t], mean: $t, out: &mut [$t]) {
+            let len = values.len();
+            let chunks = len / $lanes;
+            let rem = len % $lanes;
+            let vm = $set1(mean);
+            for i in 0..chunks {
+                let v = $load(unsafe { values.as_ptr().add(i * $lanes) });
+                $store(unsafe { out.as_mut_ptr().add(i * $lanes) }, $sub(v, vm));
+            }
+            for i in 0..rem {
+                let x = unsafe { *values.get_unchecked(chunks * $lanes + i) };
+                unsafe { *out.get_unchecked_mut(chunks * $lanes + i) = $scalar_tail(x, mean) };
+            }
+        }
+    };
+}
+
 /// Generate a one-pass vector clip kernel (`clamp(x, lo, hi)` per lane).
 ///
 /// Same skeleton as [`simd_map!`], but the generated function takes the
@@ -1780,6 +1835,67 @@ macro_rules! simd_log_softmax {
 /// The generated function is `unsafe fn` with `#[target_feature]`; the
 /// caller must verify the CPU feature and that `values` and `out` have
 /// equal lengths.
+/// Generate a fused variance kernel: single-pass `Σ (x - mean)^2`, no alloc.
+///
+/// Broadcasts `mean` to `vm`, then per lane computes `d = v - vm` and
+/// `acc += d*d`. One rounding for `d`, one for `d*d`, same as the scalar
+/// two-pass form `sum((x-mean)^2)`. Bit-identical to the scalar fused helper
+/// in allocation order (chunks then tail) and respected by the variance
+/// wrappers which divide by `len` outside the kernel.
+///
+/// # Parameters
+/// * `$name` — function name.
+/// * `$t` — scalar type.
+/// * `$feat` — target_feature string.
+/// * `$lanes` — vector width.
+/// * `$load` — `fn(*const $t) -> V`.
+/// * `$acc_ident` — zero vector.
+/// * `$combine` — `fn(V, V, V) -> V` folding `acc + (v-vm)^2`.
+/// * `$reduce` — `fn(V) -> $t` horizontal sum.
+/// * `$scalar_tail` — `fn(f32,f32,f32)->f32` tail: `|r,x,m| r + (x-m)*(x-m)`.
+/// * `$add` — `fn(V,V)->V` vector add to merge the two horiz halves (for f32 only; f64 lanes already summed).
+#[macro_export]
+#[doc(hidden)]
+macro_rules! simd_variance_fused {
+    (
+        $name:ident, $t:ty, $feat:literal, $lanes:expr,
+        $load:expr, $acc_ident:expr, $combine:expr, $reduce:expr, $scalar_tail:expr, $set1:expr
+    ) => {
+        /// Fused variance sum `Σ (x - mean)^2`. See scalar reference.
+        ///
+        /// # Safety
+        /// Caller must ensure the CPU feature is available.
+        #[inline]
+        #[target_feature(enable = $feat)]
+        #[allow(
+            clippy::cast_lossless,
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation
+        )]
+        pub(crate) unsafe fn $name(values: &[$t], mean: $t) -> $t {
+            let len = values.len();
+            if len == 0 {
+                return 0 as $t;
+            }
+            let vm = $set1(mean);
+            let ptr = values.as_ptr();
+            let chunks = len / $lanes;
+            let rem = len % $lanes;
+            let mut acc = $acc_ident;
+            for i in 0..chunks {
+                let v = $load(unsafe { ptr.add(i * $lanes) });
+                acc = $combine(acc, v, vm);
+            }
+            let mut s = $reduce(acc);
+            for i in 0..rem {
+                let x = unsafe { *values.get_unchecked(chunks * $lanes + i) };
+                s = $scalar_tail(s, x, mean);
+            }
+            s
+        }
+    };
+}
+
 #[macro_export]
 #[doc(hidden)]
 macro_rules! simd_layer_norm {
