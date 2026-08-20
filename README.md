@@ -267,8 +267,9 @@ let norm = lanes::distance::f32::l2_norm(&data);
 
 ## Accuracy
 
-- `exp`, `ln`, `tanh`, `sqrt`, `rsqrt` — ≤ 1 ulp vs `std`
+- `exp`, `ln`, `sqrt`, `rsqrt` — ≤ 1 ulp vs `std`
   (fdlibm/SLEEF/musl-derived reductions), on every backend
+- `tanh` — ≤ 2 ulp (derived from the `exp` kernel)
 - `erf` — ≤ 1 ulp (f64), perfectly rounded (f32); `erfc` — ≤ 3 ulp
   (f64, the structural floor of the exp-product tail form), perfectly
   rounded (f32). Clean-room Remez coefficients fitted against an

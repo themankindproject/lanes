@@ -51,6 +51,7 @@ pub mod f32 {
     /// Numerically-stable softmax over a slice.
     ///
     /// Computes `softmax(x)_i = exp(x_i - max(x)) / sum_j exp(x_j - max(x))`.
+    /// NaN propagates. `softmax([+inf, x...]) = [1, 0, ...]`.
     /// The max subtraction prevents overflow for large inputs. Returns a new
     /// `Vec` of the same length; an empty slice yields an empty `Vec`.
     ///
@@ -615,6 +616,7 @@ pub mod f64 {
     /// Numerically-stable softmax over a slice.
     ///
     /// Computes `softmax(x)_i = exp(x_i - max(x)) / sum_j exp(x_j - max(x))`.
+    /// NaN propagates. `softmax([+inf, x...]) = [1, 0, ...]`.
     /// The max subtraction prevents overflow for large inputs. Returns a new
     /// `Vec` of the same length; an empty slice yields an empty `Vec`.
     ///

@@ -6,6 +6,18 @@
 //!
 //! Precision is selected by the submodule: [`f32`] for single-precision,
 //! [`f64`] for double-precision.
+//!
+//! # NaN handling
+//!
+//! `sum`, `prod`, `dot`, `sum_sq`, `mean`, `variance`, and `std_dev`
+//! propagate NaN — any NaN input yields a NaN result. `min`/`max` follow
+//! IEEE 754 `minNum`/`maxNum` semantics (NaN ignored unless all inputs are
+//! NaN). See each function's docs.
+//!
+//! # Precision
+//!
+//! Reduction order is backend-dependent: results are deterministic *within*
+//! a backend but may differ in the last ulp *across* backends.
 
 pub mod f32 {
     //! Single-precision (`f32`) statistical reductions.
@@ -16,7 +28,8 @@ pub mod f32 {
 
     /// Compute the sum of all elements in a slice.
     ///
-    /// Returns `0.0` for an empty slice.
+    /// Returns `0.0` for an empty slice. NaN inputs propagate (any NaN
+    /// input yields a NaN result).
     ///
     /// # Example
     /// ```
@@ -30,7 +43,8 @@ pub mod f32 {
 
     /// Compute the product of all elements in a slice.
     ///
-    /// Returns `1.0` for an empty slice.
+    /// Returns `1.0` for an empty slice. NaN inputs propagate (any NaN
+    /// input yields a NaN result).
     ///
     /// # Example
     /// ```
@@ -122,7 +136,8 @@ pub mod f32 {
 
     /// Compute the sum of squares of all elements in a slice.
     ///
-    /// Returns `0.0` for an empty slice.
+    /// Returns `0.0` for an empty slice. NaN inputs propagate (any NaN
+    /// input yields a NaN result).
     ///
     /// # Example
     /// ```
@@ -136,7 +151,8 @@ pub mod f32 {
 
     /// Compute the arithmetic mean of a slice.
     ///
-    /// Returns [`None`] if the slice is empty.
+    /// Returns [`None`] if the slice is empty. NaN inputs propagate
+    /// (returns `Some(NaN)` if any input is NaN).
     ///
     /// # Example
     /// ```
@@ -435,7 +451,8 @@ pub mod f64 {
 
     /// Compute the sum of all elements in a slice.
     ///
-    /// Returns `0.0` for an empty slice.
+    /// Returns `0.0` for an empty slice. NaN inputs propagate (any NaN
+    /// input yields a NaN result).
     ///
     /// # Example
     /// ```
@@ -449,7 +466,8 @@ pub mod f64 {
 
     /// Compute the product of all elements in a slice.
     ///
-    /// Returns `1.0` for an empty slice.
+    /// Returns `1.0` for an empty slice. NaN inputs propagate (any NaN
+    /// input yields a NaN result).
     ///
     /// # Example
     /// ```
@@ -541,7 +559,8 @@ pub mod f64 {
 
     /// Compute the sum of squares of all elements in a slice.
     ///
-    /// Returns `0.0` for an empty slice.
+    /// Returns `0.0` for an empty slice. NaN inputs propagate (any NaN
+    /// input yields a NaN result).
     ///
     /// # Example
     /// ```
@@ -555,7 +574,8 @@ pub mod f64 {
 
     /// Compute the arithmetic mean of a slice.
     ///
-    /// Returns [`None`] if the slice is empty.
+    /// Returns [`None`] if the slice is empty. NaN inputs propagate
+    /// (returns `Some(NaN)` if any input is NaN).
     ///
     /// # Example
     /// ```

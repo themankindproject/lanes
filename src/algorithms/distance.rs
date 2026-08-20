@@ -5,6 +5,17 @@
 //!
 //! Precision is selected by the submodule: [`f32`] for single-precision,
 //! [`f64`] for double-precision.
+//!
+//! # NaN handling
+//!
+//! `l1_norm`, `l2_norm`, `squared_distance`, `kl_divergence`, and
+//! `js_divergence` propagate NaN — any NaN input yields a NaN result.
+//! `max_norm` returns NaN if any input is NaN. See each function's docs.
+//!
+//! # Precision
+//!
+//! Reduction order is backend-dependent: results are deterministic *within*
+//! a backend but may differ in the last ulp *across* backends.
 
 pub mod f32 {
     //! Single-precision (`f32`) distance and norm functions.
@@ -15,7 +26,8 @@ pub mod f32 {
 
     /// Compute the L1 norm (sum of absolute values) of a slice.
     ///
-    /// Returns `0.0` for an empty slice.
+    /// Returns `0.0` for an empty slice. NaN inputs propagate (any NaN
+    /// input yields a NaN result).
     ///
     /// # Example
     /// ```
@@ -29,7 +41,8 @@ pub mod f32 {
 
     /// Compute the L2 (Euclidean) norm of a slice.
     ///
-    /// Returns `0.0` for an empty slice.
+    /// Returns `0.0` for an empty slice. NaN inputs propagate (any NaN
+    /// input yields a NaN result).
     ///
     /// # Example
     /// ```
@@ -185,7 +198,8 @@ pub mod f64 {
 
     /// Compute the L1 norm (sum of absolute values) of a slice.
     ///
-    /// Returns `0.0` for an empty slice.
+    /// Returns `0.0` for an empty slice. NaN inputs propagate (any NaN
+    /// input yields a NaN result).
     ///
     /// # Example
     /// ```
@@ -199,7 +213,8 @@ pub mod f64 {
 
     /// Compute the L2 (Euclidean) norm of a slice.
     ///
-    /// Returns `0.0` for an empty slice.
+    /// Returns `0.0` for an empty slice. NaN inputs propagate (any NaN
+    /// input yields a NaN result).
     ///
     /// # Example
     /// ```
