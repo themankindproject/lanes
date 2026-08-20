@@ -37,7 +37,11 @@ fn reference_f16_to_f32(bits: u16) -> f32 {
         }
     } else if exp == 31 {
         if mant == 0 {
-            if sign == 0 { f32::INFINITY } else { f32::NEG_INFINITY }
+            if sign == 0 {
+                f32::INFINITY
+            } else {
+                f32::NEG_INFINITY
+            }
         } else {
             // NaN - just check it's NaN, don't compare bits
             f32::NAN
@@ -168,9 +172,7 @@ fn f16_to_f32_exhaustive() {
             if !got.is_nan() {
                 failures += 1;
                 if failures <= 10 {
-                    eprintln!(
-                        "FAIL f16_to_f32: bits=0x{bits:04X}, expected=NaN, got={got}"
-                    );
+                    eprintln!("FAIL f16_to_f32: bits=0x{bits:04X}, expected=NaN, got={got}");
                 }
             }
         } else if got.to_bits() != expected.to_bits() {
@@ -178,7 +180,8 @@ fn f16_to_f32_exhaustive() {
             if failures <= 10 {
                 eprintln!(
                     "FAIL f16_to_f32: bits=0x{bits:04X}, expected={expected} (0x{:08X}), got={got} (0x{:08X})",
-                    expected.to_bits(), got.to_bits()
+                    expected.to_bits(),
+                    got.to_bits()
                 );
             }
         }
@@ -249,8 +252,8 @@ fn f32_to_f16_exact_values() {
         (-1.0, 0xBC00),
         (2.0, 0x4000),
         (0.5, 0x3800),
-        (65504.0, 0x7BFF),   // f16 max normal
-        (-65504.0, 0xFBFF),  // f16 min normal (negative)
+        (65504.0, 0x7BFF),  // f16 max normal
+        (-65504.0, 0xFBFF), // f16 min normal (negative)
         (f32::INFINITY, 0x7C00),
         (f32::NEG_INFINITY, 0xFC00),
         // Smallest positive normal f16 = 2^-14 ≈ 6.103515625e-5
@@ -288,8 +291,18 @@ fn f32_to_f16_nan() {
         let exp = (out[0] >> 10) & 0x1F;
         let mant = out[0] & 0x03FF;
         assert_eq!(exp, 31, "NaN f32=0x{:08X}: exp not 31", nan.to_bits());
-        assert_ne!(mant, 0, "NaN f32=0x{:08X}: mant is 0 (Inf, not NaN)", nan.to_bits());
-        assert_ne!(mant & 0x0200, 0, "NaN f32=0x{:08X}: quiet bit not set", nan.to_bits());
+        assert_ne!(
+            mant,
+            0,
+            "NaN f32=0x{:08X}: mant is 0 (Inf, not NaN)",
+            nan.to_bits()
+        );
+        assert_ne!(
+            mant & 0x0200,
+            0,
+            "NaN f32=0x{:08X}: quiet bit not set",
+            nan.to_bits()
+        );
     }
 }
 
@@ -297,11 +310,11 @@ fn f32_to_f16_nan() {
 #[test]
 fn f32_to_f16_overflow() {
     let overflows: &[(f32, u16)] = &[
-        (65536.0, 0x7C00),        // > 65504 → +Inf
-        (100000.0, 0x7C00),       // way over → +Inf
-        (-70000.0, 0xFC00),       // negative overflow → -Inf
-        (f32::MAX, 0x7C00),       // f32 max → +Inf
-        (f32::MIN, 0xFC00),       // f32 min (most negative) → -Inf
+        (65536.0, 0x7C00),  // > 65504 → +Inf
+        (100000.0, 0x7C00), // way over → +Inf
+        (-70000.0, 0xFC00), // negative overflow → -Inf
+        (f32::MAX, 0x7C00), // f32 max → +Inf
+        (f32::MIN, 0xFC00), // f32 min (most negative) → -Inf
     ];
 
     for &(input, expected) in overflows {
@@ -321,9 +334,9 @@ fn f32_to_f16_underflow() {
     let underflows: &[(f32, u16)] = &[
         // Smallest f16 denormal is 2^-24 ≈ 5.96e-8
         // Half of that is 2^-25 ≈ 2.98e-8 — below this rounds to zero
-        (1e-9, 0x0000),           // tiny positive → +0
-        (-1e-9, 0x8000),          // tiny negative → -0
-        (1e-40, 0x0000),          // extremely tiny → +0
+        (1e-9, 0x0000),                        // tiny positive → +0
+        (-1e-9, 0x8000),                       // tiny negative → -0
+        (1e-40, 0x0000),                       // extremely tiny → +0
         (f32::MIN_POSITIVE * 0.5e-10, 0x0000), // near f32 denormal → +0
     ];
 
@@ -350,7 +363,11 @@ fn f32_to_f16_ties_to_even() {
     let midpoint_exact = f32::from_bits(0x3F80_1000);
     let mut out = [0u16; 1];
     convert::f32_to_f16(&[midpoint_exact], &mut out).unwrap();
-    assert_eq!(out[0], 0x3C00, "tie at midpoint between 0x3C00 and 0x3C01 should round to even 0x3C00, got 0x{:04X}", out[0]);
+    assert_eq!(
+        out[0], 0x3C00,
+        "tie at midpoint between 0x3C00 and 0x3C01 should round to even 0x3C00, got 0x{:04X}",
+        out[0]
+    );
 
     // Midpoint between 0x3C01 (odd, mantissa=1) and 0x3C02 (even, mantissa=2)
     // 0x3C01 = 1.0 + 1*2^-10 = 1.0009765625
@@ -361,17 +378,29 @@ fn f32_to_f16_ties_to_even() {
     // Ties-to-even → should round to 0x3C02 (mantissa 2 is even)
     let midpoint_2 = f32::from_bits(0x3F80_3000);
     convert::f32_to_f16(&[midpoint_2], &mut out).unwrap();
-    assert_eq!(out[0], 0x3C02, "tie at midpoint between 0x3C01 and 0x3C02 should round to even 0x3C02, got 0x{:04X}", out[0]);
+    assert_eq!(
+        out[0], 0x3C02,
+        "tie at midpoint between 0x3C01 and 0x3C02 should round to even 0x3C02, got 0x{:04X}",
+        out[0]
+    );
 
     // Value just above the first midpoint (should round up to 0x3C01)
     let above_mid = f32::from_bits(0x3F80_1001);
     convert::f32_to_f16(&[above_mid], &mut out).unwrap();
-    assert_eq!(out[0], 0x3C01, "just above midpoint should round up to 0x3C01, got 0x{:04X}", out[0]);
+    assert_eq!(
+        out[0], 0x3C01,
+        "just above midpoint should round up to 0x3C01, got 0x{:04X}",
+        out[0]
+    );
 
     // Value just below the first midpoint (should round down to 0x3C00)
     let below_mid = f32::from_bits(0x3F80_0FFF);
     convert::f32_to_f16(&[below_mid], &mut out).unwrap();
-    assert_eq!(out[0], 0x3C00, "just below midpoint should round down to 0x3C00, got 0x{:04X}", out[0]);
+    assert_eq!(
+        out[0], 0x3C00,
+        "just below midpoint should round down to 0x3C00, got 0x{:04X}",
+        out[0]
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -403,12 +432,16 @@ fn f32_to_f16_oracle_normal_range() {
             if failures <= 5 {
                 eprintln!(
                     "FAIL f32_to_f16 oracle: val={val} (0x{:08X}), got=0x{:04X}, expected=0x{expected:04X}",
-                    val.to_bits(), out[0]
+                    val.to_bits(),
+                    out[0]
                 );
             }
         }
     }
-    assert_eq!(failures, 0, "{failures}/1024 f32→f16 conversions disagree with oracle");
+    assert_eq!(
+        failures, 0,
+        "{failures}/1024 f32→f16 conversions disagree with oracle"
+    );
 }
 
 /// Test denormal f16 outputs against oracle.
@@ -432,12 +465,16 @@ fn f32_to_f16_oracle_denormal_range() {
             if failures <= 5 {
                 eprintln!(
                     "FAIL f32_to_f16 denorm oracle: val={val:e} (0x{:08X}), got=0x{:04X}, expected=0x{expected:04X}",
-                    val.to_bits(), out[0]
+                    val.to_bits(),
+                    out[0]
                 );
             }
         }
     }
-    assert_eq!(failures, 0, "{failures}/512 denormal f32→f16 conversions disagree with oracle");
+    assert_eq!(
+        failures, 0,
+        "{failures}/512 denormal f32→f16 conversions disagree with oracle"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -468,7 +505,8 @@ fn bf16_to_f32_exhaustive() {
             if failures <= 10 {
                 eprintln!(
                     "FAIL bf16_to_f32: bits=0x{bits:04X}, expected=0x{:08X}, got=0x{:08X}",
-                    expected.to_bits(), got.to_bits()
+                    expected.to_bits(),
+                    got.to_bits()
                 );
             }
         }
@@ -506,9 +544,22 @@ fn f32_to_bf16_exact_values() {
 fn bf16_roundtrip_exact_values() {
     // Values exactly representable in bf16 must survive the round trip.
     let exact: Vec<f32> = vec![
-        0.0, -0.0, 1.0, -1.0, 2.0, -2.0, 0.5, -0.5,
-        128.0, 256.0, 0.25, 0.125, 3.0, 3.5,
-        f32::INFINITY, f32::NEG_INFINITY,
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        0.5,
+        -0.5,
+        128.0,
+        256.0,
+        0.25,
+        0.125,
+        3.0,
+        3.5,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
     ];
 
     let mut bf16_buf = vec![0u16; exact.len()];
@@ -522,7 +573,8 @@ fn bf16_roundtrip_exact_values() {
             assert!(recovered.is_nan(), "idx {i}: expected NaN, got {recovered}");
         } else {
             assert_eq!(
-                orig.to_bits(), recovered.to_bits(),
+                orig.to_bits(),
+                recovered.to_bits(),
                 "idx {i}: f32_to_bf16_to_f32({orig}) = {recovered} (bits differ)"
             );
         }
@@ -544,9 +596,19 @@ fn f32_to_bf16_nan() {
         convert::f32_to_bf16(&[nan], &mut out).unwrap();
         // Result must be a NaN in bf16 (exp=0xFF, mant!=0 when widened)
         let widened = f32::from_bits((out[0] as u32) << 16);
-        assert!(widened.is_nan(), "f32_to_bf16(NaN 0x{:08X}) = 0x{:04X} which is not NaN when widened", nan.to_bits(), out[0]);
+        assert!(
+            widened.is_nan(),
+            "f32_to_bf16(NaN 0x{:08X}) = 0x{:04X} which is not NaN when widened",
+            nan.to_bits(),
+            out[0]
+        );
         // Quiet bit must be set
-        assert_ne!(out[0] & 0x0040, 0, "quiet bit not set for NaN 0x{:08X}", nan.to_bits());
+        assert_ne!(
+            out[0] & 0x0040,
+            0,
+            "quiet bit not set for NaN 0x{:08X}",
+            nan.to_bits()
+        );
     }
 }
 
@@ -564,7 +626,11 @@ fn f32_to_bf16_ties_to_even() {
     let midpoint1 = f32::from_bits(0x3F80_8000);
     let mut out = [0u16; 1];
     convert::f32_to_bf16(&[midpoint1], &mut out).unwrap();
-    assert_eq!(out[0], 0x3F80, "tie between 0x3F80(even) and 0x3F81(odd) should → 0x3F80, got 0x{:04X}", out[0]);
+    assert_eq!(
+        out[0], 0x3F80,
+        "tie between 0x3F80(even) and 0x3F81(odd) should → 0x3F80, got 0x{:04X}",
+        out[0]
+    );
 
     // Test: midpoint between 0x3F81 (odd) and 0x3F82 (even)
     // 0x3F81 = 0x3F810000, 0x3F82 = 0x3F820000
@@ -572,17 +638,29 @@ fn f32_to_bf16_ties_to_even() {
     // Ties-to-even → should round to 0x3F82 (even)
     let midpoint2 = f32::from_bits(0x3F81_8000);
     convert::f32_to_bf16(&[midpoint2], &mut out).unwrap();
-    assert_eq!(out[0], 0x3F82, "tie between 0x3F81(odd) and 0x3F82(even) should → 0x3F82, got 0x{:04X}", out[0]);
+    assert_eq!(
+        out[0], 0x3F82,
+        "tie between 0x3F81(odd) and 0x3F82(even) should → 0x3F82, got 0x{:04X}",
+        out[0]
+    );
 
     // Test: value just above midpoint (should round up regardless of even/odd)
     let above_mid = f32::from_bits(0x3F80_8001);
     convert::f32_to_bf16(&[above_mid], &mut out).unwrap();
-    assert_eq!(out[0], 0x3F81, "just above midpoint should round up to 0x3F81, got 0x{:04X}", out[0]);
+    assert_eq!(
+        out[0], 0x3F81,
+        "just above midpoint should round up to 0x3F81, got 0x{:04X}",
+        out[0]
+    );
 
     // Test: value just below midpoint (should round down)
     let below_mid = f32::from_bits(0x3F80_7FFF);
     convert::f32_to_bf16(&[below_mid], &mut out).unwrap();
-    assert_eq!(out[0], 0x3F80, "just below midpoint should round down to 0x3F80, got 0x{:04X}", out[0]);
+    assert_eq!(
+        out[0], 0x3F80,
+        "just below midpoint should round down to 0x3F80, got 0x{:04X}",
+        out[0]
+    );
 }
 
 /// Exhaustive verification of f32→bf16 against reference for a sweep of values.
@@ -617,7 +695,10 @@ fn f32_to_bf16_sweep() {
             }
         }
     }
-    assert_eq!(failures, 0, "{failures}/10000 f32→bf16 conversions disagree with reference");
+    assert_eq!(
+        failures, 0,
+        "{failures}/10000 f32→bf16 conversions disagree with reference"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -695,7 +776,10 @@ fn dot_f16_nan_propagation() {
     let f16_one: u16 = 0x3C00;
 
     let result = convert::dot_f16(&[f16_one, f16_nan], &[f16_one, f16_one]).unwrap();
-    assert!(result.is_nan(), "dot with NaN element should propagate NaN, got {result}");
+    assert!(
+        result.is_nan(),
+        "dot with NaN element should propagate NaN, got {result}"
+    );
 }
 
 /// Test dot product with NaN propagation for bf16.
@@ -705,7 +789,10 @@ fn dot_bf16_nan_propagation() {
     let bf16_one: u16 = 0x3F80;
 
     let result = convert::dot_bf16(&[bf16_one, bf16_nan], &[bf16_one, bf16_one]).unwrap();
-    assert!(result.is_nan(), "dot with NaN element should propagate NaN, got {result}");
+    assert!(
+        result.is_nan(),
+        "dot with NaN element should propagate NaN, got {result}"
+    );
 }
 
 /// Verify dot product against f64 reference for random inputs.
@@ -823,12 +910,20 @@ fn f16_denormals() {
     let mut out = [0.0_f32; 1];
     convert::f16_to_f32(&[0x0001], &mut out).unwrap();
     let expected = 2.0_f32.powi(-24); // ~5.96e-8
-    assert_eq!(out[0], expected, "smallest f16 denormal: got {}, expected {expected}", out[0]);
+    assert_eq!(
+        out[0], expected,
+        "smallest f16 denormal: got {}, expected {expected}",
+        out[0]
+    );
 
     // Largest denormal: 0x03FF = 1023 × 2^-24
     convert::f16_to_f32(&[0x03FF], &mut out).unwrap();
     let expected = 1023.0 * 2.0_f32.powi(-24);
-    assert!((out[0] - expected).abs() < 1e-15, "largest f16 denormal: got {}, expected {expected}", out[0]);
+    assert!(
+        (out[0] - expected).abs() < 1e-15,
+        "largest f16 denormal: got {}, expected {expected}",
+        out[0]
+    );
 
     // Negative denormals
     convert::f16_to_f32(&[0x8001], &mut out).unwrap();

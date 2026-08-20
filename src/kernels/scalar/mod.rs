@@ -1208,7 +1208,11 @@ pub(crate) fn f32_to_f16(input: &[f32], output: &mut [u16]) {
 
 /// Convert a single f32 value to f16 bit pattern with round-to-nearest-even.
 #[inline]
-#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
 fn f32_to_f16_bits(value: f32) -> u16 {
     let bits = value.to_bits();
     let sign = (bits >> 31) as u16;
