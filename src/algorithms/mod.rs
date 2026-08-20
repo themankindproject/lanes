@@ -28,3 +28,6 @@ pub mod math;
 // Special functions (erf/erfc elementwise maps).
 #[cfg(feature = "alloc")]
 pub mod special;
+
+// Half-precision (f16/bf16) conversions and mixed-precision dot products.
+pub mod convert;
