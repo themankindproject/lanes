@@ -8,20 +8,21 @@
 //! The `#[cfg(target_arch = "wasm32")]` gate in `kernels/mod.rs` ensures
 //! this module is only compiled on WASM; native builds are unaffected.
 #![allow(clippy::all, clippy::pedantic)]
+#![allow(unused_imports)]
 
 // Re-export scalar kernels that have identical signatures on SIMD backends.
 pub(crate) use crate::kernels::scalar::{
-    abs_sub, abs_sub_f64, bf16_to_f32, center_f32, center_f64, clip, clip_f64, count_infinite,
-    count_infinite_f64, count_nan, count_nan_f64, count_zero, count_zero_f64, count_zero_i8,
-    dot, dot_bf16, dot_f16, dot_f64, dot_i8, erf, erf_f64, erfc, erfc_f64, exp, exp_f64, f16_to_f32,
-    f32_to_bf16, f32_to_f16, gelu, gelu_f64, hamming_popcount, hypot, hypot_f64, jaccard_counts,
-    kl_divergence, kl_divergence_f64, js_divergence, js_divergence_f64, l1_norm, l1_norm_f64,
-    l1_norm_i8, layer_norm, layer_norm_f64, ln, ln_f64, log1p, log1p_f64, log_softmax,
-    log_softmax_f64, logsumexp, logsumexp_f64, powi, powi_f64, prod, prod_f64, relu, relu_f64,
-    rms_norm, rms_norm_f64, rsqrt, rsqrt_f64, sigmoid, sigmoid_f64, silu, silu_f64, softplus,
-    softplus_f64, softmax, softmax_f64, sqrt, sqrt_f64, squared_distance, squared_distance_f64,
-    squared_distance_i8, sum, sum_f64, sum_i8, sum_sq, sum_sq_f64, tanh, tanh_f64,
-    variance_fused_f32, variance_fused_f64, argmax, argmin, argmax_f64, argmin_f64,
+    abs_sub, abs_sub_f64, argmax, argmax_f64, argmin, argmin_f64, bf16_to_f32, center_f32,
+    center_f64, clip, clip_f64, count_infinite, count_infinite_f64, count_nan, count_nan_f64,
+    count_zero, count_zero_f64, count_zero_i8, dot, dot_bf16, dot_f16, dot_f64, dot_i8, erf,
+    erf_f64, erfc, erfc_f64, exp, exp_f64, f16_to_f32, f32_to_bf16, f32_to_f16, gelu, gelu_f64,
+    hamming_popcount, hypot, hypot_f64, jaccard_counts, js_divergence, js_divergence_f64,
+    kl_divergence, kl_divergence_f64, l1_norm, l1_norm_f64, l1_norm_i8, layer_norm, layer_norm_f64,
+    ln, ln_f64, log_softmax, log_softmax_f64, log1p, log1p_f64, logsumexp, logsumexp_f64, powi,
+    powi_f64, prod, prod_f64, relu, relu_f64, rms_norm, rms_norm_f64, rsqrt, rsqrt_f64, sigmoid,
+    sigmoid_f64, silu, silu_f64, softmax, softmax_f64, softplus, softplus_f64, sqrt, sqrt_f64,
+    squared_distance, squared_distance_f64, squared_distance_i8, sum, sum_f64, sum_i8, sum_sq,
+    sum_sq_f64, tanh, tanh_f64, variance_fused_f32, variance_fused_f64,
 };
 
 // ---- Option-returning kernels -------------------------------------------
