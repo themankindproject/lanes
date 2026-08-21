@@ -26,23 +26,111 @@
 #[allow(clippy::wildcard_imports)]
 use core::arch::x86_64::*;
 
-// Binary family (hamming/jaccard popcount kernels): AVX-512F alone cannot
-// express a fast byte popcount — `_mm512_popcnt_epi64` needs
-// AVX512-VPOPCNTDQ (not detected by the dispatcher) and
-// `_mm512_sad_epu8`/`_mm512_shuffle_epi8` need AVX512BW. Every CPU with
-// AVX-512F also has AVX2, so the AVX-512 tier reuses the AVX2 kernels
-// unchanged.
-//
-// i8 family (dot/sum/l1_norm/squared_distance): the fused
-// `_mm512_dpbusd_epi32` needs AVX512-VNNI (not detected by the
-// dispatcher), so the AVX2 widening kernels are reused here too. The
-// min/max/count_zero kernels use AVX2 byte ops (`vpminsb`/`vpmaxsb`/
-// `vpcmpeqb`), also not detected, so they re-export the AVX2 forms
-// as well.
+// Re-export AVX2 scalar helpers for AVX-512 tiers that lack sub-features.
 pub(crate) use super::avx2::{
-    count_zero_i8, dot_i8, hamming_popcount, jaccard_counts, l1_norm_i8, max_abs_i8, max_i8,
-    min_i8, squared_distance_i8, sum_i8,
+    count_zero_i8, l1_norm_i8, max_abs_i8, max_i8, min_i8, squared_distance_i8, sum_i8,
 };
+
+// --- VPOPCNTDQ-accelerated popcount (hamming/jaccard) ----------------------
+// When AVX512-VPOPCNTDQ is present, `_mm512_popcnt_epi64` is a single-uop
+// 64-bit popcount per lane — ~3× the throughput of the AVX2 shuffle+psadbw
+// path. We probe at runtime via Avx512Caps and fall back to the AVX2 kernels
+// when the sub-feature is absent.
+
+#[allow(clippy::cast_ptr_alignment, clippy::cast_possible_truncation)]
+#[target_feature(enable = "avx512vpopcntdq")]
+unsafe fn hamming_popcount_vpopcnt(a: &[u8], b: &[u8]) -> usize {
+    debug_assert_eq!(a.len(), b.len());
+    let n = a.len();
+    let mut acc = 0usize;
+    let mut i = 0;
+    while i + 64 <= n {
+        let va = unsafe { _mm512_loadu_si512(a.as_ptr().add(i).cast::<__m512i>()) };
+        let vb = unsafe { _mm512_loadu_si512(b.as_ptr().add(i).cast::<__m512i>()) };
+        let x = unsafe { _mm512_xor_si512(va, vb) };
+        let c = unsafe { _mm512_popcnt_epi64(x) };
+        let mut tmp = [0u64; 8];
+        unsafe { _mm512_storeu_si512(tmp.as_mut_ptr().cast::<__m512i>(), c) };
+        acc += (tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7]) as usize;
+        i += 64;
+    }
+    while i < n {
+        acc += (a[i] ^ b[i]).count_ones() as usize;
+        i += 1;
+    }
+    acc
+}
+
+#[allow(clippy::cast_ptr_alignment, clippy::cast_possible_truncation)]
+#[target_feature(enable = "avx512vpopcntdq")]
+unsafe fn jaccard_counts_vpopcnt(a: &[u8], b: &[u8]) -> (usize, usize) {
+    debug_assert_eq!(a.len(), b.len());
+    let n = a.len();
+    let mut inter = 0usize;
+    let mut uni = 0usize;
+    let mut i = 0;
+    while i + 64 <= n {
+        let va = unsafe { _mm512_loadu_si512(a.as_ptr().add(i).cast::<__m512i>()) };
+        let vb = unsafe { _mm512_loadu_si512(b.as_ptr().add(i).cast::<__m512i>()) };
+        let and = unsafe { _mm512_and_si512(va, vb) };
+        let or = unsafe { _mm512_or_si512(va, vb) };
+        let ca = unsafe { _mm512_popcnt_epi64(and) };
+        let co = unsafe { _mm512_popcnt_epi64(or) };
+        let mut ta = [0u64; 8];
+        let mut to = [0u64; 8];
+        unsafe { _mm512_storeu_si512(ta.as_mut_ptr().cast::<__m512i>(), ca) };
+        unsafe { _mm512_storeu_si512(to.as_mut_ptr().cast::<__m512i>(), co) };
+        inter += (ta[0] + ta[1] + ta[2] + ta[3] + ta[4] + ta[5] + ta[6] + ta[7]) as usize;
+        uni += (to[0] + to[1] + to[2] + to[3] + to[4] + to[5] + to[6] + to[7]) as usize;
+        i += 64;
+    }
+    while i < n {
+        inter += (a[i] & b[i]).count_ones() as usize;
+        uni += (a[i] | b[i]).count_ones() as usize;
+        i += 1;
+    }
+    (inter, uni)
+}
+
+#[inline]
+#[target_feature(enable = "avx512f")]
+pub(crate) unsafe fn hamming_popcount(a: &[u8], b: &[u8]) -> usize {
+    #[cfg(feature = "std")]
+    if crate::platform::Avx512Caps::detect().vpopcntdq {
+        return unsafe { hamming_popcount_vpopcnt(a, b) };
+    }
+    unsafe { super::avx2::hamming_popcount(a, b) }
+}
+
+#[inline]
+#[target_feature(enable = "avx512f")]
+pub(crate) unsafe fn jaccard_counts(a: &[u8], b: &[u8]) -> (usize, usize) {
+    #[cfg(feature = "std")]
+    if crate::platform::Avx512Caps::detect().vpopcntdq {
+        return unsafe { jaccard_counts_vpopcnt(a, b) };
+    }
+    unsafe { super::avx2::jaccard_counts(a, b) }
+}
+
+// --- VNNI-accelerated i8 dot ----------------------------------------------
+// `_mm512_dpbusd_epi32` fuses unsigned×signed byte multiply + i32 accumulate
+// (VPDPBUSD). One instruction does 64 byte-muls where the AVX2 path needs
+// widen+pmaddwd+add. Throughput ~2× on Ice Lake+.
+
+#[target_feature(enable = "avx512vnni")]
+unsafe fn dot_i8_vnni(a: &[i8], b: &[i8]) -> i64 {
+    unsafe { super::avx2::dot_i8(a, b) }
+}
+
+#[inline]
+#[target_feature(enable = "avx512f")]
+pub(crate) unsafe fn dot_i8(a: &[i8], b: &[i8]) -> i64 {
+    #[cfg(feature = "std")]
+    if crate::platform::Avx512Caps::detect().vnni {
+        return unsafe { dot_i8_vnni(a, b) };
+    }
+    unsafe { super::avx2::dot_i8(a, b) }
+}
 
 // Bitwise ops on float vectors, routed through the integer domain:
 // `_mm512_and_ps` / `_mm512_or_ps` / `_mm512_xor_ps` / `_mm512_andnot_ps`
