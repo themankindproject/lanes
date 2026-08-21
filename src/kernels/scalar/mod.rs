@@ -1178,7 +1178,7 @@ pub(crate) fn f16_to_f32(input: &[u16], output: &mut [f32]) {
 
 /// Convert a single f16 bit pattern to f32.
 #[inline]
-fn f16_bits_to_f32(bits: u16) -> f32 {
+pub(crate) fn f16_bits_to_f32(bits: u16) -> f32 {
     let sign = u32::from(bits >> 15);
     let exp = u32::from((bits >> 10) & 0x1F);
     let mant = u32::from(bits & 0x03FF);
@@ -1229,7 +1229,7 @@ pub(crate) fn f32_to_f16(input: &[f32], output: &mut [u16]) {
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss
 )]
-fn f32_to_f16_bits(value: f32) -> u16 {
+pub(crate) fn f32_to_f16_bits(value: f32) -> u16 {
     let bits = value.to_bits();
     let sign = (bits >> 31) as u16;
     let exp = ((bits >> 23) & 0xFF) as i32;

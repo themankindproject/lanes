@@ -676,6 +676,196 @@ fn bench_squared_distance_i8(c: &mut Criterion) {
     group.finish();
 }
 
+fn random_f16_vec(n: usize, seed: u64) -> Vec<u16> {
+    let mut rng = XorShift64::new(seed);
+    (0..n).map(|_| (rng.next_u64() >> 48) as u16).collect()
+}
+
+fn random_bf16_vec(n: usize, seed: u64) -> Vec<u16> {
+    let mut rng = XorShift64::new(seed);
+    (0..n).map(|_| (rng.next_u64() >> 48) as u16).collect()
+}
+
+fn reference_f16_to_f32_scalar(bits: u16) -> f32 {
+    // tiny scalar reference for naive bench
+    let sign = (bits >> 15) as u32;
+    let exp = ((bits >> 10) & 0x1F) as u32;
+    let mant = (bits & 0x03FF) as u32;
+    if exp == 0 && mant == 0 {
+        f32::from_bits(sign << 31)
+    } else if exp == 31 && mant == 0 {
+        if sign == 0 {
+            f32::INFINITY
+        } else {
+            f32::NEG_INFINITY
+        }
+    } else if exp == 31 {
+        f32::NAN
+    } else if exp == 0 {
+        let v = (mant as f64) * 2.0_f64.powi(-24);
+        if sign == 0 { v as f32 } else { -(v as f32) }
+    } else {
+        let v = 2.0_f64.powi(exp as i32 - 15) * (1.0 + (mant as f64) / 1024.0);
+        if sign == 0 { v as f32 } else { -(v as f32) }
+    }
+}
+
+fn bench_f16_to_f32(c: &mut Criterion) {
+    let mut group = c.benchmark_group("f16_to_f32");
+    for &size in SIZES {
+        let v = random_f16_vec(size, 60);
+        let out = vec![0.0f32; size];
+        let out2 = vec![0.0f32; size];
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |b, _| {
+            b.iter(|| {
+                lanes::convert::f16_to_f32(black_box(&v), black_box(&mut out.clone())).unwrap();
+                black_box(&out);
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |b, _| {
+            b.iter(|| {
+                let mut o = out2.clone();
+                for (i, &bits) in v.iter().enumerate() {
+                    o[i] = reference_f16_to_f32_scalar(bits);
+                }
+                black_box(o);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_f32_to_f16(c: &mut Criterion) {
+    let mut group = c.benchmark_group("f32_to_f16");
+    for &size in SIZES {
+        let v = random_f32_vec(size, 61);
+        let out = vec![0u16; size];
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |b, _| {
+            b.iter(|| {
+                lanes::convert::f32_to_f16(black_box(&v), black_box(&mut out.clone())).unwrap();
+                black_box(&out);
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |b, _| {
+            b.iter(|| {
+                let mut o = vec![0u16; size];
+                for (i, &x) in v.iter().enumerate() {
+                    let bits = x.to_bits();
+                    let sign = (bits >> 31) as u16;
+                    let exp = ((bits >> 23) & 0xFF) as i32;
+                    let mant = bits & 0x007F_FFFF;
+                    o[i] = if exp == 255 && mant != 0 {
+                        (sign << 15) | 0x7E00
+                    } else {
+                        (x.to_bits() >> 16) as u16
+                    };
+                }
+                black_box(o);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_bf16_to_f32(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bf16_to_f32");
+    for &size in SIZES {
+        let v = random_bf16_vec(size, 62);
+        let out = vec![0.0f32; size];
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |b, _| {
+            b.iter(|| {
+                lanes::convert::bf16_to_f32(black_box(&v), black_box(&mut out.clone())).unwrap();
+                black_box(&out);
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |b, _| {
+            b.iter(|| {
+                let mut o = vec![0.0f32; size];
+                for (i, &bits) in v.iter().enumerate() {
+                    o[i] = f32::from_bits((u32::from(bits)) << 16);
+                }
+                black_box(o);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_f32_to_bf16(c: &mut Criterion) {
+    let mut group = c.benchmark_group("f32_to_bf16");
+    for &size in SIZES {
+        let v = random_f32_vec(size, 63);
+        let out = vec![0u16; size];
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |b, _| {
+            b.iter(|| {
+                lanes::convert::f32_to_bf16(black_box(&v), black_box(&mut out.clone())).unwrap();
+                black_box(&out);
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |b, _| {
+            b.iter(|| {
+                let mut o = vec![0u16; size];
+                for (i, &x) in v.iter().enumerate() {
+                    let bits = x.to_bits();
+                    let bias = ((bits >> 16) & 1) + 0x7FFF;
+                    o[i] = ((bits + bias) >> 16) as u16;
+                }
+                black_box(o);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_dot_f16(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dot_f16");
+    for &size in SIZES {
+        let a = random_f16_vec(size, 64);
+        let b = random_f16_vec(size, 65);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes::convert::dot_f16(black_box(&a), black_box(&b)).unwrap());
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| {
+                let mut s = 0.0f32;
+                for (&x, &y) in a.iter().zip(&b) {
+                    s += reference_f16_to_f32_scalar(x) * reference_f16_to_f32_scalar(y);
+                }
+                black_box(s)
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_dot_bf16(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dot_bf16");
+    for &size in SIZES {
+        let a = random_bf16_vec(size, 66);
+        let b = random_bf16_vec(size, 67);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &size, |bench, _| {
+            bench.iter(|| lanes::convert::dot_bf16(black_box(&a), black_box(&b)).unwrap());
+        });
+        group.bench_with_input(BenchmarkId::new("naive", size), &size, |bench, _| {
+            bench.iter(|| {
+                let mut s = 0.0f32;
+                for (&x, &y) in a.iter().zip(&b) {
+                    s +=
+                        f32::from_bits((u32::from(x)) << 16) * f32::from_bits((u32::from(y)) << 16);
+                }
+                black_box(s)
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_sum,
@@ -704,6 +894,12 @@ criterion_group!(
     bench_count_zero_i8,
     bench_l1_norm_i8,
     bench_max_norm_i8,
-    bench_squared_distance_i8
+    bench_squared_distance_i8,
+    bench_f16_to_f32,
+    bench_f32_to_f16,
+    bench_bf16_to_f32,
+    bench_f32_to_bf16,
+    bench_dot_f16,
+    bench_dot_bf16
 );
 criterion_main!(benches);

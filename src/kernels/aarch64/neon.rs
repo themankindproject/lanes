@@ -2388,6 +2388,118 @@ crate::simd_map!(
     |x: f32| crate::kernels::erf::erfc(x)
 );
 
+// --- bf16/f16 family -------------------------------------------------------
+
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn bf16_to_f32(input: &[u16], output: &mut [f32]) {
+    debug_assert_eq!(input.len(), output.len());
+    let n = input.len();
+    let mut i = 0;
+    unsafe {
+        while i + 4 <= n {
+            let v = vld1_u16(input.as_ptr().add(i));
+            let v32 = vmovl_u16(v);
+            let shifted = vshlq_n_u32(v32, 16);
+            let fv = vreinterpretq_f32_u32(shifted);
+            vst1q_f32(output.as_mut_ptr().add(i), fv);
+            i += 4;
+        }
+    }
+    for j in i..n {
+        output[j] = f32::from_bits((input[j] as u32) << 16);
+    }
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn f32_to_bf16(input: &[f32], output: &mut [u16]) {
+    debug_assert_eq!(input.len(), output.len());
+    let n = input.len();
+    let mut i = 0;
+    unsafe {
+        while i + 4 <= n {
+            let v = vld1q_f32(input.as_ptr().add(i));
+            let bits = vreinterpretq_u32_f32(v);
+            let lsb = vandq_u32(vshrq_n_u32(bits, 16), vdupq_n_u32(1));
+            let bias = vaddq_u32(lsb, vdupq_n_u32(0x7FFF));
+            let added = vaddq_u32(bits, bias);
+            let rounded = vshrq_n_u32(added, 16);
+            // NaN handling
+            let exp = vandq_u32(vshrq_n_u32(bits, 23), vdupq_n_u32(0xFF));
+            let exp_eq = vceqq_u32(exp, vdupq_n_u32(255));
+            let mant = vandq_u32(bits, vdupq_n_u32(0x007F_FFFF));
+            let mant_zero = vceqq_u32(mant, vdupq_n_u32(0));
+            let mant_nz = vmvnq_u32(mant_zero);
+            let is_nan = vandq_u32(exp_eq, mant_nz);
+            let nan_bits = vorrq_u32(vshrq_n_u32(bits, 16), vdupq_n_u32(0x40));
+            let res32 = vbslq_u32(is_nan, nan_bits, rounded);
+            let res16 = vmovn_u32(res32);
+            vst1_u16(output.as_mut_ptr().add(i), res16);
+            i += 4;
+        }
+    }
+    for j in i..n {
+        let bits = input[j].to_bits();
+        let out = if (bits >> 23) & 0xFF == 0xFF && (bits & 0x007F_FFFF) != 0 {
+            ((bits >> 16) | 0x40) as u16
+        } else {
+            let bias = ((bits >> 16) & 1) + 0x7FFF;
+            (bits.wrapping_add(bias) >> 16) as u16
+        };
+        output[j] = out;
+    }
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn dot_bf16(a: &[u16], b: &[u16]) -> f32 {
+    debug_assert_eq!(a.len(), b.len());
+    let n = a.len();
+    let mut acc = vdupq_n_f32(0.0);
+    let mut i = 0;
+    unsafe {
+        while i + 4 <= n {
+            let va = vld1_u16(a.as_ptr().add(i));
+            let vb = vld1_u16(b.as_ptr().add(i));
+            let va32 = vmovl_u16(va);
+            let vb32 = vmovl_u16(vb);
+            let fa = vreinterpretq_f32_u32(vshlq_n_u32(va32, 16));
+            let fb = vreinterpretq_f32_u32(vshlq_n_u32(vb32, 16));
+            acc = vfmaq_f32(acc, fa, fb);
+            i += 4;
+        }
+        let mut total = vaddvq_f32(acc);
+        while i < n {
+            let fa = f32::from_bits((a[i] as u32) << 16);
+            let fb = f32::from_bits((b[i] as u32) << 16);
+            total += fa * fb;
+            i += 1;
+        }
+        total
+    }
+}
+
+// F16 — scalar fallback on stable NEON (no fp16 feature); hardware via vcvt_f32_f16 is nightly-only.
+
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn f16_to_f32(input: &[u16], output: &mut [f32]) {
+    crate::kernels::scalar::f16_to_f32(input, output);
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn f32_to_f16(input: &[f32], output: &mut [u16]) {
+    crate::kernels::scalar::f32_to_f16(input, output);
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn dot_f16(a: &[u16], b: &[u16]) -> f32 {
+    crate::kernels::scalar::dot_f16(a, b)
+}
+
 #[cfg(test)]
 #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 mod tests {

@@ -61,3 +61,8 @@ doc = false
 name = "fuzz_erf"
 path = "fuzz_targets/fuzz_erf.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_convert"
+path = "fuzz_targets/fuzz_convert.rs"
+doc = false
