@@ -54,15 +54,12 @@
 //!
 //! | Architecture | Backend | Selection |
 //! |---|---|---|
-//! | `x86_64` | AVX-512F | runtime detection (`avx512f`) |
-//! | `x86_64` | AVX2 + FMA | runtime detection (`avx2` + `fma`) |
+//! | `x86_64` | AVX-512F (+ VPOPCNTDQ/VNNI when present) | runtime detection (`avx512f`); sub-features via `platform::Avx512Caps` |
+//! | `x86_64` | AVX2 + FMA (+ F16C for half) | runtime detection (`avx2` + `fma`); half converts use F16C (`cvtph`) when `f16c` present |
 //! | `x86_64` | SSE2 | mandatory on x86-64; runtime detection (`sse2`) |
 //! | aarch64 | NEON | mandatory on ARMv8-A |
+//! | `wasm32` | WASM | scalar fallthrough now; `wasm32-unknown-unknown` builds wire the WASM backend (SIMD128 intrinsics are a drop-in next step) |
 //! | any | Scalar | always available |
-//!
-//! WASM is a future target: it currently uses the scalar backend, and the
-//! code is kept free of OS-specific dependencies so a SIMD128 backend can
-//! be added later.
 //!
 //! ## Floating-point semantics
 //!
@@ -208,7 +205,12 @@ pub mod ml {
 }
 
 /// Half-precision (f16) and brain floating-point (bf16) conversions and
-/// mixed-precision dot products.
+/// mixed-precision dot products (`f16_to_f32`, `f32_to_f16`, `bf16_to_f32`,
+/// `f32_to_bf16`, `dot_f16`, `dot_bf16`). All narrowing conversions use
+/// round-to-nearest-even; the module is `no_std`-compatible (writes into
+/// caller-provided buffers, no `alloc`). F16 paths on `x86_64` use F16C
+/// hardware when present and fall back to scalar; bf16 paths are vectorized
+/// integer shifts on every SIMD tier.
 pub mod convert {
     pub use crate::algorithms::convert::{
         bf16_to_f32, dot_bf16, dot_f16, f16_to_f32, f32_to_bf16, f32_to_f16,
