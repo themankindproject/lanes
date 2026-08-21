@@ -49,6 +49,11 @@ so it is all listed as additions.
   unavailable backend now emit a `debug_assertions`-gated `eprintln!`
   warning (`[lanes] LANES_BACKEND='…' ignored: …`) instead of silently
   falling back to auto-detection.
+- Addressed `cargo clippy --all-targets --all-features` warnings in
+  `src/platform/mod.rs` (uninlined format args).
+
+### Changed
+
 - F16 fast paths: SSE2 (4-wide) and AVX2 (8-wide) now use F16C `cvtph` intrinsics when `f16c` is present (cached `has_f16c` probe); scalar fallback otherwise. AVX-512 reuses the AVX2 F16C path.
 - VPOPCNTDQ wiring: `hamming`/`jaccard` on AVX-512 dispatch to `_mm512_popcnt_epi64` (64 B/iter) when `avx512vpopcntdq` is present; AVX2 shuffle path otherwise. VNNI `dot_i8` probe scaffold added.
 - Benchmarks: six new Criterion groups for `convert` (`f16_to_f32`, `f32_to_f16`, `bf16_to_f32`, `f32_to_bf16`, `dot_f16`, `dot_bf16`) vs naive baselines.
