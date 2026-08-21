@@ -2684,6 +2684,221 @@ crate::simd_map!(
     |x: f32| crate::kernels::erf::erfc(x)
 );
 
+// --- bf16/f16 family: conversions and dot products --------------------------
+// F16C is wired below (4-wide via _mm_cvtph_ps/_mm_cvtps_ph with runtime probe); bf16 uses integer shifts.
+
+#[inline]
+#[target_feature(enable = "sse2")]
+#[allow(
+    dead_code,
+    clippy::similar_names,
+    clippy::ptr_as_ptr,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss
+)]
+pub(crate) unsafe fn bf16_to_f32(input: &[u16], output: &mut [f32]) {
+    debug_assert_eq!(input.len(), output.len());
+    let n = input.len();
+    let mut i = 0;
+    unsafe {
+        while i + 4 <= n {
+            let v = _mm_loadl_epi64(input.as_ptr().add(i).cast::<__m128i>());
+            let v32 = _mm_unpacklo_epi16(v, _mm_setzero_si128());
+            let shifted = _mm_slli_epi32(v32, 16);
+            _mm_storeu_ps(output.as_mut_ptr().add(i), _mm_castsi128_ps(shifted));
+            i += 4;
+        }
+    }
+    for j in i..n {
+        output[j] = f32::from_bits((input[j] as u32) << 16);
+    }
+}
+
+#[inline]
+#[target_feature(enable = "sse2")]
+#[allow(
+    dead_code,
+    clippy::similar_names,
+    clippy::ptr_as_ptr,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss
+)]
+pub(crate) unsafe fn f32_to_bf16(input: &[f32], output: &mut [u16]) {
+    debug_assert_eq!(input.len(), output.len());
+    let n = input.len();
+    let mut i = 0;
+    unsafe {
+        let c_one = _mm_set1_epi32(1);
+        let c_7fff = _mm_set1_epi32(0x7FFF);
+        let c_exp = _mm_set1_epi32(0xFF);
+        let c_mant = _mm_set1_epi32(0x007F_FFFF);
+        let c_40 = _mm_set1_epi32(0x40);
+        let zero = _mm_setzero_si128();
+        while i + 4 <= n {
+            let v = _mm_loadu_ps(input.as_ptr().add(i));
+            let bits = _mm_castps_si128(v);
+            let lsb = _mm_and_si128(_mm_srli_epi32(bits, 16), c_one);
+            let bias = _mm_add_epi32(lsb, c_7fff);
+            let added = _mm_add_epi32(bits, bias);
+            let rounded = _mm_srli_epi32(added, 16);
+            let exp = _mm_and_si128(_mm_srli_epi32(bits, 23), c_exp);
+            let exp_eq = _mm_cmpeq_epi32(exp, c_exp);
+            let mant = _mm_and_si128(bits, c_mant);
+            let mant_zero = _mm_cmpeq_epi32(mant, zero);
+            let is_nan = _mm_andnot_si128(mant_zero, exp_eq);
+            let nan_bits = _mm_or_si128(_mm_srli_epi32(bits, 16), c_40);
+            let res32 = _mm_or_si128(
+                _mm_and_si128(is_nan, nan_bits),
+                _mm_andnot_si128(is_nan, rounded),
+            );
+            let mut tmp = [0u32; 4];
+            _mm_storeu_si128(tmp.as_mut_ptr().cast::<__m128i>(), res32);
+            output[i] = tmp[0] as u16;
+            output[i + 1] = tmp[1] as u16;
+            output[i + 2] = tmp[2] as u16;
+            output[i + 3] = tmp[3] as u16;
+            i += 4;
+        }
+    }
+    for j in i..n {
+        let bits = input[j].to_bits();
+        let out = if (bits >> 23) & 0xFF == 0xFF && (bits & 0x007F_FFFF) != 0 {
+            ((bits >> 16) | 0x40) as u16
+        } else {
+            let bias = ((bits >> 16) & 1) + 0x7FFF;
+            (bits.wrapping_add(bias) >> 16) as u16
+        };
+        output[j] = out;
+    }
+}
+
+#[inline]
+#[target_feature(enable = "sse2")]
+#[allow(
+    dead_code,
+    clippy::similar_names,
+    clippy::ptr_as_ptr,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss
+)]
+pub(crate) unsafe fn dot_bf16(a: &[u16], b: &[u16]) -> f32 {
+    debug_assert_eq!(a.len(), b.len());
+    let n = a.len();
+    let mut acc = _mm_setzero_ps();
+    let mut i = 0;
+    unsafe {
+        while i + 4 <= n {
+            let va = _mm_loadl_epi64(a.as_ptr().add(i).cast::<__m128i>());
+            let vb = _mm_loadl_epi64(b.as_ptr().add(i).cast::<__m128i>());
+            let va32 = _mm_unpacklo_epi16(va, _mm_setzero_si128());
+            let vb32 = _mm_unpacklo_epi16(vb, _mm_setzero_si128());
+            let fa = _mm_castsi128_ps(_mm_slli_epi32(va32, 16));
+            let fb = _mm_castsi128_ps(_mm_slli_epi32(vb32, 16));
+            acc = unsafe { _mm_add_ps(acc, _mm_mul_ps(fa, fb)) };
+            i += 4;
+        }
+        let mut total = unsafe { hsum_128(acc) };
+        while i < n {
+            let fa = f32::from_bits((a[i] as u32) << 16);
+            let fb = f32::from_bits((b[i] as u32) << 16);
+            total += fa * fb;
+            i += 1;
+        }
+        total
+    }
+}
+
+// F16 — hardware path when F16C is present (Haswell+, 2013), scalar fallback otherwise.
+// F16C intrinsics need `f16c` target_feature; the SSE2 tier is gated on `sse2`,
+// so the hot loops are extracted into `#[target_feature(enable = "f16c")]` helpers
+// called only after a runtime probe. Scalar tail delegates to the bit helpers so
+// the file also validates that those helpers are correctly exposed.
+
+#[target_feature(enable = "f16c")]
+unsafe fn f16_to_f32_f16c(input: &[u16], output: &mut [f32]) {
+    let n = input.len();
+    let mut i = 0;
+    while i + 4 <= n {
+        let v = unsafe { _mm_loadl_epi64(input.as_ptr().add(i).cast::<__m128i>()) };
+        let f = unsafe { _mm_cvtph_ps(v) };
+        unsafe { _mm_storeu_ps(output.as_mut_ptr().add(i), f) };
+        i += 4;
+    }
+    for j in i..n {
+        output[j] = crate::kernels::scalar::f16_bits_to_f32(input[j]);
+    }
+}
+
+#[target_feature(enable = "f16c")]
+unsafe fn f32_to_f16_f16c(input: &[f32], output: &mut [u16]) {
+    let n = input.len();
+    let mut i = 0;
+    while i + 4 <= n {
+        let v = unsafe { _mm_loadu_ps(input.as_ptr().add(i)) };
+        let h = unsafe { _mm_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(v) };
+        unsafe { _mm_storel_epi64(output.as_mut_ptr().add(i).cast::<__m128i>(), h) };
+        i += 4;
+    }
+    for j in i..n {
+        output[j] = crate::kernels::scalar::f32_to_f16_bits(input[j]);
+    }
+}
+
+#[target_feature(enable = "f16c")]
+unsafe fn dot_f16_f16c(a: &[u16], b: &[u16]) -> f32 {
+    let n = a.len();
+    let mut acc = unsafe { _mm_setzero_ps() };
+    let mut i = 0;
+    while i + 4 <= n {
+        let va = unsafe { _mm_loadl_epi64(a.as_ptr().add(i).cast::<__m128i>()) };
+        let vb = unsafe { _mm_loadl_epi64(b.as_ptr().add(i).cast::<__m128i>()) };
+        let fa = unsafe { _mm_cvtph_ps(va) };
+        let fb = unsafe { _mm_cvtph_ps(vb) };
+        acc = unsafe { _mm_add_ps(acc, _mm_mul_ps(fa, fb)) };
+        i += 4;
+    }
+    let mut total = unsafe { hsum_128(acc) };
+    while i < n {
+        total += crate::kernels::scalar::f16_bits_to_f32(a[i])
+            * crate::kernels::scalar::f16_bits_to_f32(b[i]);
+        i += 1;
+    }
+    total
+}
+
+#[inline]
+#[target_feature(enable = "sse2")]
+#[allow(dead_code, clippy::ptr_as_ptr)]
+pub(crate) unsafe fn f16_to_f32(input: &[u16], output: &mut [f32]) {
+    #[cfg(feature = "std")]
+    if crate::platform::has_f16c() {
+        return unsafe { f16_to_f32_f16c(input, output) };
+    }
+    crate::kernels::scalar::f16_to_f32(input, output);
+}
+
+#[inline]
+#[target_feature(enable = "sse2")]
+#[allow(dead_code, clippy::ptr_as_ptr)]
+pub(crate) unsafe fn f32_to_f16(input: &[f32], output: &mut [u16]) {
+    #[cfg(feature = "std")]
+    if crate::platform::has_f16c() {
+        return unsafe { f32_to_f16_f16c(input, output) };
+    }
+    crate::kernels::scalar::f32_to_f16(input, output);
+}
+
+#[inline]
+#[target_feature(enable = "sse2")]
+#[allow(dead_code, clippy::ptr_as_ptr)]
+pub(crate) unsafe fn dot_f16(a: &[u16], b: &[u16]) -> f32 {
+    #[cfg(feature = "std")]
+    if crate::platform::has_f16c() {
+        return unsafe { dot_f16_f16c(a, b) };
+    }
+    crate::kernels::scalar::dot_f16(a, b)
+}
+
 #[cfg(test)]
 #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 mod tests {

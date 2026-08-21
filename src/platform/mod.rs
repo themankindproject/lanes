@@ -39,6 +39,22 @@ impl Avx512Caps {
     }
 }
 
+/// Whether F16C half-precision convert is available (`x86_64` only).
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) fn has_f16c() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static HAS_F16C: OnceLock<bool> = OnceLock::new();
+        *HAS_F16C.get_or_init(|| is_x86_feature_detected!("f16c"))
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
 /// Map a backend name (as accepted by `LANES_BACKEND`) to a [`Backend`].
 ///
 /// Unknown or unavailable names return `None` so that callers fall back
@@ -56,6 +72,8 @@ fn forced_backend(raw: &str) -> Option<Backend> {
         "avx512" => Some(Backend::Avx512),
         #[cfg(target_arch = "aarch64")]
         "neon" => Some(Backend::Neon),
+        #[cfg(target_arch = "wasm32")]
+        "wasm" => Some(Backend::Wasm),
         _ => None,
     }
 }
@@ -68,13 +86,19 @@ fn forced_backend(raw: &str) -> Option<Backend> {
 #[must_use]
 pub(crate) fn detect_best_backend() -> Backend {
     let detected = auto_detect();
-    match std::env::var("LANES_BACKEND")
-        .ok()
-        .and_then(|raw| forced_backend(&raw))
-    {
-        Some(requested) if supports(requested) => requested,
-        _ => detected,
+    if let Ok(raw) = std::env::var("LANES_BACKEND") {
+        if let Some(requested) = forced_backend(&raw) {
+            if supports(requested) {
+                return requested;
+            }
+            #[cfg(debug_assertions)]
+            eprintln!("[lanes] LANES_BACKEND='{raw}' ignored: backend not supported on this CPU");
+        } else {
+            #[cfg(debug_assertions)]
+            eprintln!("[lanes] LANES_BACKEND='{raw}' ignored: unknown backend name");
+        }
     }
+    detected
 }
 
 /// Whether `backend` is compiled in and actually supported by this CPU.
@@ -97,6 +121,15 @@ pub(crate) fn supports(backend: Backend) -> bool {
             // available on aarch64. (`is_aarch64_feature_detected!` is
             // unavailable when cross-compiling, and the runtime check would
             // be redundant anyway.)
+            true
+        }
+        #[cfg(target_arch = "wasm32")]
+        Backend::Wasm => {
+            // WASM SIMD128 is either available at compile time or detectable
+            // at runtime where the toolchain provides `is_wasm_feature_detected`.
+            // Fall back to `true` — if SIMD128 is not available the scalar
+            // fallback remains correct, and on wasm32 SIMD128 is the baseline
+            // when compiled with `+simd128`.
             true
         }
     }
@@ -127,8 +160,17 @@ fn auto_detect() -> Backend {
     Backend::Neon
 }
 
+#[cfg(target_arch = "wasm32")]
+fn auto_detect() -> Backend {
+    Backend::Wasm
+}
+
 /// Fallback for all other architectures.
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "wasm32"
+)))]
 fn auto_detect() -> Backend {
     Backend::Scalar
 }

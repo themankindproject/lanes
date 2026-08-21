@@ -18,7 +18,50 @@ so it is all listed as additions.
   `no_std`-compatible (no `alloc` required — all functions write into
   caller-provided buffers). Exhaustively verified: all 65,536 f16 and
   bf16 bit patterns round-trip correctly; tie-to-even cases and denormal
-  handling confirmed against brute-force oracles. (#7)
+  handling confirmed against brute-force oracles. SIMD: f16 paths use
+  F16C (`_mm_cvtph_ps` / `_mm256_cvtph_ps`, runtime-probed via cached
+  `platform::has_f16c()`) on x86_64 with scalar fallback; bf16 paths are
+  vectorized integer shifts (4-wide SSE2, 8-wide AVX2, 16-wide
+  AVX-512F, 4-wide NEON, scalar wasm) with RNE bias; dot products fuse
+  widen+multiply via FMA. Benchmarks cover all six convert kernels vs
+  naive (#7)
+- `Backend::available()` / `available_backends()` and `Backend::as_str()`
+  for runtime introspection; `Backend::Wasm` on `wasm32` (scalar
+  fallthrough now, SIMD128 hooks in place).
+- `distance::{cosine,euclidean}_distance` thin wrappers.
+
+### Fixed
+
+- `jaccard_similarity` now divides via `f64` then casts to `f32`
+  (`(intersection as f64 / union as f64) as f32`), restoring precision
+  for unions above 16 M bits — the `f32` path lost ~3 bits above `2^24`.
+- `variance_into` / `std_dev_into` (f32/f64): the `alloc` + `not(alloc)`
+  bodies were fused inside one function with nested `cfg`s and a dead
+  `allow(unreachable_code)` block. They are now two clean
+  `#[cfg(feature="alloc")]` / `#[cfg(not(feature="alloc"))]` function
+  definitions with no dead code and bit-identical contracts.
+- `geometric_mean` (f32/f64): previously scanned with
+  `position(|&x| x <= 0.0)` then allocated and re-scanned with scalar
+  `x.ln()`. Now validates in a single pre-alloc scan then uses the
+  vectorized `dispatch_ln` / `dispatch_ln_f64` map, eliminating the double
+  scan and giving SIMD `ln` on the hot path.
+- `LANES_BACKEND` env override: unknown names (typos) and requesting an
+  unavailable backend now emit a `debug_assertions`-gated `eprintln!`
+  warning (`[lanes] LANES_BACKEND='…' ignored: …`) instead of silently
+  falling back to auto-detection.
+- Addressed `cargo clippy --all-targets --all-features` warnings in
+  `src/platform/mod.rs` (uninlined format args).
+
+### Changed
+
+- F16 fast paths: SSE2 (4-wide) and AVX2 (8-wide) now use F16C `cvtph` intrinsics when `f16c` is present (cached `has_f16c` probe); scalar fallback otherwise. AVX-512 reuses the AVX2 F16C path.
+- VPOPCNTDQ wiring: `hamming`/`jaccard` on AVX-512 dispatch to `_mm512_popcnt_epi64` (64 B/iter) when `avx512vpopcntdq` is present; AVX2 shuffle path otherwise. VNNI `dot_i8` probe scaffold added.
+- Benchmarks: six new Criterion groups for `convert` (`f16_to_f32`, `f32_to_f16`, `bf16_to_f32`, `f32_to_bf16`, `dot_f16`, `dot_bf16`) vs naive baselines.
+- Added `src/kernels/wasm` stub so `cargo check --target
+  wasm32-unknown-unknown` succeeds (scalar fallthrough; future place for
+  SIMD128 kernels).
+- Addressed `cargo clippy --all-targets --all-features` warnings in
+  `src/platform/mod.rs` (uninlined format args).
 
 ## [0.1.3] - 2026-08-20
 

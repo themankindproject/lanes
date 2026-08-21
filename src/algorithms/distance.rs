@@ -187,6 +187,35 @@ pub mod f32 {
         let backend = Backend::detect();
         Ok(kernels::dispatch_js_divergence(backend, p, q) * 0.5)
     }
+
+    /// Cosine distance `1 - cosine_similarity(a, b)` in `[0, 2]`.
+    ///
+    /// Thin wrapper over `cosine_similarity`: `0` for identical directions,
+    /// `1` for orthogonal vectors, `2` for opposite directions. Inherits the
+    /// same error contract and zero-vector convention (`Ok(1.0)` when either
+    /// input has zero norm, `Ok(0.0)` when both are zero — since
+    /// `cosine_similarity` returns `0.0` there).
+    ///
+    /// # Errors
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`, and
+    /// [`Error::EmptyInput`] if both slices are empty.
+    #[cfg(feature = "alloc")]
+    pub fn cosine_distance(a: &[f32], b: &[f32]) -> Result<f32, Error> {
+        let s = crate::algorithms::ml::f32::cosine_similarity(a, b)?;
+        Ok(1.0 - s)
+    }
+
+    /// Euclidean (L2) distance `sqrt(sum((a[i] - b[i])²))`.
+    ///
+    /// Thin wrapper over [`squared_distance`]: `sqrt(squared_distance(a, b))`.
+    /// Non-negative, symmetric, and satisfies the triangle inequality.
+    ///
+    /// # Errors
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
+    pub fn euclidean_distance(a: &[f32], b: &[f32]) -> Result<f32, Error> {
+        let sd = squared_distance(a, b)?;
+        Ok(crate::kernels::sqrt::sqrt(sd))
+    }
 }
 
 pub mod f64 {
@@ -328,6 +357,31 @@ pub mod f64 {
         }
         let backend = Backend::detect();
         Ok(kernels::dispatch_js_divergence_f64(backend, p, q) * 0.5)
+    }
+
+    /// Cosine distance `1 - cosine_similarity(a, b)` in `[0, 2]`.
+    ///
+    /// `f64` twin of [`super::f32::cosine_distance`]: same semantics and
+    /// error contract (`LengthMismatch`, `EmptyInput`).
+    /// # Errors
+    ///
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()` and [`Error::EmptyInput`] for empty inputs.
+    #[cfg(feature = "alloc")]
+    pub fn cosine_distance(a: &[f64], b: &[f64]) -> Result<f64, Error> {
+        let s = crate::algorithms::ml::f64::cosine_similarity(a, b)?;
+        Ok(1.0 - s)
+    }
+
+    /// Euclidean (L2) distance `sqrt(sum((a[i] - b[i])²))`.
+    ///
+    /// `f64` twin of [`super::f32::euclidean_distance`]: `sqrt(squared_distance)`.
+    /// Same `LengthMismatch` error contract.
+    /// # Errors
+    ///
+    /// Returns [`Error::LengthMismatch`] if `a.len() != b.len()`.
+    pub fn euclidean_distance(a: &[f64], b: &[f64]) -> Result<f64, Error> {
+        let sd = squared_distance(a, b)?;
+        Ok(crate::kernels::sqrt::sqrt_f64(sd))
     }
 }
 

@@ -91,6 +91,11 @@ f32::softmax_into(&activated, &mut probs).unwrap();
 - **`ml`** — `softmax`, `log_softmax`, `sigmoid`, `silu`, `gelu`, `relu`,
   `softplus`, `rms_norm`, `layer_norm`, `cosine_similarity`, `logsumexp`
   (every map-style op also as `*_into`)
+- **`convert`** — `f16_to_f32`, `f32_to_f16`, `bf16_to_f32`, `f32_to_bf16`,
+  `dot_f16`, `dot_bf16` (half-precision conversions with
+  round-to-nearest-even; `no_std`-compatible via caller-provided buffers;
+  f16 uses F16C hardware on `x86_64` when present, bf16 is vectorized
+  integer shifts on every SIMD tier)
 
 Reductions (`stats`, `distance`) return scalars and mostly work without
 `alloc` (exceptions: `variance`, `std_dev`, `geometric_mean` need an
@@ -227,10 +232,11 @@ never fail.
 
 | Architecture | Backend | Selection |
 | --- | --- | --- |
-| x86-64 | AVX-512F | runtime detection (`avx512f`) |
-| x86-64 | AVX2 + FMA | runtime detection (`avx2` + `fma`) |
+| x86-64 | AVX-512F (+ VPOPCNTDQ/VNNI when present) | runtime detection (`avx512f`); sub-features probed via `Avx512Caps` |
+| x86-64 | AVX2 + FMA (+ F16C for half) | runtime detection (`avx2` + `fma`); half converts use F16C (`cvtph`) when `f16c` present |
 | x86-64 | SSE2 | runtime detection; mandatory x86-64 baseline |
 | aarch64 | NEON | mandatory on ARMv8-A |
+| `wasm32` | WASM | scalar fallthrough now; `wasm32-unknown-unknown` wires the WASM backend (SIMD128 intrinsics are a drop-in next step) |
 | anything else | Scalar | always available |
 
 Detection runs once and is cached in a `OnceLock`, so dispatch overhead
@@ -239,10 +245,9 @@ scalar fallback, and the unsafe SIMD code is isolated in the kernel
 layer behind `platform::supports` gates (the algorithm layer is
 `#![forbid(unsafe_code)]`).
 
-`LANES_BACKEND=scalar|sse2|avx2|avx512|neon` forces a backend for
+`LANES_BACKEND=scalar|sse2|avx2|avx512|neon|wasm` forces a backend for
 benchmarking or debugging; `cargo run --example dispatch_info` prints
-what was detected and why. WASM currently uses the scalar backend; the
-code is kept OS-independent so a SIMD128 backend can be added later.
+what was detected and why.
 
 ## `no_std`
 
