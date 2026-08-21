@@ -113,15 +113,17 @@ pub(crate) unsafe fn jaccard_counts(a: &[u8], b: &[u8]) -> (usize, usize) {
 }
 
 // --- VNNI-accelerated i8 dot ----------------------------------------------
-// `_mm512_dpbusd_epi32` fuses unsigned×signed byte multiply + i32 accumulate
-// (VPDPBUSD). One instruction does 64 byte-muls where the AVX2 path needs
-// widen+pmaddwd+add. Throughput ~2× on Ice Lake+.
-
+// `_mm512_dpbusd_epi32` (VPDPBUSD, AVX-512 VNNI) fuses unsigned*signed byte
+// multiply + i32 accumulate. It requires one operand as unsigned bytes and
+// the other as signed bytes. To use it for signed*signed, bias the first
+// operand by +128 into the unsigned domain. The arithmetic is correct but
+// the widening (16 i32 -> 8 i64) needs care: the stable path shares the
+// AVX2 implementation for now until the VNNI widening is validated with a
+// dedicated harness (follow-up).
 #[target_feature(enable = "avx512vnni")]
 unsafe fn dot_i8_vnni(a: &[i8], b: &[i8]) -> i64 {
     unsafe { super::avx2::dot_i8(a, b) }
 }
-
 #[inline]
 #[target_feature(enable = "avx512f")]
 pub(crate) unsafe fn dot_i8(a: &[i8], b: &[i8]) -> i64 {
