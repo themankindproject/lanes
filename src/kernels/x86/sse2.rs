@@ -2797,10 +2797,10 @@ pub(crate) unsafe fn dot_bf16(a: &[u16], b: &[u16]) -> f32 {
             let vb32 = _mm_unpacklo_epi16(vb, _mm_setzero_si128());
             let fa = _mm_castsi128_ps(_mm_slli_epi32(va32, 16));
             let fb = _mm_castsi128_ps(_mm_slli_epi32(vb32, 16));
-            acc = _mm_add_ps(acc, _mm_mul_ps(fa, fb));
+            acc = unsafe { _mm_add_ps(acc, _mm_mul_ps(fa, fb)) };
             i += 4;
         }
-        let mut total = hsum_128(acc);
+        let mut total = unsafe { hsum_128(acc) };
         while i < n {
             let fa = f32::from_bits((a[i] as u32) << 16);
             let fb = f32::from_bits((b[i] as u32) << 16);
@@ -2811,20 +2811,83 @@ pub(crate) unsafe fn dot_bf16(a: &[u16], b: &[u16]) -> f32 {
     }
 }
 
-// F16 stubs — scalar delegate, TODO(F16C) for hardware acceleration.
+// F16 — hardware path when F16C is present (Haswell+, 2013), scalar fallback otherwise.
+// F16C intrinsics need `f16c` target_feature; the SSE2 tier is gated on `sse2`,
+// so the hot loops are extracted into `#[target_feature(enable = "f16c")]` helpers
+// called only after a runtime probe. Scalar tail delegates to the bit helpers so
+// the file also validates that those helpers are correctly exposed.
+
+#[target_feature(enable = "f16c")]
+unsafe fn f16_to_f32_f16c(input: &[u16], output: &mut [f32]) {
+    let n = input.len();
+    let mut i = 0;
+    while i + 4 <= n {
+        let v = unsafe { _mm_loadl_epi64(input.as_ptr().add(i).cast::<__m128i>()) };
+        let f = unsafe { _mm_cvtph_ps(v) };
+        unsafe { _mm_storeu_ps(output.as_mut_ptr().add(i), f) };
+        i += 4;
+    }
+    for j in i..n {
+        output[j] = crate::kernels::scalar::f16_bits_to_f32(input[j]);
+    }
+}
+
+#[target_feature(enable = "f16c")]
+unsafe fn f32_to_f16_f16c(input: &[f32], output: &mut [u16]) {
+    let n = input.len();
+    let mut i = 0;
+    while i + 4 <= n {
+        let v = unsafe { _mm_loadu_ps(input.as_ptr().add(i)) };
+        let h = unsafe { _mm_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(v) };
+        unsafe { _mm_storel_epi64(output.as_mut_ptr().add(i).cast::<__m128i>(), h) };
+        i += 4;
+    }
+    for j in i..n {
+        output[j] = crate::kernels::scalar::f32_to_f16_bits(input[j]);
+    }
+}
+
+#[target_feature(enable = "f16c")]
+unsafe fn dot_f16_f16c(a: &[u16], b: &[u16]) -> f32 {
+    let n = a.len();
+    let mut acc = unsafe { _mm_setzero_ps() };
+    let mut i = 0;
+    while i + 4 <= n {
+        let va = unsafe { _mm_loadl_epi64(a.as_ptr().add(i).cast::<__m128i>()) };
+        let vb = unsafe { _mm_loadl_epi64(b.as_ptr().add(i).cast::<__m128i>()) };
+        let fa = unsafe { _mm_cvtph_ps(va) };
+        let fb = unsafe { _mm_cvtph_ps(vb) };
+        acc = unsafe { _mm_add_ps(acc, _mm_mul_ps(fa, fb)) };
+        i += 4;
+    }
+    let mut total = unsafe { hsum_128(acc) };
+    while i < n {
+        total += crate::kernels::scalar::f16_bits_to_f32(a[i])
+            * crate::kernels::scalar::f16_bits_to_f32(b[i]);
+        i += 1;
+    }
+    total
+}
 
 #[inline]
 #[target_feature(enable = "sse2")]
 #[allow(dead_code, clippy::ptr_as_ptr)]
 pub(crate) unsafe fn f16_to_f32(input: &[u16], output: &mut [f32]) {
-    // TODO(F16C): use _mm_cvtph_ps for 8-wide vectorization
+    #[cfg(feature = "std")]
+    if std::is_x86_feature_detected!("f16c") {
+        return unsafe { f16_to_f32_f16c(input, output) };
+    }
     crate::kernels::scalar::f16_to_f32(input, output);
 }
 
 #[inline]
 #[target_feature(enable = "sse2")]
+#[allow(dead_code, clippy::ptr_as_ptr)]
 pub(crate) unsafe fn f32_to_f16(input: &[f32], output: &mut [u16]) {
-    // TODO(F16C): use _mm_cvtps_ph for 8-wide vectorization
+    #[cfg(feature = "std")]
+    if std::is_x86_feature_detected!("f16c") {
+        return unsafe { f32_to_f16_f16c(input, output) };
+    }
     crate::kernels::scalar::f32_to_f16(input, output);
 }
 
@@ -2832,7 +2895,10 @@ pub(crate) unsafe fn f32_to_f16(input: &[f32], output: &mut [u16]) {
 #[target_feature(enable = "sse2")]
 #[allow(dead_code, clippy::ptr_as_ptr)]
 pub(crate) unsafe fn dot_f16(a: &[u16], b: &[u16]) -> f32 {
-    // TODO(F16C): vectorize dot with F16C + FMA
+    #[cfg(feature = "std")]
+    if std::is_x86_feature_detected!("f16c") {
+        return unsafe { dot_f16_f16c(a, b) };
+    }
     crate::kernels::scalar::dot_f16(a, b)
 }
 
