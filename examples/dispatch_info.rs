@@ -26,28 +26,73 @@ fn main() {
     {
         println!("  x86_64 hierarchy (best to worst):");
         println!("    1. AVX-512F — 512-bit vectors (Zen 4, Ice Lake+)");
+        println!(
+            "       sub-features: vpopcntdq (hamming/jaccard), vnni (i8 dot), probed via Avx512Caps"
+        );
         println!("    2. AVX2 + FMA — 256-bit vectors (Haswell+)");
+        println!(
+            "       F16C half converts use F16C (cvtph) when present (8-wide on AVX2, 4-wide on SSE2)"
+        );
         println!("    3. SSE2 — 128-bit vectors (mandatory on x86-64)");
         println!("    4. Scalar — portable fallback");
         println!();
         println!("  CPU feature detection via `is_x86_feature_detected!`:");
-        println!("    avx512f: {}", is_x86_feature_detected!("avx512f"));
-        println!("    avx2:    {}", is_x86_feature_detected!("avx2"));
-        println!("    fma:     {}", is_x86_feature_detected!("fma"));
-        println!("    sse2:    {}", is_x86_feature_detected!("sse2"));
+        println!("    avx512f:     {}", is_x86_feature_detected!("avx512f"));
+        println!(
+            "    avx512vnni:  {}",
+            is_x86_feature_detected!("avx512vnni")
+        );
+        println!(
+            "    avx512vpopcntdq: {}",
+            is_x86_feature_detected!("avx512vpopcntdq")
+        );
+        println!("    avx2:        {}", is_x86_feature_detected!("avx2"));
+        println!("    fma:         {}", is_x86_feature_detected!("fma"));
+        println!("    f16c:        {}", is_x86_feature_detected!("f16c"));
+        println!("    sse2:        {}", is_x86_feature_detected!("sse2"));
+        println!();
+        let backend = lanes::Backend::detect();
+        let all = lanes::available_backends();
+        println!("  available_backends(): {:?}", all);
+        println!("  active backend: {} ({:?})", backend.as_str(), backend);
     }
 
     #[cfg(target_arch = "aarch64")]
     {
         println!("  aarch64 hierarchy:");
         println!("    1. NEON — 128-bit vectors (mandatory on all ARMv8-A)");
+        println!(
+            "       f16: scalar fallback on stable (fp16 is nightly-only); bf16 is vectorized shifts"
+        );
         println!("    2. Scalar — portable fallback");
         println!();
         println!("  NEON is always available on aarch64, so the NEON backend");
         println!("  is unconditionally selected.");
+        let backend = lanes::Backend::detect();
+        println!("  available_backends(): {:?}", lanes::available_backends());
+        println!("  active backend: {} ({:?})", backend.as_str(), backend);
     }
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "wasm32")]
+    {
+        println!("  wasm32 hierarchy:");
+        println!(
+            "    1. WASM SIMD128 — 128-bit vectors (scalar fallthrough until SIMD128 kernels land)"
+        );
+        println!("    2. Scalar — portable fallback");
+        println!();
+        println!("  WASM backend is wired via the dispatch layer (Backend::Wasm);");
+        println!("  SIMD128 kernels are a drop-in next step when +simd128 is enabled.");
+        let backend = lanes::Backend::detect();
+        println!("  available_backends(): {:?}", lanes::available_backends());
+        println!("  active backend: {} ({:?})", backend.as_str(), backend);
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )))]
     {
         println!("  This architecture has no specialized SIMD backend.");
         println!("  The scalar (portable) backend is used.");
