@@ -39,6 +39,22 @@ impl Avx512Caps {
     }
 }
 
+/// Whether F16C half-precision convert is available (`x86_64` only).
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) fn has_f16c() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static HAS_F16C: OnceLock<bool> = OnceLock::new();
+        *HAS_F16C.get_or_init(|| is_x86_feature_detected!("f16c"))
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
 /// Map a backend name (as accepted by `LANES_BACKEND`) to a [`Backend`].
 ///
 /// Unknown or unavailable names return `None` so that callers fall back

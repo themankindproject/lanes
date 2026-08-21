@@ -2480,7 +2480,7 @@ pub(crate) unsafe fn dot_bf16(a: &[u16], b: &[u16]) -> f32 {
     }
 }
 
-// F16 stubs — TODO(F16C/NEON fp16)
+// F16 — scalar fallback on stable NEON (no fp16 feature); hardware via vcvt_f32_f16 is nightly-only.
 
 #[inline]
 #[target_feature(enable = "neon")]

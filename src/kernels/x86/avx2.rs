@@ -2942,7 +2942,7 @@ unsafe fn dot_f16_f16c(a: &[u16], b: &[u16]) -> f32 {
 #[allow(dead_code, clippy::ptr_as_ptr)]
 pub(crate) unsafe fn f16_to_f32(input: &[u16], output: &mut [f32]) {
     #[cfg(feature = "std")]
-    if std::is_x86_feature_detected!("f16c") {
+    if crate::platform::has_f16c() {
         return unsafe { f16_to_f32_f16c(input, output) };
     }
     crate::kernels::scalar::f16_to_f32(input, output);
@@ -2953,7 +2953,7 @@ pub(crate) unsafe fn f16_to_f32(input: &[u16], output: &mut [f32]) {
 #[allow(dead_code, clippy::ptr_as_ptr)]
 pub(crate) unsafe fn f32_to_f16(input: &[f32], output: &mut [u16]) {
     #[cfg(feature = "std")]
-    if std::is_x86_feature_detected!("f16c") {
+    if crate::platform::has_f16c() {
         return unsafe { f32_to_f16_f16c(input, output) };
     }
     crate::kernels::scalar::f32_to_f16(input, output);
@@ -2964,7 +2964,7 @@ pub(crate) unsafe fn f32_to_f16(input: &[f32], output: &mut [u16]) {
 #[allow(dead_code, clippy::ptr_as_ptr)]
 pub(crate) unsafe fn dot_f16(a: &[u16], b: &[u16]) -> f32 {
     #[cfg(feature = "std")]
-    if std::is_x86_feature_detected!("f16c") {
+    if crate::platform::has_f16c() {
         return unsafe { dot_f16_f16c(a, b) };
     }
     crate::kernels::scalar::dot_f16(a, b)
