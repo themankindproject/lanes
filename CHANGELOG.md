@@ -20,6 +20,31 @@ so it is all listed as additions.
   bf16 bit patterns round-trip correctly; tie-to-even cases and denormal
   handling confirmed against brute-force oracles. (#7)
 
+### Fixed
+
+- `jaccard_similarity` now divides via `f64` then casts to `f32`
+  (`(intersection as f64 / union as f64) as f32`), restoring precision
+  for unions above 16 M bits — the `f32` path lost ~3 bits above `2^24`.
+- `variance_into` / `std_dev_into` (f32/f64): the `alloc` + `not(alloc)`
+  bodies were fused inside one function with nested `cfg`s and a dead
+  `allow(unreachable_code)` block. They are now two clean
+  `#[cfg(feature="alloc")]` / `#[cfg(not(feature="alloc"))]` function
+  definitions with no dead code and bit-identical contracts.
+- `geometric_mean` (f32/f64): previously scanned with
+  `position(|&x| x <= 0.0)` then allocated and re-scanned with scalar
+  `x.ln()`. Now validates in a single pre-alloc scan then uses the
+  vectorized `dispatch_ln` / `dispatch_ln_f64` map, eliminating the double
+  scan and giving SIMD `ln` on the hot path.
+- `LANES_BACKEND` env override: unknown names (typos) and requesting an
+  unavailable backend now emit a `debug_assertions`-gated `eprintln!`
+  warning (`[lanes] LANES_BACKEND='…' ignored: …`) instead of silently
+  falling back to auto-detection.
+- Added `src/kernels/wasm` stub so `cargo check --target
+  wasm32-unknown-unknown` succeeds (scalar fallthrough; future place for
+  SIMD128 kernels).
+- Addressed `cargo clippy --all-targets --all-features` warnings in
+  `src/platform/mod.rs` (uninlined format args).
+
 ## [0.1.3] - 2026-08-20
 
 ### Added

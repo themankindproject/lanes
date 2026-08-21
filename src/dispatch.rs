@@ -41,6 +41,9 @@ pub enum Backend {
     /// ARM NEON (128-bit SIMD).
     #[cfg(target_arch = "aarch64")]
     Neon,
+    /// WASM SIMD128 (128-bit SIMD).
+    #[cfg(target_arch = "wasm32")]
+    Wasm,
 }
 
 impl Backend {
@@ -67,6 +70,54 @@ impl Backend {
             static_backend()
         }
     }
+
+    /// Human-readable name of this backend.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Scalar => "scalar",
+            #[cfg(target_arch = "x86_64")]
+            Self::Sse2 => "sse2",
+            #[cfg(target_arch = "x86_64")]
+            Self::Avx2 => "avx2",
+            #[cfg(target_arch = "x86_64")]
+            Self::Avx512 => "avx512",
+            #[cfg(target_arch = "aarch64")]
+            Self::Neon => "neon",
+            #[cfg(target_arch = "wasm32")]
+            Self::Wasm => "wasm",
+        }
+    }
+
+    /// List every backend compiled into this build of the crate.
+    ///
+    /// Always at least `[Scalar]`; on x86-64 / aarch64 / wasm32 the SIMD
+    /// tier for that target is included as well.
+    #[must_use]
+    pub fn available() -> alloc::vec::Vec<Self> {
+        let mut v = alloc::vec::Vec::new();
+        v.push(Self::Scalar);
+        #[cfg(target_arch = "x86_64")]
+        {
+            v.push(Self::Sse2);
+            v.push(Self::Avx2);
+            v.push(Self::Avx512);
+        }
+        #[cfg(target_arch = "aarch64")]
+        v.push(Self::Neon);
+        #[cfg(target_arch = "wasm32")]
+        v.push(Self::Wasm);
+        v
+    }
+}
+
+/// List every backend compiled into this build of the crate.
+///
+/// Free-function alias of [`Backend::available`] — re-exported at the crate
+/// root as `lanes::available_backends`.
+#[must_use]
+pub fn available_backends() -> alloc::vec::Vec<Backend> {
+    Backend::available()
 }
 
 /// Best backend guaranteed to be available without runtime CPU probing.
@@ -81,7 +132,13 @@ fn static_backend() -> Backend {
     let backend = Backend::Sse2;
     #[cfg(target_arch = "aarch64")]
     let backend = Backend::Neon;
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "wasm32")]
+    let backend = Backend::Wasm;
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )))]
     let backend = Backend::Scalar;
     backend
 }

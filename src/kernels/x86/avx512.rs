@@ -2288,6 +2288,11 @@ crate::simd_map!(
     |x: f32| crate::kernels::erf::erfc(x)
 );
 
+// --- bf16/f16 family: re-export AVX2 kernels (AVX-512F alone has no bf16) -
+// Every CPU with AVX-512F also has AVX2, so reuse those kernels.
+#[allow(unused_imports)]
+pub(crate) use super::avx2::{bf16_to_f32, dot_bf16, dot_f16, f16_to_f32, f32_to_bf16, f32_to_f16};
+
 #[cfg(test)]
 #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 mod tests {

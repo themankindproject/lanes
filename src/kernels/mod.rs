@@ -23,12 +23,19 @@ pub(crate) mod x86;
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod wasm;
+
 use crate::dispatch::Backend;
 
 /// Identity pass-through used by `dispatch!` for non-Option returns.
 /// Only needed where SIMD match arms exist (the scalar arm passes through
 /// directly); on other targets every `$wrap` call site is `#[cfg]`'d out.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "wasm32"
+))]
 #[inline]
 fn id<T>(v: T) -> T {
     v
@@ -39,13 +46,13 @@ fn id<T>(v: T) -> T {
 /// the scalar kernel and the `dispatch_jaccard` wrapper for SIMD backends
 /// (which reduce to counts).
 #[inline]
-#[allow(clippy::cast_precision_loss)] // counts ≤ 8·len; f32 is the documented precision
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)] // counts ≤ 8·len; f32 is the documented precision; final f64→f32 is intentional
 pub(crate) fn jaccard_similarity(counts: (usize, usize)) -> Option<f32> {
     let (intersection, union) = counts;
     if union == 0 {
         None
     } else {
-        Some(intersection as f32 / union as f32)
+        Some((intersection as f64 / union as f64) as f32)
     }
 }
 
@@ -115,25 +122,25 @@ pub(crate) fn alloc_uninit<T>(len: usize) -> alloc::vec::Vec<T> {
 macro_rules! dispatch {
     (
         $name:ident, [$( $pname:ident: $ptype:ty ),*], $ret:ty,
-        $scalar:path, $sse2:path, $avx2:path, $avx512:path, $neon:path,
+        $scalar:path, $sse2:path, $avx2:path, $avx512:path, $neon:path, $wasm:path,
         $wrap:tt, alloc
     ) => {
         #[cfg(feature = "alloc")]
         dispatch!(inner $name, [$( $pname: $ptype ),*], $ret,
-            $scalar, $sse2, $avx2, $avx512, $neon, $wrap);
+            $scalar, $sse2, $avx2, $avx512, $neon, $wasm, $wrap);
     };
 
     (
         $name:ident, [$( $pname:ident: $ptype:ty ),*], $ret:ty,
-        $scalar:path, $sse2:path, $avx2:path, $avx512:path, $neon:path,
+        $scalar:path, $sse2:path, $avx2:path, $avx512:path, $neon:path, $wasm:path,
         $wrap:tt
     ) => {
         dispatch!(inner $name, [$( $pname: $ptype ),*], $ret,
-            $scalar, $sse2, $avx2, $avx512, $neon, $wrap);
+            $scalar, $sse2, $avx2, $avx512, $neon, $wasm, $wrap);
     };
 
     (inner $name:ident, [$( $pname:ident: $ptype:ty ),*], $ret:ty,
-        $scalar:path, $sse2:path, $avx2:path, $avx512:path, $neon:path,
+        $scalar:path, $sse2:path, $avx2:path, $avx512:path, $neon:path, $wasm:path,
         $wrap:tt) => {
         #[inline]
         pub(crate) fn $name(backend: Backend, $( $pname: $ptype ),* ) -> $ret {
@@ -166,6 +173,12 @@ macro_rules! dispatch {
                     // SAFETY: NEON is mandatory on all aarch64 targets.
                     $wrap(unsafe { $neon($( $pname ),*) })
                 }
+
+                #[cfg(target_arch = "wasm32")]
+                Backend::Wasm => {
+                    // SAFETY: WASM SIMD128 is available when this backend is selected.
+                    $wrap(unsafe { $wasm($( $pname ),*) })
+                }
             }
         }
     };
@@ -180,6 +193,7 @@ dispatch!(
     x86::avx2::sum,
     x86::avx512::sum,
     aarch64::neon::sum,
+    wasm::sum,
     id
 );
 
@@ -192,6 +206,7 @@ dispatch!(
     x86::avx2::prod,
     x86::avx512::prod,
     aarch64::neon::prod,
+    wasm::prod,
     id
 );
 
@@ -204,6 +219,7 @@ dispatch!(
     x86::avx2::min,
     x86::avx512::min,
     aarch64::neon::min,
+    wasm::min,
     Some
 );
 
@@ -216,6 +232,7 @@ dispatch!(
     x86::avx2::max,
     x86::avx512::max,
     aarch64::neon::max,
+    wasm::max,
     Some
 );
 
@@ -228,6 +245,7 @@ dispatch!(
     x86::avx2::sum_sq,
     x86::avx512::sum_sq,
     aarch64::neon::sum_sq,
+    wasm::sum_sq,
     id
 );
 
@@ -240,6 +258,7 @@ dispatch!(
     x86::avx2::l1_norm,
     x86::avx512::l1_norm,
     aarch64::neon::l1_norm,
+    wasm::l1_norm,
     id
 );
 
@@ -252,6 +271,7 @@ dispatch!(
     x86::avx2::max_norm,
     x86::avx512::max_norm,
     aarch64::neon::max_norm,
+    wasm::max_norm,
     Some
 );
 
@@ -264,6 +284,7 @@ dispatch!(
     x86::avx2::argmax,
     x86::avx512::argmax,
     aarch64::neon::argmax,
+    wasm::argmax,
     id
 );
 
@@ -276,6 +297,7 @@ dispatch!(
     x86::avx2::argmin,
     x86::avx512::argmin,
     aarch64::neon::argmin,
+    wasm::argmin,
     id
 );
 
@@ -288,6 +310,7 @@ dispatch!(
     x86::avx2::count_zero,
     x86::avx512::count_zero,
     aarch64::neon::count_zero,
+    wasm::count_zero,
     id
 );
 
@@ -300,6 +323,7 @@ dispatch!(
     x86::avx2::count_nan,
     x86::avx512::count_nan,
     aarch64::neon::count_nan,
+    wasm::count_nan,
     id
 );
 
@@ -312,6 +336,7 @@ dispatch!(
     x86::avx2::count_infinite,
     x86::avx512::count_infinite,
     aarch64::neon::count_infinite,
+    wasm::count_infinite,
     id
 );
 
@@ -327,6 +352,7 @@ dispatch!(
     x86::avx2::dot,
     x86::avx512::dot,
     aarch64::neon::dot,
+    wasm::dot,
     id
 );
 
@@ -339,6 +365,7 @@ dispatch!(
     x86::avx2::squared_distance,
     x86::avx512::squared_distance,
     aarch64::neon::squared_distance,
+    wasm::squared_distance,
     id
 );
 
@@ -351,6 +378,7 @@ dispatch!(
     x86::avx2::kl_divergence,
     x86::avx512::kl_divergence,
     aarch64::neon::kl_divergence,
+    wasm::kl_divergence,
     id
 );
 
@@ -363,6 +391,7 @@ dispatch!(
     x86::avx2::js_divergence,
     x86::avx512::js_divergence,
     aarch64::neon::js_divergence,
+    wasm::js_divergence,
     id
 );
 
@@ -375,6 +404,7 @@ dispatch!(
     x86::avx2::hamming_popcount,
     x86::avx512::hamming_popcount,
     aarch64::neon::hamming_popcount,
+    wasm::hamming_popcount,
     id
 );
 
@@ -387,6 +417,7 @@ dispatch!(
     x86::avx2::jaccard_counts,
     x86::avx512::jaccard_counts,
     aarch64::neon::jaccard_counts,
+    wasm::jaccard_counts,
     jaccard_similarity
 );
 
@@ -399,6 +430,7 @@ dispatch!(
     x86::avx2::dot_i8,
     x86::avx512::dot_i8,
     aarch64::neon::dot_i8,
+    wasm::dot_i8,
     id
 );
 
@@ -411,6 +443,7 @@ dispatch!(
     x86::avx2::sum_i8,
     x86::avx512::sum_i8,
     aarch64::neon::sum_i8,
+    wasm::sum_i8,
     id
 );
 
@@ -423,6 +456,7 @@ dispatch!(
     x86::avx2::min_i8,
     x86::avx512::min_i8,
     aarch64::neon::min_i8,
+    wasm::min_i8,
     Some
 );
 
@@ -435,6 +469,7 @@ dispatch!(
     x86::avx2::max_i8,
     x86::avx512::max_i8,
     aarch64::neon::max_i8,
+    wasm::max_i8,
     Some
 );
 
@@ -447,6 +482,7 @@ dispatch!(
     x86::avx2::max_abs_i8,
     x86::avx512::max_abs_i8,
     aarch64::neon::max_abs_i8,
+    wasm::max_abs_i8,
     Some
 );
 
@@ -459,6 +495,7 @@ dispatch!(
     x86::avx2::count_zero_i8,
     x86::avx512::count_zero_i8,
     aarch64::neon::count_zero_i8,
+    wasm::count_zero_i8,
     id
 );
 
@@ -471,6 +508,7 @@ dispatch!(
     x86::avx2::l1_norm_i8,
     x86::avx512::l1_norm_i8,
     aarch64::neon::l1_norm_i8,
+    wasm::l1_norm_i8,
     id
 );
 
@@ -483,6 +521,7 @@ dispatch!(
     x86::avx2::squared_distance_i8,
     x86::avx512::squared_distance_i8,
     aarch64::neon::squared_distance_i8,
+    wasm::squared_distance_i8,
     id
 );
 
@@ -495,6 +534,7 @@ dispatch!(
     x86::avx2::softmax,
     x86::avx512::softmax,
     aarch64::neon::softmax,
+    wasm::softmax,
     id,
     alloc
 );
@@ -508,6 +548,7 @@ dispatch!(
     x86::avx2::logsumexp,
     x86::avx512::logsumexp,
     aarch64::neon::logsumexp,
+    wasm::logsumexp,
     id,
     alloc
 );
@@ -521,6 +562,7 @@ dispatch!(
     x86::avx2::log_softmax,
     x86::avx512::log_softmax,
     aarch64::neon::log_softmax,
+    wasm::log_softmax,
     id,
     alloc
 );
@@ -534,6 +576,7 @@ dispatch!(
     x86::avx2::layer_norm,
     x86::avx512::layer_norm,
     aarch64::neon::layer_norm,
+    wasm::layer_norm,
     id,
     alloc
 );
@@ -547,6 +590,7 @@ dispatch!(
     x86::avx2::softplus,
     x86::avx512::softplus,
     aarch64::neon::softplus,
+    wasm::softplus,
     id,
     alloc
 );
@@ -560,6 +604,7 @@ dispatch!(
     x86::avx2::sigmoid,
     x86::avx512::sigmoid,
     aarch64::neon::sigmoid,
+    wasm::sigmoid,
     id,
     alloc
 );
@@ -573,6 +618,7 @@ dispatch!(
     x86::avx2::silu,
     x86::avx512::silu,
     aarch64::neon::silu,
+    wasm::silu,
     id,
     alloc
 );
@@ -586,6 +632,7 @@ dispatch!(
     x86::avx2::gelu,
     x86::avx512::gelu,
     aarch64::neon::gelu,
+    wasm::gelu,
     id,
     alloc
 );
@@ -599,6 +646,7 @@ dispatch!(
     x86::avx2::relu,
     x86::avx512::relu,
     aarch64::neon::relu,
+    wasm::relu,
     id,
     alloc
 );
@@ -612,6 +660,7 @@ dispatch!(
     x86::avx2::tanh,
     x86::avx512::tanh,
     aarch64::neon::tanh,
+    wasm::tanh,
     id,
     alloc
 );
@@ -625,6 +674,7 @@ dispatch!(
     x86::avx2::rms_norm,
     x86::avx512::rms_norm,
     aarch64::neon::rms_norm,
+    wasm::rms_norm,
     id,
     alloc
 );
@@ -638,6 +688,7 @@ dispatch!(
     x86::avx2::sqrt,
     x86::avx512::sqrt,
     aarch64::neon::sqrt,
+    wasm::sqrt,
     id,
     alloc
 );
@@ -654,6 +705,7 @@ dispatch!(
     x86::avx2::clip,
     x86::avx512::clip,
     aarch64::neon::clip,
+    wasm::clip,
     id,
     alloc
 );
@@ -667,6 +719,7 @@ dispatch!(
     x86::avx2::abs_sub,
     x86::avx512::abs_sub,
     aarch64::neon::abs_sub,
+    wasm::abs_sub,
     id,
     alloc
 );
@@ -680,6 +733,7 @@ dispatch!(
     x86::avx2::hypot,
     x86::avx512::hypot,
     aarch64::neon::hypot,
+    wasm::hypot,
     id,
     alloc
 );
@@ -693,6 +747,7 @@ dispatch!(
     x86::avx2::powi,
     x86::avx512::powi,
     aarch64::neon::powi,
+    wasm::powi,
     id,
     alloc
 );
@@ -706,6 +761,7 @@ dispatch!(
     x86::avx2::rsqrt,
     x86::avx512::rsqrt,
     aarch64::neon::rsqrt,
+    wasm::rsqrt,
     id,
     alloc
 );
@@ -719,6 +775,7 @@ dispatch!(
     x86::avx2::exp,
     x86::avx512::exp,
     aarch64::neon::exp,
+    wasm::exp,
     id,
     alloc
 );
@@ -732,6 +789,7 @@ dispatch!(
     x86::avx2::ln,
     x86::avx512::ln,
     aarch64::neon::ln,
+    wasm::ln,
     id,
     alloc
 );
@@ -750,6 +808,7 @@ dispatch!(
     x86::avx2::center_f32,
     x86::avx512::center_f32,
     aarch64::neon::center_f32,
+    wasm::center_f32,
     id
 );
 
@@ -762,6 +821,7 @@ dispatch!(
     x86::avx2::center_f64,
     x86::avx512::center_f64,
     aarch64::neon::center_f64,
+    wasm::center_f64,
     id
 );
 
@@ -774,6 +834,7 @@ dispatch!(
     x86::avx2::variance_fused_f32,
     x86::avx512::variance_fused_f32,
     aarch64::neon::variance_fused_f32,
+    wasm::variance_fused_f32,
     id
 );
 
@@ -786,6 +847,7 @@ dispatch!(
     x86::avx2::variance_fused_f64,
     x86::avx512::variance_fused_f64,
     aarch64::neon::variance_fused_f64,
+    wasm::variance_fused_f64,
     id
 );
 
@@ -798,6 +860,7 @@ dispatch_sum_f64,
     x86::avx2::sum_f64,
     x86::avx512::sum_f64,
     aarch64::neon::sum_f64,
+    wasm::sum_f64,
     id
 );
 
@@ -810,6 +873,7 @@ dispatch!(
     x86::avx2::prod_f64,
     x86::avx512::prod_f64,
     aarch64::neon::prod_f64,
+    wasm::prod_f64,
     id
 );
 
@@ -822,6 +886,7 @@ dispatch!(
     x86::avx2::min_f64,
     x86::avx512::min_f64,
     aarch64::neon::min_f64,
+    wasm::min_f64,
     Some
 );
 
@@ -834,6 +899,7 @@ dispatch!(
     x86::avx2::max_f64,
     x86::avx512::max_f64,
     aarch64::neon::max_f64,
+    wasm::max_f64,
     Some
 );
 
@@ -846,6 +912,7 @@ dispatch!(
     x86::avx2::sum_sq_f64,
     x86::avx512::sum_sq_f64,
     aarch64::neon::sum_sq_f64,
+    wasm::sum_sq_f64,
     id
 );
 
@@ -858,6 +925,7 @@ dispatch!(
     x86::avx2::l1_norm_f64,
     x86::avx512::l1_norm_f64,
     aarch64::neon::l1_norm_f64,
+    wasm::l1_norm_f64,
     id
 );
 
@@ -870,6 +938,7 @@ dispatch!(
     x86::avx2::max_norm_f64,
     x86::avx512::max_norm_f64,
     aarch64::neon::max_norm_f64,
+    wasm::max_norm_f64,
     Some
 );
 
@@ -882,6 +951,7 @@ dispatch!(
     x86::avx2::argmax_f64,
     x86::avx512::argmax_f64,
     aarch64::neon::argmax_f64,
+    wasm::argmax_f64,
     id
 );
 
@@ -894,6 +964,7 @@ dispatch!(
     x86::avx2::argmin_f64,
     x86::avx512::argmin_f64,
     aarch64::neon::argmin_f64,
+    wasm::argmin_f64,
     id
 );
 
@@ -906,6 +977,7 @@ dispatch!(
     x86::avx2::count_zero_f64,
     x86::avx512::count_zero_f64,
     aarch64::neon::count_zero_f64,
+    wasm::count_zero_f64,
     id
 );
 
@@ -918,6 +990,7 @@ dispatch!(
     x86::avx2::count_nan_f64,
     x86::avx512::count_nan_f64,
     aarch64::neon::count_nan_f64,
+    wasm::count_nan_f64,
     id
 );
 
@@ -930,6 +1003,7 @@ dispatch!(
     x86::avx2::count_infinite_f64,
     x86::avx512::count_infinite_f64,
     aarch64::neon::count_infinite_f64,
+    wasm::count_infinite_f64,
     id
 );
 
@@ -942,6 +1016,7 @@ dispatch!(
     x86::avx2::dot_f64,
     x86::avx512::dot_f64,
     aarch64::neon::dot_f64,
+    wasm::dot_f64,
     id
 );
 
@@ -954,6 +1029,7 @@ dispatch!(
     x86::avx2::squared_distance_f64,
     x86::avx512::squared_distance_f64,
     aarch64::neon::squared_distance_f64,
+    wasm::squared_distance_f64,
     id
 );
 
@@ -966,6 +1042,7 @@ dispatch!(
     x86::avx2::kl_divergence_f64,
     x86::avx512::kl_divergence_f64,
     aarch64::neon::kl_divergence_f64,
+    wasm::kl_divergence_f64,
     id
 );
 
@@ -978,6 +1055,7 @@ dispatch!(
     x86::avx2::js_divergence_f64,
     x86::avx512::js_divergence_f64,
     aarch64::neon::js_divergence_f64,
+    wasm::js_divergence_f64,
     id
 );
 
@@ -990,6 +1068,7 @@ dispatch!(
     x86::avx2::sqrt_f64,
     x86::avx512::sqrt_f64,
     aarch64::neon::sqrt_f64,
+    wasm::sqrt_f64,
     id,
     alloc
 );
@@ -1003,6 +1082,7 @@ dispatch!(
     x86::avx2::rsqrt_f64,
     x86::avx512::rsqrt_f64,
     aarch64::neon::rsqrt_f64,
+    wasm::rsqrt_f64,
     id,
     alloc
 );
@@ -1016,6 +1096,7 @@ dispatch!(
     x86::avx2::clip_f64,
     x86::avx512::clip_f64,
     aarch64::neon::clip_f64,
+    wasm::clip_f64,
     id,
     alloc
 );
@@ -1029,6 +1110,7 @@ dispatch!(
     x86::avx2::abs_sub_f64,
     x86::avx512::abs_sub_f64,
     aarch64::neon::abs_sub_f64,
+    wasm::abs_sub_f64,
     id,
     alloc
 );
@@ -1042,6 +1124,7 @@ dispatch!(
     x86::avx2::hypot_f64,
     x86::avx512::hypot_f64,
     aarch64::neon::hypot_f64,
+    wasm::hypot_f64,
     id,
     alloc
 );
@@ -1055,6 +1138,7 @@ dispatch!(
     x86::avx2::powi_f64,
     x86::avx512::powi_f64,
     aarch64::neon::powi_f64,
+    wasm::powi_f64,
     id,
     alloc
 );
@@ -1068,6 +1152,7 @@ dispatch!(
     x86::avx2::exp_f64,
     x86::avx512::exp_f64,
     aarch64::neon::exp_f64,
+    wasm::exp_f64,
     id,
     alloc
 );
@@ -1081,6 +1166,7 @@ dispatch!(
     x86::avx2::erf,
     x86::avx512::erf,
     aarch64::neon::erf,
+    wasm::erf,
     id,
     alloc
 );
@@ -1094,6 +1180,7 @@ dispatch!(
     x86::avx2::erfc,
     x86::avx512::erfc,
     aarch64::neon::erfc,
+    wasm::erfc,
     id,
     alloc
 );
@@ -1107,6 +1194,7 @@ dispatch!(
     x86::avx2::erf_f64,
     x86::avx512::erf_f64,
     aarch64::neon::erf_f64,
+    wasm::erf_f64,
     id,
     alloc
 );
@@ -1120,6 +1208,7 @@ dispatch!(
     x86::avx2::erfc_f64,
     x86::avx512::erfc_f64,
     aarch64::neon::erfc_f64,
+    wasm::erfc_f64,
     id,
     alloc
 );
@@ -1133,6 +1222,7 @@ dispatch!(
     x86::avx2::ln_f64,
     x86::avx512::ln_f64,
     aarch64::neon::ln_f64,
+    wasm::ln_f64,
     id,
     alloc
 );
@@ -1146,6 +1236,7 @@ dispatch!(
     x86::avx2::softmax_f64,
     x86::avx512::softmax_f64,
     aarch64::neon::softmax_f64,
+    wasm::softmax_f64,
     id,
     alloc
 );
@@ -1159,6 +1250,7 @@ dispatch!(
     x86::avx2::logsumexp_f64,
     x86::avx512::logsumexp_f64,
     aarch64::neon::logsumexp_f64,
+    wasm::logsumexp_f64,
     id,
     alloc
 );
@@ -1172,6 +1264,7 @@ dispatch!(
     x86::avx2::log_softmax_f64,
     x86::avx512::log_softmax_f64,
     aarch64::neon::log_softmax_f64,
+    wasm::log_softmax_f64,
     id,
     alloc
 );
@@ -1185,6 +1278,7 @@ dispatch!(
     x86::avx2::layer_norm_f64,
     x86::avx512::layer_norm_f64,
     aarch64::neon::layer_norm_f64,
+    wasm::layer_norm_f64,
     id,
     alloc
 );
@@ -1198,6 +1292,7 @@ dispatch!(
     x86::avx2::softplus_f64,
     x86::avx512::softplus_f64,
     aarch64::neon::softplus_f64,
+    wasm::softplus_f64,
     id,
     alloc
 );
@@ -1211,6 +1306,7 @@ dispatch!(
     x86::avx2::sigmoid_f64,
     x86::avx512::sigmoid_f64,
     aarch64::neon::sigmoid_f64,
+    wasm::sigmoid_f64,
     id,
     alloc
 );
@@ -1224,6 +1320,7 @@ dispatch!(
     x86::avx2::silu_f64,
     x86::avx512::silu_f64,
     aarch64::neon::silu_f64,
+    wasm::silu_f64,
     id,
     alloc
 );
@@ -1237,6 +1334,7 @@ dispatch!(
     x86::avx2::gelu_f64,
     x86::avx512::gelu_f64,
     aarch64::neon::gelu_f64,
+    wasm::gelu_f64,
     id,
     alloc
 );
@@ -1250,6 +1348,7 @@ dispatch!(
     x86::avx2::relu_f64,
     x86::avx512::relu_f64,
     aarch64::neon::relu_f64,
+    wasm::relu_f64,
     id,
     alloc
 );
@@ -1263,6 +1362,7 @@ dispatch!(
     x86::avx2::tanh_f64,
     x86::avx512::tanh_f64,
     aarch64::neon::tanh_f64,
+    wasm::tanh_f64,
     id,
     alloc
 );
@@ -1276,6 +1376,7 @@ dispatch!(
     x86::avx2::rms_norm_f64,
     x86::avx512::rms_norm_f64,
     aarch64::neon::rms_norm_f64,
+    wasm::rms_norm_f64,
     id,
     alloc
 );
@@ -1285,36 +1386,96 @@ dispatch!(
 
 /// Dispatch f16 → f32 conversion.
 #[inline]
-pub(crate) fn dispatch_f16_to_f32(_backend: Backend, input: &[u16], output: &mut [f32]) {
-    scalar::f16_to_f32(input, output);
+pub(crate) fn dispatch_f16_to_f32(backend: Backend, input: &[u16], output: &mut [f32]) {
+    match backend {
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx512 => unsafe { x86::avx512::f16_to_f32(input, output) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx2 => unsafe { x86::avx2::f16_to_f32(input, output) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Sse2 => unsafe { x86::sse2::f16_to_f32(input, output) },
+        #[cfg(target_arch = "aarch64")]
+        Backend::Neon => unsafe { aarch64::neon::f16_to_f32(input, output) },
+        _ => scalar::f16_to_f32(input, output),
+    }
 }
 
 /// Dispatch f32 → f16 conversion.
 #[inline]
-pub(crate) fn dispatch_f32_to_f16(_backend: Backend, input: &[f32], output: &mut [u16]) {
-    scalar::f32_to_f16(input, output);
+pub(crate) fn dispatch_f32_to_f16(backend: Backend, input: &[f32], output: &mut [u16]) {
+    match backend {
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx512 => unsafe { x86::avx512::f32_to_f16(input, output) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx2 => unsafe { x86::avx2::f32_to_f16(input, output) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Sse2 => unsafe { x86::sse2::f32_to_f16(input, output) },
+        #[cfg(target_arch = "aarch64")]
+        Backend::Neon => unsafe { aarch64::neon::f32_to_f16(input, output) },
+        _ => scalar::f32_to_f16(input, output),
+    }
 }
 
 /// Dispatch bf16 → f32 conversion.
 #[inline]
-pub(crate) fn dispatch_bf16_to_f32(_backend: Backend, input: &[u16], output: &mut [f32]) {
-    scalar::bf16_to_f32(input, output);
+pub(crate) fn dispatch_bf16_to_f32(backend: Backend, input: &[u16], output: &mut [f32]) {
+    match backend {
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx512 => unsafe { x86::avx512::bf16_to_f32(input, output) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx2 => unsafe { x86::avx2::bf16_to_f32(input, output) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Sse2 => unsafe { x86::sse2::bf16_to_f32(input, output) },
+        #[cfg(target_arch = "aarch64")]
+        Backend::Neon => unsafe { aarch64::neon::bf16_to_f32(input, output) },
+        _ => scalar::bf16_to_f32(input, output),
+    }
 }
 
 /// Dispatch f32 → bf16 conversion.
 #[inline]
-pub(crate) fn dispatch_f32_to_bf16(_backend: Backend, input: &[f32], output: &mut [u16]) {
-    scalar::f32_to_bf16(input, output);
+pub(crate) fn dispatch_f32_to_bf16(backend: Backend, input: &[f32], output: &mut [u16]) {
+    match backend {
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx512 => unsafe { x86::avx512::f32_to_bf16(input, output) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx2 => unsafe { x86::avx2::f32_to_bf16(input, output) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Sse2 => unsafe { x86::sse2::f32_to_bf16(input, output) },
+        #[cfg(target_arch = "aarch64")]
+        Backend::Neon => unsafe { aarch64::neon::f32_to_bf16(input, output) },
+        _ => scalar::f32_to_bf16(input, output),
+    }
 }
 
 /// Dispatch f16 dot product (computed in f32).
 #[inline]
-pub(crate) fn dispatch_dot_f16(_backend: Backend, a: &[u16], b: &[u16]) -> f32 {
-    scalar::dot_f16(a, b)
+pub(crate) fn dispatch_dot_f16(backend: Backend, a: &[u16], b: &[u16]) -> f32 {
+    match backend {
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx512 => unsafe { x86::avx512::dot_f16(a, b) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx2 => unsafe { x86::avx2::dot_f16(a, b) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Sse2 => unsafe { x86::sse2::dot_f16(a, b) },
+        #[cfg(target_arch = "aarch64")]
+        Backend::Neon => unsafe { aarch64::neon::dot_f16(a, b) },
+        _ => scalar::dot_f16(a, b),
+    }
 }
 
 /// Dispatch bf16 dot product (computed in f32).
 #[inline]
-pub(crate) fn dispatch_dot_bf16(_backend: Backend, a: &[u16], b: &[u16]) -> f32 {
-    scalar::dot_bf16(a, b)
+pub(crate) fn dispatch_dot_bf16(backend: Backend, a: &[u16], b: &[u16]) -> f32 {
+    match backend {
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx512 => unsafe { x86::avx512::dot_bf16(a, b) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx2 => unsafe { x86::avx2::dot_bf16(a, b) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Sse2 => unsafe { x86::sse2::dot_bf16(a, b) },
+        #[cfg(target_arch = "aarch64")]
+        Backend::Neon => unsafe { aarch64::neon::dot_bf16(a, b) },
+        _ => scalar::dot_bf16(a, b),
+    }
 }

@@ -146,7 +146,7 @@ mod kernels;
 mod platform;
 
 // Public API re-exports.
-pub use dispatch::Backend;
+pub use dispatch::{Backend, available_backends};
 pub use error::Error;
 
 /// Statistical reductions (aggregates over slices): `sum`, `prod`, `min`,
