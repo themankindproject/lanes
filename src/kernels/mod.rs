@@ -177,7 +177,12 @@ macro_rules! dispatch {
                 #[cfg(target_arch = "wasm32")]
                 Backend::Wasm => {
                     // SAFETY: WASM SIMD128 is available when this backend is selected.
-                    $wrap(unsafe { $wasm($( $pname ),*) })
+                    // WASM re-exports are safe fns (no target_feature), so keep the
+                    // dispatch uniform without spurious unused_unsafe.
+                    #[allow(unused_unsafe)]
+                    {
+                        $wrap(unsafe { $wasm($( $pname ),*) })
+                    }
                 }
             }
         }
