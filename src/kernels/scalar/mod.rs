@@ -2347,6 +2347,172 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_sign_loss)]
+    fn bitonic_sort_f32_8_dense() {
+        // Dense sample for the 8-lane network: permutations + specials.
+        let specials = [
+            f32::NEG_INFINITY,
+            -2.0,
+            -0.0,
+            0.0,
+            2.0,
+            f32::INFINITY,
+            f32::NAN,
+            f32::from_bits(0x7FC0_0001),
+        ];
+        let mut v = specials;
+        bitonic_sort_f32(&mut v);
+        let mut want = specials;
+        want.sort_unstable_by(f32::total_cmp);
+        assert!(
+            v.iter()
+                .zip(want.iter())
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
+        // Reverse + shuffled
+        for _ in 0..512 {
+            let mut a: Vec<f32> = (0..8)
+                .map(|i| {
+                    f32::from_bits(
+                        0x3F80_0000u32.wrapping_add((i as u32).wrapping_mul(0x9E37_79B9))
+                            ^ 0xA5A5_5A5A,
+                    )
+                })
+                .collect();
+            // inject NaN/-0 occasionally
+            a[3] = f32::NAN;
+            a[5] = -0.0;
+            let mut w = a.clone();
+            w.sort_unstable_by(f32::total_cmp);
+            bitonic_sort_f32(&mut a);
+            assert!(
+                a.iter()
+                    .zip(w.iter())
+                    .all(|(x, y)| x.to_bits() == y.to_bits())
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn bitonic_sort_f64_8_dense() {
+        let specials = [
+            f64::NEG_INFINITY,
+            -2.0,
+            -0.0,
+            0.0,
+            2.0,
+            f64::INFINITY,
+            f64::NAN,
+            f64::from_bits(0x7FF8_0000_0000_0001),
+        ];
+        let mut v = specials;
+        bitonic_sort_f64(&mut v);
+        let mut want = specials;
+        want.sort_unstable_by(f64::total_cmp);
+        assert!(
+            v.iter()
+                .zip(want.iter())
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
+    fn bitonic_sort_f32_16_32_and_fallback() {
+        for n in [16usize, 32] {
+            for _ in 0..256 {
+                let mut a: Vec<f32> = (0..n)
+                    .map(|i| {
+                        f32::from_bits(
+                            0x4040_0000u32.wrapping_add((i as u32).wrapping_mul(0x9E37_79B1)),
+                        )
+                    })
+                    .collect();
+                if n >= 8 {
+                    a[1] = f32::NAN;
+                    a[2] = -0.0;
+                }
+                let mut w = a.clone();
+                w.sort_unstable_by(f32::total_cmp);
+                bitonic_sort_f32(&mut a);
+                assert!(
+                    a.iter()
+                        .zip(w.iter())
+                        .all(|(x, y)| x.to_bits() == y.to_bits()),
+                    "n={n}"
+                );
+            }
+        }
+        // Fallback lengths: must equal std total_cmp
+        for n in [0usize, 1, 2, 7, 9, 15, 17, 31, 33] {
+            let mut a: Vec<f32> = (0..n).map(|i| i as f32 * 1.1 - 5.0).collect();
+            if n >= 3 {
+                a[1] = f32::NAN;
+                a[2] = -0.0;
+            }
+            let mut w = a.clone();
+            w.sort_unstable_by(f32::total_cmp);
+            bitonic_sort_f32(&mut a);
+            assert!(
+                a.iter()
+                    .zip(w.iter())
+                    .all(|(x, y)| x.to_bits() == y.to_bits()),
+                "fallback n={n}"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+    fn bitonic_sort_f64_16_32_and_fallback() {
+        for n in [16usize, 32] {
+            for _ in 0..128 {
+                let mut a: Vec<f64> = (0..n)
+                    .map(|i| {
+                        f64::from_bits(
+                            0x4040_0000_0000_0000u64
+                                .wrapping_add((i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15u64)),
+                        )
+                    })
+                    .collect();
+                if n >= 8 {
+                    a[1] = f64::NAN;
+                    a[2] = -0.0;
+                }
+                let mut w = a.clone();
+                w.sort_unstable_by(f64::total_cmp);
+                bitonic_sort_f64(&mut a);
+                assert!(
+                    a.iter()
+                        .zip(w.iter())
+                        .all(|(x, y)| x.to_bits() == y.to_bits()),
+                    "n={n}"
+                );
+            }
+        }
+        for n in [0usize, 1, 7, 31, 33] {
+            let mut a: Vec<f64> = (0..n).map(|i| i as f64 * 1.1 - 5.0).collect();
+            if n >= 2 {
+                a[0] = f64::NAN;
+            }
+            let mut w = a.clone();
+            w.sort_unstable_by(f64::total_cmp);
+            bitonic_sort_f64(&mut a);
+            assert!(
+                a.iter()
+                    .zip(w.iter())
+                    .all(|(x, y)| x.to_bits() == y.to_bits()),
+                "fallback n={n}"
+            );
+        }
+    }
+
+    #[test]
     fn logsumexp_f64_known_values() {
         assert_eq!(logsumexp_f64(&[]), f64::NEG_INFINITY);
         assert_eq!(logsumexp_f64(&[3.5]), 3.5);

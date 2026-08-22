@@ -866,6 +866,55 @@ fn bench_dot_bf16(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_bitonic_sort_f32(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bitonic_sort_f32");
+    for size in [8usize, 16, 32] {
+        let base = random_f32_vec(size, 70);
+        let mut buf = base.clone();
+        group.throughput(criterion::Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &base, |b, base| {
+            b.iter(|| {
+                buf.copy_from_slice(black_box(base));
+                lanes::sort::f32::bitonic_sort(black_box(&mut buf));
+                black_box(&buf);
+            });
+        });
+        let mut buf2 = base.clone();
+        group.bench_with_input(BenchmarkId::new("naive", size), &base, |b, base| {
+            b.iter(|| {
+                buf2.copy_from_slice(black_box(base));
+                buf2.sort_unstable_by(|a, b| a.total_cmp(b));
+                black_box(&buf2);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_bitonic_sort_f64(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bitonic_sort_f64");
+    for size in [8usize, 16, 32] {
+        let base = random_f64_vec(size, 71);
+        let mut buf = base.clone();
+        group.throughput(criterion::Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("lanes", size), &base, |b, base| {
+            b.iter(|| {
+                buf.copy_from_slice(black_box(base));
+                lanes::sort::f64::bitonic_sort(black_box(&mut buf));
+                black_box(&buf);
+            });
+        });
+        let mut buf2 = base.clone();
+        group.bench_with_input(BenchmarkId::new("naive", size), &base, |b, base| {
+            b.iter(|| {
+                buf2.copy_from_slice(black_box(base));
+                buf2.sort_unstable_by(|a, b| a.total_cmp(b));
+                black_box(&buf2);
+            });
+        });
+    }
+    group.finish();
+}
 criterion_group!(
     benches,
     bench_sum,
@@ -900,6 +949,8 @@ criterion_group!(
     bench_bf16_to_f32,
     bench_f32_to_bf16,
     bench_dot_f16,
-    bench_dot_bf16
+    bench_dot_bf16,
+    bench_bitonic_sort_f32,
+    bench_bitonic_sort_f64
 );
 criterion_main!(benches);
