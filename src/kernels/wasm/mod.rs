@@ -14,13 +14,13 @@
 // Split by feature so `cargo check --no-default-features --target wasm32`
 // does not try to import alloc-gated symbols that don't exist.
 pub(crate) use crate::kernels::scalar::{
-    argmax, argmax_f64, argmin, argmin_f64, bf16_to_f32, center_f32, center_f64, count_infinite,
-    count_infinite_f64, count_nan, count_nan_f64, count_zero, count_zero_f64, count_zero_i8, dot,
-    dot_bf16, dot_f16, dot_f64, dot_i8, f16_to_f32, f32_to_bf16, f32_to_f16, hamming_popcount,
-    jaccard, jaccard_counts, js_divergence, js_divergence_f64, kl_divergence, kl_divergence_f64,
-    l1_norm, l1_norm_f64, l1_norm_i8, prod, prod_f64, squared_distance, squared_distance_f64,
-    squared_distance_i8, sum, sum_f64, sum_i8, sum_sq, sum_sq_f64, variance_fused_f32,
-    variance_fused_f64,
+    argmax, argmax_f64, argmin, argmin_f64, bf16_to_f32, bitonic_sort_f32, bitonic_sort_f64,
+    center_f32, center_f64, count_infinite, count_infinite_f64, count_nan, count_nan_f64,
+    count_zero, count_zero_f64, count_zero_i8, dot, dot_bf16, dot_f16, dot_f64, dot_i8, f16_to_f32,
+    f32_to_bf16, f32_to_f16, hamming_popcount, jaccard, jaccard_counts, js_divergence,
+    js_divergence_f64, kl_divergence, kl_divergence_f64, l1_norm, l1_norm_f64, l1_norm_i8, prod,
+    prod_f64, squared_distance, squared_distance_f64, squared_distance_i8, sum, sum_f64, sum_i8,
+    sum_sq, sum_sq_f64, variance_fused_f32, variance_fused_f64,
 };
 
 #[cfg(feature = "alloc")]

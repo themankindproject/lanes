@@ -216,3 +216,14 @@ pub mod convert {
         bf16_to_f32, dot_bf16, dot_f16, f16_to_f32, f32_to_bf16, f32_to_f16,
     };
 }
+
+/// Small sorting networks by total order (`bitonic_sort`).
+///
+/// `n ∈ {8, 16, 32}` dispatches an optimal sorting network (Batcher \[1\]
+/// construction with minimal size from Dobbelaere \[2\] via Intel \[3\]);
+/// other lengths fall back to `sort_unstable_by(total_cmp)`. Deterministic
+/// ascending [`f32::total_cmp`]/[`f64::total_cmp`] — `NaN` sorts last,
+/// `-0.0 < +0.0`. No heap allocation.
+pub mod sort {
+    pub use crate::algorithms::sort::{f32, f64};
+}

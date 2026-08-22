@@ -1484,3 +1484,81 @@ pub(crate) fn dispatch_dot_bf16(backend: Backend, a: &[u16], b: &[u16]) -> f32 {
         _ => scalar::dot_bf16(a, b),
     }
 }
+
+/// In-place bitonic sort by total order (no alloc).
+///
+/// `n ∈ {8,16,32}` dispatches the optimal network (Batcher [1],
+/// Dobbelaere [2] via Intel [3] `xss-optimal-networks.hpp`); other lengths
+/// fall back to `sort_unstable_by(total_cmp)`. Deterministic ascending
+/// `total_cmp` (NaN last, `-0 < +0`). No heap allocation.
+///
+/// References: see `crate::algorithms::sort` (added with citations).
+#[inline]
+pub(crate) fn dispatch_bitonic_sort_f32(backend: Backend, values: &mut [f32]) {
+    match backend {
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx512 => {
+            #[allow(unused_unsafe)]
+            unsafe {
+                x86::avx512::bitonic_sort_f32(values);
+            }
+        }
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx2 => {
+            #[allow(unused_unsafe)]
+            unsafe {
+                x86::avx2::bitonic_sort_f32(values);
+            }
+        }
+        #[cfg(target_arch = "x86_64")]
+        Backend::Sse2 => {
+            #[allow(unused_unsafe)]
+            unsafe {
+                x86::sse2::bitonic_sort_f32(values);
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        Backend::Neon => {
+            #[allow(unused_unsafe)]
+            unsafe {
+                aarch64::neon::bitonic_sort_f32(values);
+            }
+        }
+        _ => scalar::bitonic_sort_f32(values),
+    }
+}
+
+#[inline]
+pub(crate) fn dispatch_bitonic_sort_f64(backend: Backend, values: &mut [f64]) {
+    match backend {
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx512 => {
+            #[allow(unused_unsafe)]
+            unsafe {
+                x86::avx512::bitonic_sort_f64(values);
+            }
+        }
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx2 => {
+            #[allow(unused_unsafe)]
+            unsafe {
+                x86::avx2::bitonic_sort_f64(values);
+            }
+        }
+        #[cfg(target_arch = "x86_64")]
+        Backend::Sse2 => {
+            #[allow(unused_unsafe)]
+            unsafe {
+                x86::sse2::bitonic_sort_f64(values);
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        Backend::Neon => {
+            #[allow(unused_unsafe)]
+            unsafe {
+                aarch64::neon::bitonic_sort_f64(values);
+            }
+        }
+        _ => scalar::bitonic_sort_f64(values),
+    }
+}

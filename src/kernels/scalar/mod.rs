@@ -1364,6 +1364,599 @@ pub(crate) fn dot_bf16(a: &[u16], b: &[u16]) -> f32 {
     acc
 }
 
+/// In-place sort by total order (`total_cmp`) for small powers of two.
+///
+/// For `n ∈ {8,16,32}` dispatches an optimal sorting network from [2] via [3]
+/// (19/60/min comparators); other lengths fall back to `sort_unstable_by`.
+/// Deterministic: result equals `v.sort_unstable_by(total_cmp)` bit-for-bit
+/// for every input including NaNs and signed zeros.
+///
+/// References: [1] Batcher 1968; [2] Dobbelaere `sorting_networks.html`;
+/// [3] Intel x86-simd-sort `xss-optimal-networks.hpp` (BSD-3).
+#[inline]
+pub(crate) fn bitonic_sort_f32(values: &mut [f32]) {
+    sort_network_f32(values);
+}
+#[inline]
+pub(crate) fn bitonic_sort_f64(values: &mut [f64]) {
+    sort_network_f64(values);
+}
+#[inline]
+fn coex_f32_slice(v: &mut [f32], a: usize, b: usize) {
+    if v[a].total_cmp(&v[b]).is_gt() {
+        v.swap(a, b);
+    }
+}
+#[inline]
+fn coex_f64_slice(v: &mut [f64], a: usize, b: usize) {
+    if v[a].total_cmp(&v[b]).is_gt() {
+        v.swap(a, b);
+    }
+}
+#[allow(clippy::too_many_lines)]
+#[inline]
+fn sort_network_f32(values: &mut [f32]) {
+    let n = values.len();
+    if n == 8 {
+        // Optimal 8-wire network: 19 comparators (Knuth TAOCP, Dobbelaere [2],
+        // listed verbatim in Intel [3] `optimal_sort_8`).
+        coex_f32_slice(values, 0, 2);
+        coex_f32_slice(values, 1, 3);
+        coex_f32_slice(values, 4, 6);
+        coex_f32_slice(values, 5, 7);
+        coex_f32_slice(values, 0, 4);
+        coex_f32_slice(values, 1, 5);
+        coex_f32_slice(values, 2, 6);
+        coex_f32_slice(values, 3, 7);
+        coex_f32_slice(values, 0, 1);
+        coex_f32_slice(values, 2, 3);
+        coex_f32_slice(values, 4, 5);
+        coex_f32_slice(values, 6, 7);
+        coex_f32_slice(values, 2, 4);
+        coex_f32_slice(values, 3, 5);
+        coex_f32_slice(values, 1, 4);
+        coex_f32_slice(values, 3, 6);
+        coex_f32_slice(values, 1, 2);
+        coex_f32_slice(values, 3, 4);
+        coex_f32_slice(values, 5, 6);
+        return;
+    }
+    if n == 16 {
+        // Optimal 16-wire: 60 comparators (Dobbelaere [2] via Intel [3]).
+        coex_f32_slice(values, 0, 13);
+        coex_f32_slice(values, 1, 12);
+        coex_f32_slice(values, 2, 15);
+        coex_f32_slice(values, 3, 14);
+        coex_f32_slice(values, 4, 8);
+        coex_f32_slice(values, 5, 6);
+        coex_f32_slice(values, 7, 11);
+        coex_f32_slice(values, 9, 10);
+        coex_f32_slice(values, 0, 5);
+        coex_f32_slice(values, 1, 7);
+        coex_f32_slice(values, 2, 9);
+        coex_f32_slice(values, 3, 4);
+        coex_f32_slice(values, 6, 13);
+        coex_f32_slice(values, 8, 14);
+        coex_f32_slice(values, 10, 15);
+        coex_f32_slice(values, 11, 12);
+        coex_f32_slice(values, 0, 1);
+        coex_f32_slice(values, 2, 3);
+        coex_f32_slice(values, 4, 5);
+        coex_f32_slice(values, 6, 8);
+        coex_f32_slice(values, 7, 9);
+        coex_f32_slice(values, 10, 11);
+        coex_f32_slice(values, 12, 13);
+        coex_f32_slice(values, 14, 15);
+        coex_f32_slice(values, 0, 2);
+        coex_f32_slice(values, 1, 3);
+        coex_f32_slice(values, 4, 10);
+        coex_f32_slice(values, 5, 11);
+        coex_f32_slice(values, 6, 7);
+        coex_f32_slice(values, 8, 9);
+        coex_f32_slice(values, 12, 14);
+        coex_f32_slice(values, 13, 15);
+        coex_f32_slice(values, 1, 2);
+        coex_f32_slice(values, 3, 12);
+        coex_f32_slice(values, 4, 6);
+        coex_f32_slice(values, 5, 7);
+        coex_f32_slice(values, 8, 10);
+        coex_f32_slice(values, 9, 11);
+        coex_f32_slice(values, 13, 14);
+        coex_f32_slice(values, 1, 4);
+        coex_f32_slice(values, 2, 6);
+        coex_f32_slice(values, 5, 8);
+        coex_f32_slice(values, 7, 10);
+        coex_f32_slice(values, 9, 13);
+        coex_f32_slice(values, 11, 14);
+        coex_f32_slice(values, 2, 4);
+        coex_f32_slice(values, 3, 6);
+        coex_f32_slice(values, 9, 12);
+        coex_f32_slice(values, 11, 13);
+        coex_f32_slice(values, 3, 5);
+        coex_f32_slice(values, 6, 8);
+        coex_f32_slice(values, 7, 9);
+        coex_f32_slice(values, 10, 12);
+        coex_f32_slice(values, 3, 4);
+        coex_f32_slice(values, 5, 6);
+        coex_f32_slice(values, 7, 8);
+        coex_f32_slice(values, 9, 10);
+        coex_f32_slice(values, 11, 12);
+        coex_f32_slice(values, 6, 7);
+        coex_f32_slice(values, 8, 9);
+        return;
+    }
+    if n == 32 {
+        // Optimal 32-wire: 185 comparators (Dobbelaere [2] via Intel [3] `optimal_sort_32`).
+        coex_f32_slice(values, 0, 1);
+        coex_f32_slice(values, 2, 3);
+        coex_f32_slice(values, 4, 5);
+        coex_f32_slice(values, 6, 7);
+        coex_f32_slice(values, 8, 9);
+        coex_f32_slice(values, 10, 11);
+        coex_f32_slice(values, 12, 13);
+        coex_f32_slice(values, 14, 15);
+        coex_f32_slice(values, 16, 17);
+        coex_f32_slice(values, 18, 19);
+        coex_f32_slice(values, 20, 21);
+        coex_f32_slice(values, 22, 23);
+        coex_f32_slice(values, 24, 25);
+        coex_f32_slice(values, 26, 27);
+        coex_f32_slice(values, 28, 29);
+        coex_f32_slice(values, 30, 31);
+        coex_f32_slice(values, 0, 2);
+        coex_f32_slice(values, 1, 3);
+        coex_f32_slice(values, 4, 6);
+        coex_f32_slice(values, 5, 7);
+        coex_f32_slice(values, 8, 10);
+        coex_f32_slice(values, 9, 11);
+        coex_f32_slice(values, 12, 14);
+        coex_f32_slice(values, 13, 15);
+        coex_f32_slice(values, 16, 18);
+        coex_f32_slice(values, 17, 19);
+        coex_f32_slice(values, 20, 22);
+        coex_f32_slice(values, 21, 23);
+        coex_f32_slice(values, 24, 26);
+        coex_f32_slice(values, 25, 27);
+        coex_f32_slice(values, 28, 30);
+        coex_f32_slice(values, 29, 31);
+        coex_f32_slice(values, 0, 4);
+        coex_f32_slice(values, 1, 5);
+        coex_f32_slice(values, 2, 6);
+        coex_f32_slice(values, 3, 7);
+        coex_f32_slice(values, 8, 12);
+        coex_f32_slice(values, 9, 13);
+        coex_f32_slice(values, 10, 14);
+        coex_f32_slice(values, 11, 15);
+        coex_f32_slice(values, 16, 20);
+        coex_f32_slice(values, 17, 21);
+        coex_f32_slice(values, 18, 22);
+        coex_f32_slice(values, 19, 23);
+        coex_f32_slice(values, 24, 28);
+        coex_f32_slice(values, 25, 29);
+        coex_f32_slice(values, 26, 30);
+        coex_f32_slice(values, 27, 31);
+        coex_f32_slice(values, 0, 8);
+        coex_f32_slice(values, 1, 9);
+        coex_f32_slice(values, 2, 10);
+        coex_f32_slice(values, 3, 11);
+        coex_f32_slice(values, 4, 12);
+        coex_f32_slice(values, 5, 13);
+        coex_f32_slice(values, 6, 14);
+        coex_f32_slice(values, 7, 15);
+        coex_f32_slice(values, 16, 24);
+        coex_f32_slice(values, 17, 25);
+        coex_f32_slice(values, 18, 26);
+        coex_f32_slice(values, 19, 27);
+        coex_f32_slice(values, 20, 28);
+        coex_f32_slice(values, 21, 29);
+        coex_f32_slice(values, 22, 30);
+        coex_f32_slice(values, 23, 31);
+        coex_f32_slice(values, 0, 16);
+        coex_f32_slice(values, 1, 8);
+        coex_f32_slice(values, 2, 4);
+        coex_f32_slice(values, 3, 12);
+        coex_f32_slice(values, 5, 10);
+        coex_f32_slice(values, 6, 9);
+        coex_f32_slice(values, 7, 14);
+        coex_f32_slice(values, 11, 13);
+        coex_f32_slice(values, 15, 31);
+        coex_f32_slice(values, 17, 24);
+        coex_f32_slice(values, 18, 20);
+        coex_f32_slice(values, 19, 28);
+        coex_f32_slice(values, 21, 26);
+        coex_f32_slice(values, 22, 25);
+        coex_f32_slice(values, 23, 30);
+        coex_f32_slice(values, 27, 29);
+        coex_f32_slice(values, 1, 2);
+        coex_f32_slice(values, 3, 5);
+        coex_f32_slice(values, 4, 8);
+        coex_f32_slice(values, 6, 22);
+        coex_f32_slice(values, 7, 11);
+        coex_f32_slice(values, 9, 25);
+        coex_f32_slice(values, 10, 12);
+        coex_f32_slice(values, 13, 14);
+        coex_f32_slice(values, 17, 18);
+        coex_f32_slice(values, 19, 21);
+        coex_f32_slice(values, 20, 24);
+        coex_f32_slice(values, 23, 27);
+        coex_f32_slice(values, 26, 28);
+        coex_f32_slice(values, 29, 30);
+        coex_f32_slice(values, 1, 17);
+        coex_f32_slice(values, 2, 18);
+        coex_f32_slice(values, 3, 19);
+        coex_f32_slice(values, 4, 20);
+        coex_f32_slice(values, 5, 10);
+        coex_f32_slice(values, 7, 23);
+        coex_f32_slice(values, 8, 24);
+        coex_f32_slice(values, 11, 27);
+        coex_f32_slice(values, 12, 28);
+        coex_f32_slice(values, 13, 29);
+        coex_f32_slice(values, 14, 30);
+        coex_f32_slice(values, 21, 26);
+        coex_f32_slice(values, 3, 17);
+        coex_f32_slice(values, 4, 16);
+        coex_f32_slice(values, 5, 21);
+        coex_f32_slice(values, 6, 18);
+        coex_f32_slice(values, 7, 9);
+        coex_f32_slice(values, 8, 20);
+        coex_f32_slice(values, 10, 26);
+        coex_f32_slice(values, 11, 23);
+        coex_f32_slice(values, 13, 25);
+        coex_f32_slice(values, 14, 28);
+        coex_f32_slice(values, 15, 27);
+        coex_f32_slice(values, 22, 24);
+        coex_f32_slice(values, 1, 4);
+        coex_f32_slice(values, 3, 8);
+        coex_f32_slice(values, 5, 16);
+        coex_f32_slice(values, 7, 17);
+        coex_f32_slice(values, 9, 21);
+        coex_f32_slice(values, 10, 22);
+        coex_f32_slice(values, 11, 19);
+        coex_f32_slice(values, 12, 20);
+        coex_f32_slice(values, 14, 24);
+        coex_f32_slice(values, 15, 26);
+        coex_f32_slice(values, 23, 28);
+        coex_f32_slice(values, 27, 30);
+        coex_f32_slice(values, 2, 5);
+        coex_f32_slice(values, 7, 8);
+        coex_f32_slice(values, 9, 18);
+        coex_f32_slice(values, 11, 17);
+        coex_f32_slice(values, 12, 16);
+        coex_f32_slice(values, 13, 22);
+        coex_f32_slice(values, 14, 20);
+        coex_f32_slice(values, 15, 19);
+        coex_f32_slice(values, 23, 24);
+        coex_f32_slice(values, 26, 29);
+        coex_f32_slice(values, 2, 4);
+        coex_f32_slice(values, 6, 12);
+        coex_f32_slice(values, 9, 16);
+        coex_f32_slice(values, 10, 11);
+        coex_f32_slice(values, 13, 17);
+        coex_f32_slice(values, 14, 18);
+        coex_f32_slice(values, 15, 22);
+        coex_f32_slice(values, 19, 25);
+        coex_f32_slice(values, 20, 21);
+        coex_f32_slice(values, 27, 29);
+        coex_f32_slice(values, 5, 6);
+        coex_f32_slice(values, 8, 12);
+        coex_f32_slice(values, 9, 10);
+        coex_f32_slice(values, 11, 13);
+        coex_f32_slice(values, 14, 16);
+        coex_f32_slice(values, 15, 17);
+        coex_f32_slice(values, 18, 20);
+        coex_f32_slice(values, 19, 23);
+        coex_f32_slice(values, 21, 22);
+        coex_f32_slice(values, 25, 26);
+        coex_f32_slice(values, 3, 5);
+        coex_f32_slice(values, 6, 7);
+        coex_f32_slice(values, 8, 9);
+        coex_f32_slice(values, 10, 12);
+        coex_f32_slice(values, 11, 14);
+        coex_f32_slice(values, 13, 16);
+        coex_f32_slice(values, 15, 18);
+        coex_f32_slice(values, 17, 20);
+        coex_f32_slice(values, 19, 21);
+        coex_f32_slice(values, 22, 23);
+        coex_f32_slice(values, 24, 25);
+        coex_f32_slice(values, 26, 28);
+        coex_f32_slice(values, 3, 4);
+        coex_f32_slice(values, 5, 6);
+        coex_f32_slice(values, 7, 8);
+        coex_f32_slice(values, 9, 10);
+        coex_f32_slice(values, 11, 12);
+        coex_f32_slice(values, 13, 14);
+        coex_f32_slice(values, 15, 16);
+        coex_f32_slice(values, 17, 18);
+        coex_f32_slice(values, 19, 20);
+        coex_f32_slice(values, 21, 22);
+        coex_f32_slice(values, 23, 24);
+        coex_f32_slice(values, 25, 26);
+        coex_f32_slice(values, 27, 28);
+        return;
+    }
+    values.sort_unstable_by(f32::total_cmp);
+}
+#[allow(clippy::too_many_lines)]
+#[inline]
+fn sort_network_f64(values: &mut [f64]) {
+    let n = values.len();
+    if n == 8 {
+        coex_f64_slice(values, 0, 2);
+        coex_f64_slice(values, 1, 3);
+        coex_f64_slice(values, 4, 6);
+        coex_f64_slice(values, 5, 7);
+        coex_f64_slice(values, 0, 4);
+        coex_f64_slice(values, 1, 5);
+        coex_f64_slice(values, 2, 6);
+        coex_f64_slice(values, 3, 7);
+        coex_f64_slice(values, 0, 1);
+        coex_f64_slice(values, 2, 3);
+        coex_f64_slice(values, 4, 5);
+        coex_f64_slice(values, 6, 7);
+        coex_f64_slice(values, 2, 4);
+        coex_f64_slice(values, 3, 5);
+        coex_f64_slice(values, 1, 4);
+        coex_f64_slice(values, 3, 6);
+        coex_f64_slice(values, 1, 2);
+        coex_f64_slice(values, 3, 4);
+        coex_f64_slice(values, 5, 6);
+        return;
+    }
+    if n == 16 {
+        coex_f64_slice(values, 0, 13);
+        coex_f64_slice(values, 1, 12);
+        coex_f64_slice(values, 2, 15);
+        coex_f64_slice(values, 3, 14);
+        coex_f64_slice(values, 4, 8);
+        coex_f64_slice(values, 5, 6);
+        coex_f64_slice(values, 7, 11);
+        coex_f64_slice(values, 9, 10);
+        coex_f64_slice(values, 0, 5);
+        coex_f64_slice(values, 1, 7);
+        coex_f64_slice(values, 2, 9);
+        coex_f64_slice(values, 3, 4);
+        coex_f64_slice(values, 6, 13);
+        coex_f64_slice(values, 8, 14);
+        coex_f64_slice(values, 10, 15);
+        coex_f64_slice(values, 11, 12);
+        coex_f64_slice(values, 0, 1);
+        coex_f64_slice(values, 2, 3);
+        coex_f64_slice(values, 4, 5);
+        coex_f64_slice(values, 6, 8);
+        coex_f64_slice(values, 7, 9);
+        coex_f64_slice(values, 10, 11);
+        coex_f64_slice(values, 12, 13);
+        coex_f64_slice(values, 14, 15);
+        coex_f64_slice(values, 0, 2);
+        coex_f64_slice(values, 1, 3);
+        coex_f64_slice(values, 4, 10);
+        coex_f64_slice(values, 5, 11);
+        coex_f64_slice(values, 6, 7);
+        coex_f64_slice(values, 8, 9);
+        coex_f64_slice(values, 12, 14);
+        coex_f64_slice(values, 13, 15);
+        coex_f64_slice(values, 1, 2);
+        coex_f64_slice(values, 3, 12);
+        coex_f64_slice(values, 4, 6);
+        coex_f64_slice(values, 5, 7);
+        coex_f64_slice(values, 8, 10);
+        coex_f64_slice(values, 9, 11);
+        coex_f64_slice(values, 13, 14);
+        coex_f64_slice(values, 1, 4);
+        coex_f64_slice(values, 2, 6);
+        coex_f64_slice(values, 5, 8);
+        coex_f64_slice(values, 7, 10);
+        coex_f64_slice(values, 9, 13);
+        coex_f64_slice(values, 11, 14);
+        coex_f64_slice(values, 2, 4);
+        coex_f64_slice(values, 3, 6);
+        coex_f64_slice(values, 9, 12);
+        coex_f64_slice(values, 11, 13);
+        coex_f64_slice(values, 3, 5);
+        coex_f64_slice(values, 6, 8);
+        coex_f64_slice(values, 7, 9);
+        coex_f64_slice(values, 10, 12);
+        coex_f64_slice(values, 3, 4);
+        coex_f64_slice(values, 5, 6);
+        coex_f64_slice(values, 7, 8);
+        coex_f64_slice(values, 9, 10);
+        coex_f64_slice(values, 11, 12);
+        coex_f64_slice(values, 6, 7);
+        coex_f64_slice(values, 8, 9);
+        return;
+    }
+    if n == 32 {
+        // Optimal 32-wire: 185 comparators (Dobbelaere [2] via Intel [3] `optimal_sort_32`).
+        coex_f64_slice(values, 0, 1);
+        coex_f64_slice(values, 2, 3);
+        coex_f64_slice(values, 4, 5);
+        coex_f64_slice(values, 6, 7);
+        coex_f64_slice(values, 8, 9);
+        coex_f64_slice(values, 10, 11);
+        coex_f64_slice(values, 12, 13);
+        coex_f64_slice(values, 14, 15);
+        coex_f64_slice(values, 16, 17);
+        coex_f64_slice(values, 18, 19);
+        coex_f64_slice(values, 20, 21);
+        coex_f64_slice(values, 22, 23);
+        coex_f64_slice(values, 24, 25);
+        coex_f64_slice(values, 26, 27);
+        coex_f64_slice(values, 28, 29);
+        coex_f64_slice(values, 30, 31);
+        coex_f64_slice(values, 0, 2);
+        coex_f64_slice(values, 1, 3);
+        coex_f64_slice(values, 4, 6);
+        coex_f64_slice(values, 5, 7);
+        coex_f64_slice(values, 8, 10);
+        coex_f64_slice(values, 9, 11);
+        coex_f64_slice(values, 12, 14);
+        coex_f64_slice(values, 13, 15);
+        coex_f64_slice(values, 16, 18);
+        coex_f64_slice(values, 17, 19);
+        coex_f64_slice(values, 20, 22);
+        coex_f64_slice(values, 21, 23);
+        coex_f64_slice(values, 24, 26);
+        coex_f64_slice(values, 25, 27);
+        coex_f64_slice(values, 28, 30);
+        coex_f64_slice(values, 29, 31);
+        coex_f64_slice(values, 0, 4);
+        coex_f64_slice(values, 1, 5);
+        coex_f64_slice(values, 2, 6);
+        coex_f64_slice(values, 3, 7);
+        coex_f64_slice(values, 8, 12);
+        coex_f64_slice(values, 9, 13);
+        coex_f64_slice(values, 10, 14);
+        coex_f64_slice(values, 11, 15);
+        coex_f64_slice(values, 16, 20);
+        coex_f64_slice(values, 17, 21);
+        coex_f64_slice(values, 18, 22);
+        coex_f64_slice(values, 19, 23);
+        coex_f64_slice(values, 24, 28);
+        coex_f64_slice(values, 25, 29);
+        coex_f64_slice(values, 26, 30);
+        coex_f64_slice(values, 27, 31);
+        coex_f64_slice(values, 0, 8);
+        coex_f64_slice(values, 1, 9);
+        coex_f64_slice(values, 2, 10);
+        coex_f64_slice(values, 3, 11);
+        coex_f64_slice(values, 4, 12);
+        coex_f64_slice(values, 5, 13);
+        coex_f64_slice(values, 6, 14);
+        coex_f64_slice(values, 7, 15);
+        coex_f64_slice(values, 16, 24);
+        coex_f64_slice(values, 17, 25);
+        coex_f64_slice(values, 18, 26);
+        coex_f64_slice(values, 19, 27);
+        coex_f64_slice(values, 20, 28);
+        coex_f64_slice(values, 21, 29);
+        coex_f64_slice(values, 22, 30);
+        coex_f64_slice(values, 23, 31);
+        coex_f64_slice(values, 0, 16);
+        coex_f64_slice(values, 1, 8);
+        coex_f64_slice(values, 2, 4);
+        coex_f64_slice(values, 3, 12);
+        coex_f64_slice(values, 5, 10);
+        coex_f64_slice(values, 6, 9);
+        coex_f64_slice(values, 7, 14);
+        coex_f64_slice(values, 11, 13);
+        coex_f64_slice(values, 15, 31);
+        coex_f64_slice(values, 17, 24);
+        coex_f64_slice(values, 18, 20);
+        coex_f64_slice(values, 19, 28);
+        coex_f64_slice(values, 21, 26);
+        coex_f64_slice(values, 22, 25);
+        coex_f64_slice(values, 23, 30);
+        coex_f64_slice(values, 27, 29);
+        coex_f64_slice(values, 1, 2);
+        coex_f64_slice(values, 3, 5);
+        coex_f64_slice(values, 4, 8);
+        coex_f64_slice(values, 6, 22);
+        coex_f64_slice(values, 7, 11);
+        coex_f64_slice(values, 9, 25);
+        coex_f64_slice(values, 10, 12);
+        coex_f64_slice(values, 13, 14);
+        coex_f64_slice(values, 17, 18);
+        coex_f64_slice(values, 19, 21);
+        coex_f64_slice(values, 20, 24);
+        coex_f64_slice(values, 23, 27);
+        coex_f64_slice(values, 26, 28);
+        coex_f64_slice(values, 29, 30);
+        coex_f64_slice(values, 1, 17);
+        coex_f64_slice(values, 2, 18);
+        coex_f64_slice(values, 3, 19);
+        coex_f64_slice(values, 4, 20);
+        coex_f64_slice(values, 5, 10);
+        coex_f64_slice(values, 7, 23);
+        coex_f64_slice(values, 8, 24);
+        coex_f64_slice(values, 11, 27);
+        coex_f64_slice(values, 12, 28);
+        coex_f64_slice(values, 13, 29);
+        coex_f64_slice(values, 14, 30);
+        coex_f64_slice(values, 21, 26);
+        coex_f64_slice(values, 3, 17);
+        coex_f64_slice(values, 4, 16);
+        coex_f64_slice(values, 5, 21);
+        coex_f64_slice(values, 6, 18);
+        coex_f64_slice(values, 7, 9);
+        coex_f64_slice(values, 8, 20);
+        coex_f64_slice(values, 10, 26);
+        coex_f64_slice(values, 11, 23);
+        coex_f64_slice(values, 13, 25);
+        coex_f64_slice(values, 14, 28);
+        coex_f64_slice(values, 15, 27);
+        coex_f64_slice(values, 22, 24);
+        coex_f64_slice(values, 1, 4);
+        coex_f64_slice(values, 3, 8);
+        coex_f64_slice(values, 5, 16);
+        coex_f64_slice(values, 7, 17);
+        coex_f64_slice(values, 9, 21);
+        coex_f64_slice(values, 10, 22);
+        coex_f64_slice(values, 11, 19);
+        coex_f64_slice(values, 12, 20);
+        coex_f64_slice(values, 14, 24);
+        coex_f64_slice(values, 15, 26);
+        coex_f64_slice(values, 23, 28);
+        coex_f64_slice(values, 27, 30);
+        coex_f64_slice(values, 2, 5);
+        coex_f64_slice(values, 7, 8);
+        coex_f64_slice(values, 9, 18);
+        coex_f64_slice(values, 11, 17);
+        coex_f64_slice(values, 12, 16);
+        coex_f64_slice(values, 13, 22);
+        coex_f64_slice(values, 14, 20);
+        coex_f64_slice(values, 15, 19);
+        coex_f64_slice(values, 23, 24);
+        coex_f64_slice(values, 26, 29);
+        coex_f64_slice(values, 2, 4);
+        coex_f64_slice(values, 6, 12);
+        coex_f64_slice(values, 9, 16);
+        coex_f64_slice(values, 10, 11);
+        coex_f64_slice(values, 13, 17);
+        coex_f64_slice(values, 14, 18);
+        coex_f64_slice(values, 15, 22);
+        coex_f64_slice(values, 19, 25);
+        coex_f64_slice(values, 20, 21);
+        coex_f64_slice(values, 27, 29);
+        coex_f64_slice(values, 5, 6);
+        coex_f64_slice(values, 8, 12);
+        coex_f64_slice(values, 9, 10);
+        coex_f64_slice(values, 11, 13);
+        coex_f64_slice(values, 14, 16);
+        coex_f64_slice(values, 15, 17);
+        coex_f64_slice(values, 18, 20);
+        coex_f64_slice(values, 19, 23);
+        coex_f64_slice(values, 21, 22);
+        coex_f64_slice(values, 25, 26);
+        coex_f64_slice(values, 3, 5);
+        coex_f64_slice(values, 6, 7);
+        coex_f64_slice(values, 8, 9);
+        coex_f64_slice(values, 10, 12);
+        coex_f64_slice(values, 11, 14);
+        coex_f64_slice(values, 13, 16);
+        coex_f64_slice(values, 15, 18);
+        coex_f64_slice(values, 17, 20);
+        coex_f64_slice(values, 19, 21);
+        coex_f64_slice(values, 22, 23);
+        coex_f64_slice(values, 24, 25);
+        coex_f64_slice(values, 26, 28);
+        coex_f64_slice(values, 3, 4);
+        coex_f64_slice(values, 5, 6);
+        coex_f64_slice(values, 7, 8);
+        coex_f64_slice(values, 9, 10);
+        coex_f64_slice(values, 11, 12);
+        coex_f64_slice(values, 13, 14);
+        coex_f64_slice(values, 15, 16);
+        coex_f64_slice(values, 17, 18);
+        coex_f64_slice(values, 19, 20);
+        coex_f64_slice(values, 21, 22);
+        coex_f64_slice(values, 23, 24);
+        coex_f64_slice(values, 25, 26);
+        coex_f64_slice(values, 27, 28);
+        return;
+    }
+    values.sort_unstable_by(f64::total_cmp);
+}
+
 #[cfg(test)]
 #[allow(clippy::float_cmp)]
 mod tests {
@@ -1750,6 +2343,172 @@ mod tests {
         layer_norm(&c, 1e-5, &mut out);
         for x in out {
             assert!(x.abs() < 1e-3, "const input gave {x}");
+        }
+    }
+
+    #[test]
+    #[allow(clippy::cast_sign_loss)]
+    fn bitonic_sort_f32_8_dense() {
+        // Dense sample for the 8-lane network: permutations + specials.
+        let specials = [
+            f32::NEG_INFINITY,
+            -2.0,
+            -0.0,
+            0.0,
+            2.0,
+            f32::INFINITY,
+            f32::NAN,
+            f32::from_bits(0x7FC0_0001),
+        ];
+        let mut v = specials;
+        bitonic_sort_f32(&mut v);
+        let mut want = specials;
+        want.sort_unstable_by(f32::total_cmp);
+        assert!(
+            v.iter()
+                .zip(want.iter())
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
+        // Reverse + shuffled
+        for _ in 0..512 {
+            let mut a: Vec<f32> = (0..8)
+                .map(|i| {
+                    f32::from_bits(
+                        0x3F80_0000u32.wrapping_add((i as u32).wrapping_mul(0x9E37_79B9))
+                            ^ 0xA5A5_5A5A,
+                    )
+                })
+                .collect();
+            // inject NaN/-0 occasionally
+            a[3] = f32::NAN;
+            a[5] = -0.0;
+            let mut w = a.clone();
+            w.sort_unstable_by(f32::total_cmp);
+            bitonic_sort_f32(&mut a);
+            assert!(
+                a.iter()
+                    .zip(w.iter())
+                    .all(|(x, y)| x.to_bits() == y.to_bits())
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn bitonic_sort_f64_8_dense() {
+        let specials = [
+            f64::NEG_INFINITY,
+            -2.0,
+            -0.0,
+            0.0,
+            2.0,
+            f64::INFINITY,
+            f64::NAN,
+            f64::from_bits(0x7FF8_0000_0000_0001),
+        ];
+        let mut v = specials;
+        bitonic_sort_f64(&mut v);
+        let mut want = specials;
+        want.sort_unstable_by(f64::total_cmp);
+        assert!(
+            v.iter()
+                .zip(want.iter())
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
+    fn bitonic_sort_f32_16_32_and_fallback() {
+        for n in [16usize, 32] {
+            for _ in 0..256 {
+                let mut a: Vec<f32> = (0..n)
+                    .map(|i| {
+                        f32::from_bits(
+                            0x4040_0000u32.wrapping_add((i as u32).wrapping_mul(0x9E37_79B1)),
+                        )
+                    })
+                    .collect();
+                if n >= 8 {
+                    a[1] = f32::NAN;
+                    a[2] = -0.0;
+                }
+                let mut w = a.clone();
+                w.sort_unstable_by(f32::total_cmp);
+                bitonic_sort_f32(&mut a);
+                assert!(
+                    a.iter()
+                        .zip(w.iter())
+                        .all(|(x, y)| x.to_bits() == y.to_bits()),
+                    "n={n}"
+                );
+            }
+        }
+        // Fallback lengths: must equal std total_cmp
+        for n in [0usize, 1, 2, 7, 9, 15, 17, 31, 33] {
+            let mut a: Vec<f32> = (0..n).map(|i| i as f32 * 1.1 - 5.0).collect();
+            if n >= 3 {
+                a[1] = f32::NAN;
+                a[2] = -0.0;
+            }
+            let mut w = a.clone();
+            w.sort_unstable_by(f32::total_cmp);
+            bitonic_sort_f32(&mut a);
+            assert!(
+                a.iter()
+                    .zip(w.iter())
+                    .all(|(x, y)| x.to_bits() == y.to_bits()),
+                "fallback n={n}"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+    fn bitonic_sort_f64_16_32_and_fallback() {
+        for n in [16usize, 32] {
+            for _ in 0..128 {
+                let mut a: Vec<f64> = (0..n)
+                    .map(|i| {
+                        f64::from_bits(
+                            0x4040_0000_0000_0000u64
+                                .wrapping_add((i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15u64)),
+                        )
+                    })
+                    .collect();
+                if n >= 8 {
+                    a[1] = f64::NAN;
+                    a[2] = -0.0;
+                }
+                let mut w = a.clone();
+                w.sort_unstable_by(f64::total_cmp);
+                bitonic_sort_f64(&mut a);
+                assert!(
+                    a.iter()
+                        .zip(w.iter())
+                        .all(|(x, y)| x.to_bits() == y.to_bits()),
+                    "n={n}"
+                );
+            }
+        }
+        for n in [0usize, 1, 7, 31, 33] {
+            let mut a: Vec<f64> = (0..n).map(|i| i as f64 * 1.1 - 5.0).collect();
+            if n >= 2 {
+                a[0] = f64::NAN;
+            }
+            let mut w = a.clone();
+            w.sort_unstable_by(f64::total_cmp);
+            bitonic_sort_f64(&mut a);
+            assert!(
+                a.iter()
+                    .zip(w.iter())
+                    .all(|(x, y)| x.to_bits() == y.to_bits()),
+                "fallback n={n}"
+            );
         }
     }
 

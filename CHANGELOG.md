@@ -11,6 +11,7 @@ so it is all listed as additions.
 ## [Unreleased]
 
 ### Added
+- **`sort` family** — `lanes::sort::f32::bitonic_sort` / `f64::bitonic_sort`: in-place small sorts for `n ∈ {8,16,32}` via optimal sorting networks (19/60/185 compare-exchanges from Dobbelaere [2] via Intel `x86-simd-sort` `xss-optimal-networks.hpp` BSD-3, curl 2026-08-22 [3]; Batcher [1] construction; total order `total_cmp` [4] — NaN last, `-0 < +0`, deterministic bit-for-bit vs `sort_unstable_by(total_cmp)`); other lengths fall back to `sort_unstable_by`. Scalar optimal networks wired (f32+f64, 8/16/32); dispatch wired for SSE2/AVX2/AVX-512/NEON/WASM (scalar fallback now, SIMD compare-exchange network queued). Docstrings cite [1]–[4] (escaped as `\[1\]` for rustdoc `-D warnings`). `no_std`-clean, no alloc.
 
 - **`convert` family** — f16/bf16 ↔ f32 slice conversions and
   mixed-precision dot products (`dot_f16`, `dot_bf16`). All narrowing
@@ -53,6 +54,7 @@ so it is all listed as additions.
   `src/platform/mod.rs` (uninlined format args).
 
 ### Changed
+- Benchmarks/doc scaffolding for `sort`: prepare `sort::bitonic_sort` bench groups vs naive `sort_unstable_by(total_cmp)` at n=8/16/32 (parity on scalar; SIMD stages expected ~7× per #14). This is the select step for `top_k` (#6).
 
 - F16 fast paths: SSE2 (4-wide) and AVX2 (8-wide) now use F16C `cvtph` intrinsics when `f16c` is present (cached `has_f16c` probe); scalar fallback otherwise. AVX-512 reuses the AVX2 F16C path.
 - VPOPCNTDQ wiring: `hamming`/`jaccard` on AVX-512 dispatch to `_mm512_popcnt_epi64` (64 B/iter) when `avx512vpopcntdq` is present; AVX2 shuffle path otherwise. VNNI `dot_i8` probe scaffold added.
