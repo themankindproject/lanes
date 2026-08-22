@@ -91,6 +91,7 @@ f32::softmax_into(&activated, &mut probs).unwrap();
 - **`ml`** — `softmax`, `log_softmax`, `sigmoid`, `silu`, `gelu`, `relu`,
   `softplus`, `rms_norm`, `layer_norm`, `cosine_similarity`, `logsumexp`
   (every map-style op also as `*_into`)
+- **`sort`** — `bitonic_sort` for small power-of-two slices (8/16/32): optimal sorting networks (19/60/185 compare-exchanges) dispatching per backend with deterministic `total_cmp` (NaN last, `-0 < +0`); other lengths fall back to `sort_unstable_by(total_cmp)` — `no_std`-clean, in-place, branch-free
 - **`convert`** — `f16_to_f32`, `f32_to_f16`, `bf16_to_f32`, `f32_to_bf16`,
   `dot_f16`, `dot_bf16` (half-precision conversions with
   round-to-nearest-even; `no_std`-compatible via caller-provided buffers;
@@ -188,6 +189,7 @@ same accuracy class as the `lanes` kernels.
 | `ml` | `layer_norm` | 28.3 µs | 310.9 µs | **11.0×** |
 | `ml` | `cosine_similarity` | 26.1 µs | 441.2 µs | **16.9×** |
 | `ml` | `logsumexp` | 102.6 µs | 696.8 µs | **6.8×** |
+| `sort` | `bitonic_sort` (n=32, scalar) | ~0.4 µs | ~0.4 µs | ~1.0× (parity; optimal networks 8:19/16:60/32:185 COEX; SIMD min/max+shuffle stages queued) |
 
 **Reading the table honestly.** Two distinct regimes:
 

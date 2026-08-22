@@ -1393,6 +1393,7 @@ fn coex_f64_slice(v: &mut [f64], a: usize, b: usize) {
         v.swap(a, b);
     }
 }
+#[allow(clippy::too_many_lines)]
 #[inline]
 fn sort_network_f32(values: &mut [f32]) {
     let n = values.len();
@@ -1675,6 +1676,7 @@ fn sort_network_f32(values: &mut [f32]) {
     }
     values.sort_unstable_by(f32::total_cmp);
 }
+#[allow(clippy::too_many_lines)]
 #[inline]
 fn sort_network_f64(values: &mut [f64]) {
     let n = values.len();
