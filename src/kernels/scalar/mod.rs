@@ -1364,6 +1364,219 @@ pub(crate) fn dot_bf16(a: &[u16], b: &[u16]) -> f32 {
     acc
 }
 
+/// In-place sort by total order (`total_cmp`) for small powers of two.
+///
+/// For `n ∈ {8,16,32}` dispatches an optimal sorting network from [2] via [3]
+/// (19/60/min comparators); other lengths fall back to `sort_unstable_by`.
+/// Deterministic: result equals `v.sort_unstable_by(total_cmp)` bit-for-bit
+/// for every input including NaNs and signed zeros.
+///
+/// References: [1] Batcher 1968; [2] Dobbelaere `sorting_networks.html`;
+/// [3] Intel x86-simd-sort `xss-optimal-networks.hpp` (BSD-3).
+#[inline]
+pub(crate) fn bitonic_sort_f32(values: &mut [f32]) {
+    sort_network_f32(values);
+}
+#[inline]
+pub(crate) fn bitonic_sort_f64(values: &mut [f64]) {
+    sort_network_f64(values);
+}
+#[inline]
+fn coex_f32_slice(v: &mut [f32], a: usize, b: usize) {
+    if v[a].total_cmp(&v[b]).is_gt() {
+        v.swap(a, b);
+    }
+}
+#[inline]
+fn coex_f64_slice(v: &mut [f64], a: usize, b: usize) {
+    if v[a].total_cmp(&v[b]).is_gt() {
+        v.swap(a, b);
+    }
+}
+#[inline]
+fn sort_network_f32(values: &mut [f32]) {
+    let n = values.len();
+    if n == 8 {
+        // Optimal 8-wire network: 19 comparators (Knuth TAOCP, Dobbelaere [2],
+        // listed verbatim in Intel [3] `optimal_sort_8`).
+        coex_f32_slice(values, 0, 2);
+        coex_f32_slice(values, 1, 3);
+        coex_f32_slice(values, 4, 6);
+        coex_f32_slice(values, 5, 7);
+        coex_f32_slice(values, 0, 4);
+        coex_f32_slice(values, 1, 5);
+        coex_f32_slice(values, 2, 6);
+        coex_f32_slice(values, 3, 7);
+        coex_f32_slice(values, 0, 1);
+        coex_f32_slice(values, 2, 3);
+        coex_f32_slice(values, 4, 5);
+        coex_f32_slice(values, 6, 7);
+        coex_f32_slice(values, 2, 4);
+        coex_f32_slice(values, 3, 5);
+        coex_f32_slice(values, 1, 4);
+        coex_f32_slice(values, 3, 6);
+        coex_f32_slice(values, 1, 2);
+        coex_f32_slice(values, 3, 4);
+        coex_f32_slice(values, 5, 6);
+        return;
+    }
+    if n == 16 {
+        // Optimal 16-wire: 60 comparators (Dobbelaere [2] via Intel [3]).
+        coex_f32_slice(values, 0, 13);
+        coex_f32_slice(values, 1, 12);
+        coex_f32_slice(values, 2, 15);
+        coex_f32_slice(values, 3, 14);
+        coex_f32_slice(values, 4, 8);
+        coex_f32_slice(values, 5, 6);
+        coex_f32_slice(values, 7, 11);
+        coex_f32_slice(values, 9, 10);
+        coex_f32_slice(values, 0, 5);
+        coex_f32_slice(values, 1, 7);
+        coex_f32_slice(values, 2, 9);
+        coex_f32_slice(values, 3, 4);
+        coex_f32_slice(values, 6, 13);
+        coex_f32_slice(values, 8, 14);
+        coex_f32_slice(values, 10, 15);
+        coex_f32_slice(values, 11, 12);
+        coex_f32_slice(values, 0, 1);
+        coex_f32_slice(values, 2, 3);
+        coex_f32_slice(values, 4, 5);
+        coex_f32_slice(values, 6, 8);
+        coex_f32_slice(values, 7, 9);
+        coex_f32_slice(values, 10, 11);
+        coex_f32_slice(values, 12, 13);
+        coex_f32_slice(values, 14, 15);
+        coex_f32_slice(values, 0, 2);
+        coex_f32_slice(values, 1, 3);
+        coex_f32_slice(values, 4, 10);
+        coex_f32_slice(values, 5, 11);
+        coex_f32_slice(values, 6, 7);
+        coex_f32_slice(values, 8, 9);
+        coex_f32_slice(values, 12, 14);
+        coex_f32_slice(values, 13, 15);
+        coex_f32_slice(values, 1, 2);
+        coex_f32_slice(values, 3, 12);
+        coex_f32_slice(values, 4, 6);
+        coex_f32_slice(values, 5, 7);
+        coex_f32_slice(values, 8, 10);
+        coex_f32_slice(values, 9, 11);
+        coex_f32_slice(values, 13, 14);
+        coex_f32_slice(values, 1, 4);
+        coex_f32_slice(values, 2, 6);
+        coex_f32_slice(values, 5, 8);
+        coex_f32_slice(values, 7, 10);
+        coex_f32_slice(values, 9, 13);
+        coex_f32_slice(values, 11, 14);
+        coex_f32_slice(values, 2, 4);
+        coex_f32_slice(values, 3, 6);
+        coex_f32_slice(values, 9, 12);
+        coex_f32_slice(values, 11, 13);
+        coex_f32_slice(values, 3, 5);
+        coex_f32_slice(values, 6, 8);
+        coex_f32_slice(values, 7, 9);
+        coex_f32_slice(values, 10, 12);
+        coex_f32_slice(values, 3, 4);
+        coex_f32_slice(values, 5, 6);
+        coex_f32_slice(values, 7, 8);
+        coex_f32_slice(values, 9, 10);
+        coex_f32_slice(values, 11, 12);
+        coex_f32_slice(values, 6, 7);
+        coex_f32_slice(values, 8, 9);
+        return;
+    }
+    values.sort_unstable_by(f32::total_cmp);
+}
+#[inline]
+fn sort_network_f64(values: &mut [f64]) {
+    let n = values.len();
+    if n == 8 {
+        coex_f64_slice(values, 0, 2);
+        coex_f64_slice(values, 1, 3);
+        coex_f64_slice(values, 4, 6);
+        coex_f64_slice(values, 5, 7);
+        coex_f64_slice(values, 0, 4);
+        coex_f64_slice(values, 1, 5);
+        coex_f64_slice(values, 2, 6);
+        coex_f64_slice(values, 3, 7);
+        coex_f64_slice(values, 0, 1);
+        coex_f64_slice(values, 2, 3);
+        coex_f64_slice(values, 4, 5);
+        coex_f64_slice(values, 6, 7);
+        coex_f64_slice(values, 2, 4);
+        coex_f64_slice(values, 3, 5);
+        coex_f64_slice(values, 1, 4);
+        coex_f64_slice(values, 3, 6);
+        coex_f64_slice(values, 1, 2);
+        coex_f64_slice(values, 3, 4);
+        coex_f64_slice(values, 5, 6);
+        return;
+    }
+    if n == 16 {
+        coex_f64_slice(values, 0, 13);
+        coex_f64_slice(values, 1, 12);
+        coex_f64_slice(values, 2, 15);
+        coex_f64_slice(values, 3, 14);
+        coex_f64_slice(values, 4, 8);
+        coex_f64_slice(values, 5, 6);
+        coex_f64_slice(values, 7, 11);
+        coex_f64_slice(values, 9, 10);
+        coex_f64_slice(values, 0, 5);
+        coex_f64_slice(values, 1, 7);
+        coex_f64_slice(values, 2, 9);
+        coex_f64_slice(values, 3, 4);
+        coex_f64_slice(values, 6, 13);
+        coex_f64_slice(values, 8, 14);
+        coex_f64_slice(values, 10, 15);
+        coex_f64_slice(values, 11, 12);
+        coex_f64_slice(values, 0, 1);
+        coex_f64_slice(values, 2, 3);
+        coex_f64_slice(values, 4, 5);
+        coex_f64_slice(values, 6, 8);
+        coex_f64_slice(values, 7, 9);
+        coex_f64_slice(values, 10, 11);
+        coex_f64_slice(values, 12, 13);
+        coex_f64_slice(values, 14, 15);
+        coex_f64_slice(values, 0, 2);
+        coex_f64_slice(values, 1, 3);
+        coex_f64_slice(values, 4, 10);
+        coex_f64_slice(values, 5, 11);
+        coex_f64_slice(values, 6, 7);
+        coex_f64_slice(values, 8, 9);
+        coex_f64_slice(values, 12, 14);
+        coex_f64_slice(values, 13, 15);
+        coex_f64_slice(values, 1, 2);
+        coex_f64_slice(values, 3, 12);
+        coex_f64_slice(values, 4, 6);
+        coex_f64_slice(values, 5, 7);
+        coex_f64_slice(values, 8, 10);
+        coex_f64_slice(values, 9, 11);
+        coex_f64_slice(values, 13, 14);
+        coex_f64_slice(values, 1, 4);
+        coex_f64_slice(values, 2, 6);
+        coex_f64_slice(values, 5, 8);
+        coex_f64_slice(values, 7, 10);
+        coex_f64_slice(values, 9, 13);
+        coex_f64_slice(values, 11, 14);
+        coex_f64_slice(values, 2, 4);
+        coex_f64_slice(values, 3, 6);
+        coex_f64_slice(values, 9, 12);
+        coex_f64_slice(values, 11, 13);
+        coex_f64_slice(values, 3, 5);
+        coex_f64_slice(values, 6, 8);
+        coex_f64_slice(values, 7, 9);
+        coex_f64_slice(values, 10, 12);
+        coex_f64_slice(values, 3, 4);
+        coex_f64_slice(values, 5, 6);
+        coex_f64_slice(values, 7, 8);
+        coex_f64_slice(values, 9, 10);
+        coex_f64_slice(values, 11, 12);
+        coex_f64_slice(values, 6, 7);
+        coex_f64_slice(values, 8, 9);
+        return;
+    }
+    values.sort_unstable_by(f64::total_cmp);
+}
+
 #[cfg(test)]
 #[allow(clippy::float_cmp)]
 mod tests {

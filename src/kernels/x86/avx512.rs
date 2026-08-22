@@ -2383,6 +2383,19 @@ crate::simd_map!(
 #[allow(unused_imports)]
 pub(crate) use super::avx2::{bf16_to_f32, dot_bf16, dot_f16, f16_to_f32, f32_to_bf16, f32_to_f16};
 
+/// Bitonic sort by total order (n=8/16/32 network, otherwise fallback).
+///
+/// Scalar fallback for now; SIMD compare-exchange network will replace this
+/// without changing the public contract. No alloc.
+#[inline]
+pub(crate) fn bitonic_sort_f32(values: &mut [f32]) {
+    crate::kernels::scalar::bitonic_sort_f32(values);
+}
+#[inline]
+pub(crate) fn bitonic_sort_f64(values: &mut [f64]) {
+    crate::kernels::scalar::bitonic_sort_f64(values);
+}
+
 #[cfg(test)]
 #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 mod tests {

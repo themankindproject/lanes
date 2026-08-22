@@ -31,3 +31,6 @@ pub mod special;
 
 // Half-precision (f16/bf16) conversions and mixed-precision dot products.
 pub mod convert;
+
+// Small sorts by total_cmp (n=8/16/32 networks, fallback otherwise).
+pub mod sort;
