@@ -219,8 +219,8 @@ pub mod convert {
 
 /// Small sorting networks by total order (`bitonic_sort`).
 ///
-/// `n ∈ {8, 16, 32}` dispatches an optimal sorting network (Batcher [1]
-/// construction with minimal size from Dobbelaere [2] via Intel [3]);
+/// `n ∈ {8, 16, 32}` dispatches an optimal sorting network (Batcher \[1\]
+/// construction with minimal size from Dobbelaere \[2\] via Intel \[3\]);
 /// other lengths fall back to `sort_unstable_by(total_cmp)`. Deterministic
 /// ascending [`f32::total_cmp`]/[`f64::total_cmp`] — `NaN` sorts last,
 /// `-0.0 < +0.0`. No heap allocation.

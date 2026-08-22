@@ -33,7 +33,7 @@ pub mod f32 {
     /// Sort `values` ascending by [`f32::total_cmp`] in place.
     ///
     /// For `values.len()` in `{8, 16, 32}` an optimal sorting network is
-    /// dispatched (19, 60, 80 compare-exchanges respectively from [2] via [3],
+    /// dispatched (19, 60, 80 compare-exchanges respectively from \[2\] via \[3\],
     /// depth 6/10/10). Every other length falls back to
     /// `values.sort_unstable_by(f32::total_cmp)`.
     ///
@@ -42,8 +42,8 @@ pub mod f32 {
     ///
     /// # References
     ///
-    /// - Batcher [1] for the bitonic construction; optimal size bounds from
-    ///   Dobbelaere [2]; enlistings from Intel [3].
+    /// - Batcher \[1\] for the bitonic construction; optimal size bounds from
+    ///   Dobbelaere \[2\]; enlistings from Intel \[3\].
     ///
     /// # Example
     ///
@@ -66,12 +66,12 @@ pub mod f64 {
 
     /// Sort `values` ascending by [`f64::total_cmp`] in place.
     ///
-    /// Same contract as [`f32::bitonic_sort`] with the same lengths and
+    /// Same contract as [`super::f32::bitonic_sort`] with the same lengths and
     /// fallback; networks are instantiated for `f64` lanes.
     ///
     /// # References
     ///
-    /// See [`f32::bitonic_sort`] references [1]–[3].
+    /// See [`super::f32::bitonic_sort`] references \[1\]–\[3\].
     pub fn bitonic_sort(values: &mut [f64]) {
         let backend = Backend::detect();
         kernels::dispatch_bitonic_sort_f64(backend, values);
