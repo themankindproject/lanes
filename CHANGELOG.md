@@ -60,8 +60,6 @@ so it is all listed as additions.
 - Added `src/kernels/wasm` stub so `cargo check --target
   wasm32-unknown-unknown` succeeds (scalar fallthrough; future place for
   SIMD128 kernels).
-- Addressed `cargo clippy --all-targets --all-features` warnings in
-  `src/platform/mod.rs` (uninlined format args).
 
 ## [0.1.3] - 2026-08-20
 
